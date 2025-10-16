@@ -1,0 +1,37 @@
+  <script>
+  fetch('/public/js/dump-convertido.json')
+    .then(r => r.json())
+    .then(data => {
+      window.LionGrid.init(data); // cria e popula
+    });
+</script>
+  <div id="kv-page-root" class="kt-container-fluid py-6">
+    <!-- Separador superior -->
+    <div class="border-b border-border mb-4"></div>
+
+    <!-- Header -->
+    <div class="flex flex-col gap-3">
+      <div class="flex items-center justify-between">
+        <div>
+          <h1 class="text-2xl font-semibold leading-tight">Lion Table</h1>
+          <p class="text-sm text-muted-foreground">Tabela em AG Grid: drill-down, filtros e somatórios.</p>
+        </div>
+      </div>
+
+      <!-- Separador fino -->
+      <div class="border-b border-border"></div>
+    </div>
+
+
+    <!-- Grid -->
+    <div
+      id="lionGrid"
+      class="ag-theme-quartz w-full rounded-lg border border-border mt-4 overflow-hidden"
+      style="height: 700px"
+    ></div>
+
+  <script type="module" src="/public/js/aggridtable.js"></script>
+
+
+
+</div>

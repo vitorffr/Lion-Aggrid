@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html
+    class="h-full dark"
+    data-kt-theme="true"
+    data-kt-theme-mode="dark"
+    dir="ltr"
+    lang="en"
+>
+    <head>
+        <title>
+            {seo.title}
+        </title>
+        <meta charset="utf-8">
+        <meta content="follow, index" name="robots">
+        <meta content="width=device-width, initial-scale=1, shrink-to-fit=no" name="viewport">
+        <link href="/public/assets/media/app/favicon.ico" rel="shortcut icon">
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+        <!-- <link href="/public/assets/vendors/apexcharts/apexcharts.css" rel="stylesheet"> -->
+        <link href="/public/assets/vendors/keenicons/styles.bundle.css" rel="stylesheet">
+        <link href="https://ktui.io/ktui/dist/styles.css" rel="stylesheet">
+        <link href="/public/assets/css/styles.css" rel="stylesheet">
+    </head>
+    <body>
+        <div style="display:flex;justify-content:center;align-items:center;height:100vh;background:#000;color:#fff;">
+            <form method="POST" action="/api/auth/login/" style="background:#111;padding:2rem;border-radius:8px;min-width:260px;width: 350px;">
+                <div style="text-align:center;margin-bottom:1rem;">
+                    <img src="/public/images/logo.svg" style="max-height: 100px; margin: auto;" alt="Logo">
+                    <p style="margin-top: 1rem;">High Stakes Lion Table </p>
+                </div>
+                <div style="margin-bottom:1rem;">
+                    <input
+                        style="width:100%;padding:0.5rem;border-radius:4px;border:1px solid #333;background:#222;color:#fff;"
+                        name="username"
+                        type="text"
+                        placeholder="Username"
+                    >
+                </div>
+                <div style="margin-bottom:1rem;">
+                    <input
+                        style="width:100%;padding:0.5rem;border-radius:4px;border:1px solid #333;background:#222;color:#fff;"
+                        name="password"
+                        type="password"
+                        placeholder="Password"
+                    >
+                </div>
+                <button type="submit" style="width:100%;padding:0.5rem;border:none;border-radius:4px;background:#3b82f6;color:#fff;">Login</button>
+            </form>
+        </div>
+        <script>
+            const urlParams = new URLSearchParams(window.location.search);
+            const invalid = urlParams.get('invalid');
+            if (invalid) {
+                alert('Invalid credentials, please try again.');
+            }
+        </script>

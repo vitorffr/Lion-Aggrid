@@ -9,6 +9,15 @@
 	"compatibility_date": "2025-10-11",
 	"observability": {
 		"enabled": true
+	},
+
+	"vars": {
+		"AUTH_USERNAME": "high",
+		"AUTH_PASSWORD": "high123@"
+	},
+	"assets": {
+		"directory": "./public",
+		"binding": "ASSETS"
 	}
 	/**
 	 * Smart Placement

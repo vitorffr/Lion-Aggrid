@@ -12,5 +12,9 @@
 		"@cloudflare/vitest-pool-workers": "^0.8.19",
 		"vitest": "~3.2.0",
 		"wrangler": "^4.42.2"
+	},
+	"dependencies": {
+		"itty-router": "^5.0.22",
+		"moment-timezone": "^0.6.0"
 	}
 }

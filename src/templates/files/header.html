@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html
+    class="h-full dark"
+    data-kt-theme="true"
+    data-kt-theme-mode="dark"
+    data-kt-theme-switch-mode="dark"
+    dir="ltr"
+    lang="en"
+    data-kt-theme-swtich-initialized="true"
+>
+    <head>
+        <title>
+            {seo.title}
+        </title>
+        <meta charset="utf-8">
+        <meta content="follow, index" name="robots">
+        <meta content="width=device-width, initial-scale=1, shrink-to-fit=no" name="viewport">
+        <link href="/public/assets/media/app/favicon.ico" rel="shortcut icon">
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+        <link href="/public/assets/vendors/apexcharts/apexcharts.css" rel="stylesheet">
+        <link href="/public/assets/vendors/keenicons/styles.bundle.css" rel="stylesheet">
+        <link href="https://ktui.io/ktui/dist/styles.css" rel="stylesheet">
+        <link href="/public/assets/css/styles.css" rel="stylesheet">
+        <link href="/public/assets/media/app/favicon.ico" rel="shortcut icon">
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+        <script src="https://cdn.jsdelivr.net/npm/ag-grid-enterprise@34.2.0/dist/ag-grid-enterprise.min.noStyle.js"></script>
+        <meta content={AG_GRID_LICENSE_KEY} name="hs-ag">
+    </head>
+    <body class="antialiased flex h-full text-base text-foreground bg-background [--header-height-default:95px] data-kt-[sticky-header=off]:[--header-height:60px] [--header-height:var(--header-height-default)] [--header-height-mobile:70px]">
+        <div class="flex grow flex-col in-data-kt-[sticky-header=off]:pt-(--header-height-default)">
+            <!-- Header -->
+            <header class="flex items-center transition-[height] shrink-0 bg-background py-4 lg:py-0 lg:h-(--header-height)" id="header">
+                <!-- Container -->
+                <div class="kt-container-fluid flex flex-wrap gap-2 items-center lg:gap-4" id="header_container">
+                    <!-- Logo -->
+                    <div class="flex items-stretch gap-10 grow">
+                        <div class="flex items-center gap-2.5">
+                            <a href="/">
+                                <img class=" dark:hidden min-h-[34px]" style="width: 40px;" src="https://lion.highstakes.tech/public/img/highlion.svg">
+                                <img class="hidden dark:inline-block min-h-[34px]" style="width: 40px;" src="https://lion.highstakes.tech/public/img/highlion.svg">
+                            </a>
+                            <button class="lg:hidden kt-btn kt-btn-icon kt-btn-ghost" data-kt-drawer-toggle="#mega_menu_container">
+                                <i class="ki-filled ki-burger-menu-2"></i>
+                            </button>
+                            <a href="/">
+                                <h3 class="text-mono text-lg font-medium hidden md:block">
+                                    High Stakes Lion Table
+                                </h3>
+                            </a>
+                        </div>
+                        <!-- Mega Menu -->
+                        <div class="flex items-stretch" id="megaMenuWrapper">
+                            <div class="flex items-stretch [--kt-reparent-mode:prepend] lg:[--kt-reparent-mode:prepend] [--kt-reparent-target:body] lg:[--kt-reparent-target:#megaMenuWrapper]" data-kt-reparent="true">
+                                <div
+                                    class="hidden lg:flex lg:items-stretch [--kt-drawer-enable:true] lg:[--kt-drawer-enable:false]"
+                                    data-kt-drawer="true"
+                                    data-kt-drawer-class="kt-drawer kt-drawer-start fixed z-10 top-0 bottom-0 w-full mr-5 max-w-[250px] p-5 lg:p-0 overflow-auto"
+                                    id="mega_menu_container"
+                                >
+                                    <div class="kt-menu flex-col lg:flex-row gap-5 lg:gap-7.5" data-kt-menu="true" id="mega_menu">
+                                        <div class="kt-menu-item">
+                                            <a class="kt-menu-link border-b border-b-transparent kt-menu-item-active:border-b-gray-400 kt-menu-item-here:border-b-gray-400" href="/">
+                                                <span class="kt-menu-title kt-menu-link-hover:text-mono text-sm text-foreground kt-menu-item-show:text-mono kt-menu-item-here:text-mono kt-menu-item-active:font-medium kt-menu-item-here:font-medium">
+                                                    Tabela
+                                                </span>
+                                            </a>
+                                        </div>
+                                       
+                                        
+                                        <div
+                                            class="kt-menu-item"
+                                            data-kt-menu-item-offset="0,0|lg:-20px,10px"
+                                            data-kt-menu-item-overflow="true"
+                                            data-kt-menu-item-placement="bottom-start"
+                                            data-kt-menu-item-placement-rtl="bottom-end"
+                                            data-kt-menu-item-toggle="dropdown"
+                                            data-kt-menu-item-trigger="click|lg:hover"
+                                        >
+                                            
+                                            
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- End of Mega Men -->
+                    </div>
+                    <!-- End of Logo -->
+                    <!-- Topbar -->
+                    <!-- End of Topbar -->
+                </div>
+                <!-- End of Container -->
+            </header>
