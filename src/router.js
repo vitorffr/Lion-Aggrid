@@ -22,6 +22,10 @@ import { auth } from './controllers/api/auth.js';
 router.get('/login/', login);
 router.post('/api/auth/login/', auth);
 
+/* =================== LION ROWS (SSRM) =================== */
+import backend from './controllers/api/back.js';
+router.post('/api/ssrm/', backend.ssrm);
+
 /* =================== AUTH GUARD ===================
    - Roda para todas as rotas na sequência.
    - Deixa passar as públicas.

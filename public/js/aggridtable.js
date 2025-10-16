@@ -1,10 +1,12 @@
 /* public/js/lion-grid.js */
+const ENDPOINTS = {
+	SSRM: '/api/ssrm/?clean=1',
+};
 
 function getAgGrid() {
 	const AG = globalThis.agGrid;
-	if (!AG) {
+	if (!AG)
 		throw new Error('AG Grid UMD não carregado. Verifique a ORDEM dos scripts e o path do CDN.');
-	}
 	return AG;
 }
 
@@ -18,37 +20,7 @@ function getAgGrid() {
 	} catch {}
 })();
 
-// ==================== Helpers ====================
-async function fetchJSON(url, options = {}) {
-	const { timeout = 12000, ...rest } = options;
-	const ctrl = new AbortController();
-	const to = setTimeout(() => ctrl.abort(), timeout);
-	try {
-		const res = await fetch(url, {
-			signal: ctrl.signal,
-			headers: { 'Content-Type': 'application/json' },
-			...rest,
-		});
-		const type = res.headers.get('content-type') || '';
-		const isJSON = type.includes('application/json');
-		const body = isJSON ? await res.json() : await res.text();
-		if (!res.ok) {
-			const message = isJSON
-				? body?.error || body?.message || res.statusText
-				: typeof body === 'string'
-				? body
-				: res.statusText;
-			const err = new Error(message);
-			err.status = res.status;
-			err.payload = body;
-			throw err;
-		}
-		return body;
-	} finally {
-		clearTimeout(to);
-	}
-}
-
+/* ==================== Helpers ==================== */
 const stripHtml = (s) =>
 	typeof s === 'string'
 		? s
@@ -117,7 +89,7 @@ function createAgTheme() {
 	});
 }
 
-// ==================== Grid ====================
+/* ==================== Grid ==================== */
 function makeGrid() {
 	const AG = getAgGrid();
 	const gridDiv = document.getElementById('lionGrid');
@@ -135,120 +107,10 @@ function makeGrid() {
     .badge--secondary{background:#eee;color:#333}
   `;
 	document.head.appendChild(style);
-	// ===== Helpers p/ parsing/format =====
-	const BRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
-	const INT = new Intl.NumberFormat('pt-BR');
 
-	function stripHtml(s) {
-		return String(s ?? '')
-			.replace(/<[^>]*>/g, ' ')
-			.replace(/\s+/g, ' ')
-			.trim();
-	}
-
-	// "R$ 1.618,65"  | " -R$ 1,00 " | "2.360,73" -> number
-	function toNumberBR(s) {
-		if (s == null) return null;
-		const raw = String(s).trim();
-		if (!raw) return null;
-		const sign = raw.includes('-') ? -1 : 1;
-		const only = raw
-			.replace(/[^\d,.-]/g, '')
-			.replace(/\./g, '')
-			.replace(',', '.');
-		const n = Number(only);
-		return Number.isFinite(n) ? sign * n : null;
-	}
-
-	function currencyFormatter(p) {
-		const v = p.value;
-		if (v == null || Number.isNaN(v)) return '';
-		return BRL.format(v);
-	}
-
-	function intFormatter(p) {
-		const v = Number(p.value);
-		if (!Number.isFinite(v)) return '';
-		return INT.format(v);
-	}
-
-	// extrai o texto (e uma "classe de cor") a partir do HTML dos status
-	function parseBadgeHtml(html) {
-		const txt = stripHtml(html).toUpperCase(); // ACTIVE / INACTIVE …
-		const lower = txt.toLowerCase();
-		let color = 'secondary';
-		if (/(success|active|ok|ativo)/i.test(html) || /(success|active|ok|ativo)/i.test(lower))
-			color = 'success';
-		else if (
-			/(danger|error|inactive|inativo|blocked|ban)/i.test(html) ||
-			/(danger|error|inactive|inativo|blocked|ban)/i.test(lower)
-		)
-			color = 'danger';
-		else if (/(warning|pending|aguard|hold)/i.test(html) || /(warning|pending)/i.test(lower))
-			color = 'warning';
-		else if (/(info)/i.test(html)) color = 'info';
-		return { label: txt || '—', color };
-	}
-
-	const COLOR_CLASS = {
-		success: 'bg-green-500 text-white',
-		danger: 'bg-red-600 text-white',
-		warning: 'bg-yellow-500 text-black',
-		info: 'bg-cyan-500 text-white',
-		secondary: 'bg-gray-500 text-white',
-	};
-
-	function statusRenderer(p) {
-		const { label, color } = parseBadgeHtml(p.value);
-		const span = document.createElement('span');
-		span.className = `px-2 py-[2px] rounded-full text-xs font-semibold ${
-			COLOR_CLASS[color] || COLOR_CLASS.secondary
-		}`;
-		span.textContent = label;
-		return span;
-	}
-
-	// "0/3" em chip
-	function chipCountRenderer(p) {
-		const txt = stripHtml(p.value); // deve virar "0/3"
-		const span = document.createElement('span');
-		span.className = `px-2 py-[2px] rounded-full text-xs font-semibold ${COLOR_CLASS.success}`;
-		span.textContent = txt || '—';
-		return span;
-	}
-
-	// checkbox “selecionar linha”
-	function selectCellRenderer(p) {
-		const id = p?.data?.id || '';
-		const wrap = document.createElement('label');
-		wrap.style.display = 'flex';
-		wrap.style.alignItems = 'center';
-		wrap.style.height = '100%';
-
-		const input = document.createElement('input');
-		input.type = 'checkbox';
-		input.name = 'selected-campaigns';
-		input.dataset.selectId = id;
-		input.style.width = '18px';
-		input.style.height = '18px';
-		input.addEventListener('change', (e) => {
-			// se quiser, dispare um evento global aqui
-			// window.dispatchEvent(new CustomEvent('row-select', { detail: { id, checked: e.target.checked } }));
-		});
-
-		wrap.appendChild(input);
-		return wrap;
-	}
-	// ===== Columns (na ordem do layout legado) =====
+	// ===== Columns =====
 	const columnDefs = [
-		{
-			headerName: '',
-			checkboxSelection: true,
-			headerCheckboxSelection: true,
-			width: 30,
-			pinned: 'left',
-			suppressHeaderFilterButton: true,
-		},
+		{ headerName: 'ID', field: 'id', minWidth: 160, pinned: 'left', flex: 0.9 },
 		{
 			headerName: 'Perfil',
 			field: 'profile_name',
@@ -257,8 +119,6 @@ function makeGrid() {
 			flex: 1.2,
 			tooltipValueGetter: (p) => p.value || '',
 		},
-
-		// 2) BM
 		{
 			headerName: 'BM',
 			field: 'bc_name',
@@ -267,8 +127,6 @@ function makeGrid() {
 			flex: 1.0,
 			tooltipValueGetter: (p) => p.value || '',
 		},
-
-		// 3) Conta
 		{
 			headerName: 'Conta',
 			field: 'account_name',
@@ -278,16 +136,14 @@ function makeGrid() {
 			tooltipValueGetter: (p) => p.value || '',
 		},
 
-		// 4) Status (conta)
 		{
-			headerName: 'Status',
+			headerName: 'Status (Conta)',
 			field: 'account_status',
 			cellRenderer: statusRenderer,
 			minWidth: 140,
 			flex: 0.7,
 		},
 
-		// 5) Limite Diário
 		{
 			headerName: 'Limite Diário',
 			field: 'account_limit',
@@ -298,7 +154,6 @@ function makeGrid() {
 			flex: 0.8,
 		},
 
-		// 6) Campanha
 		{
 			headerName: 'Campanha',
 			field: 'campaign_name',
@@ -307,17 +162,14 @@ function makeGrid() {
 			flex: 1.6,
 			tooltipValueGetter: (p) => p.value || '',
 		},
-
-		// 7) utm_camp
 		{
-			headerName: 'utm_camp',
+			headerName: 'UTM',
 			field: 'utm_campaign',
 			minWidth: 160,
 			flex: 0.9,
 			tooltipValueGetter: (p) => p.value || '',
 		},
 
-		// 9) Bid
 		{
 			headerName: 'Bid',
 			field: 'bid',
@@ -327,17 +179,13 @@ function makeGrid() {
 			minWidth: 110,
 			flex: 0.6,
 		},
-
-		// 10) Status Campanha
 		{
-			headerName: 'Status Campanha',
+			headerName: 'Status (Campanha)',
 			field: 'campaign_status',
 			cellRenderer: statusRenderer,
 			minWidth: 160,
 			flex: 0.8,
 		},
-
-		// 11) Orçamento
 		{
 			headerName: 'Orçamento',
 			field: 'budget',
@@ -348,27 +196,6 @@ function makeGrid() {
 			flex: 0.7,
 		},
 
-		// 12) Xabu Ads
-		{
-			headerName: 'Xabu Ads',
-			field: 'xabu_ads',
-			minWidth: 110,
-			maxWidth: 140,
-			cellRenderer: chipCountRenderer,
-			tooltipValueGetter: (p) => stripHtml(p.data?.xabu_ads),
-		},
-
-		// 13) Xabu Adsets
-		{
-			headerName: 'Xabu Adsets',
-			field: 'xabu_adsets',
-			minWidth: 120,
-			maxWidth: 150,
-			cellRenderer: chipCountRenderer,
-			tooltipValueGetter: (p) => stripHtml(p.data?.xabu_adsets),
-		},
-
-		// 14) Imp
 		{
 			headerName: 'Imp',
 			field: 'impressions',
@@ -377,20 +204,16 @@ function makeGrid() {
 			minWidth: 110,
 			flex: 0.7,
 		},
-
-		// 15) Clicks
 		{
-			headerName: 'Clicks',
+			headerName: 'Cliques',
 			field: 'clicks',
 			type: 'rightAligned',
 			valueFormatter: intFormatter,
 			minWidth: 100,
 			flex: 0.6,
 		},
-
-		// 16) Visitors
 		{
-			headerName: 'Visitors',
+			headerName: 'Visitas',
 			field: 'visitors',
 			type: 'rightAligned',
 			valueFormatter: intFormatter,
@@ -398,7 +221,6 @@ function makeGrid() {
 			flex: 0.6,
 		},
 
-		// 17) CPC
 		{
 			headerName: 'CPC',
 			field: 'cpc',
@@ -408,18 +230,14 @@ function makeGrid() {
 			minWidth: 100,
 			flex: 0.6,
 		},
-
-		// 18) Convs
 		{
-			headerName: 'Convs',
+			headerName: 'Conv.',
 			field: 'conversions',
 			type: 'rightAligned',
 			valueFormatter: intFormatter,
 			minWidth: 100,
 			flex: 0.6,
 		},
-
-		// 19) CPA FB
 		{
 			headerName: 'CPA FB',
 			field: 'cpa_fb',
@@ -430,9 +248,8 @@ function makeGrid() {
 			flex: 0.6,
 		},
 
-		// 20) Real Convs
 		{
-			headerName: 'Real Convs',
+			headerName: 'Conv. Real',
 			field: 'real_conversions',
 			type: 'rightAligned',
 			valueGetter: (p) => Number(stripHtml(p.data?.real_conversions) || NaN),
@@ -440,8 +257,6 @@ function makeGrid() {
 			minWidth: 120,
 			flex: 0.7,
 		},
-
-		// 21) CPA Real
 		{
 			headerName: 'CPA Real',
 			field: 'real_cpa',
@@ -452,7 +267,6 @@ function makeGrid() {
 			flex: 0.6,
 		},
 
-		// 22) Gasto
 		{
 			headerName: 'Gasto',
 			field: 'spent',
@@ -462,10 +276,8 @@ function makeGrid() {
 			minWidth: 120,
 			flex: 0.8,
 		},
-
-		// 23) Feito fb
 		{
-			headerName: 'Feito fb',
+			headerName: 'FB Rev',
 			field: 'fb_revenue',
 			type: 'rightAligned',
 			valueGetter: (p) => toNumberBR(p.data?.fb_revenue),
@@ -473,10 +285,8 @@ function makeGrid() {
 			minWidth: 120,
 			flex: 0.8,
 		},
-
-		// 24) Feito psh
 		{
-			headerName: 'Feito psh',
+			headerName: 'Push Rev',
 			field: 'push_revenue',
 			type: 'rightAligned',
 			valueGetter: (p) => toNumberBR(p.data?.push_revenue),
@@ -485,7 +295,6 @@ function makeGrid() {
 			flex: 0.8,
 		},
 
-		// 25) Feito (completo)
 		{
 			headerName: 'Feito',
 			field: 'revenue',
@@ -494,8 +303,6 @@ function makeGrid() {
 			flex: 1.2,
 			tooltipValueGetter: (p) => p.value || '',
 		},
-
-		// 26) MX
 		{
 			headerName: 'MX',
 			field: 'mx',
@@ -504,7 +311,6 @@ function makeGrid() {
 			flex: 0.7,
 		},
 
-		// 27) Lucro
 		{
 			headerName: 'Lucro',
 			field: 'profit',
@@ -534,13 +340,69 @@ function makeGrid() {
 		defaultColDef,
 		rowSelection: 'multiple',
 		suppressRowClickSelection: true,
-		rowData: [],
-		pagination: true,
-		paginationPageSize: 50,
+
+		// ===== SSRM =====
+		rowModelType: 'serverSide',
+		serverSideStoreType: 'partial',
+		cacheBlockSize: 200,
+		maxBlocksInCache: 4,
+
 		animateRows: true,
 		sideBar: { toolPanels: ['columns', 'filters'], defaultToolPanel: null, position: 'right' },
 		theme: createAgTheme(),
+
 		onGridReady(params) {
+			// Datasource compat (v29–v31+)
+			const dataSource = {
+				getRows: async (dsParams) => {
+					try {
+						const payload = dsParams.request; // { startRow, endRow, sortModel, filterModel }
+						// Tenta POST primeiro (padrão SSRM moderno)
+						let res = await fetch(ENDPOINTS.SSRM, {
+							method: 'POST',
+							headers: { 'Content-Type': 'application/json' },
+							body: JSON.stringify(payload),
+						});
+
+						// Se o back NÃO aceitar POST, tenta GET como fallback (útil em mock simples)
+						if (!res.ok) {
+							const qs = new URLSearchParams({
+								startRow: String(payload.startRow ?? 0),
+								endRow: String(payload.endRow ?? 200),
+								sortModel: JSON.stringify(payload.sortModel || []),
+								filterModel: JSON.stringify(payload.filterModel || {}),
+							});
+							res = await fetch(`${ENDPOINTS.SSRM}&${qs.toString()}`, { method: 'GET' });
+						}
+
+						const data = await res.json().catch(() => ({}));
+						if (!res.ok) throw new Error(data?.error || res.statusText);
+
+						const rows = Array.isArray(data?.rows) ? data.rows : [];
+						const lastRow = Number.isInteger(data?.lastRow)
+							? data.lastRow
+							: rows.length < payload.endRow - payload.startRow
+							? payload.startRow + rows.length
+							: -1;
+
+						dsParams.success({ rowData: rows, rowCount: lastRow });
+					} catch (e) {
+						console.error('[SSRM] getRows failed:', e);
+						try {
+							dsParams.fail();
+						} catch {}
+					}
+				},
+			};
+
+			// v31 tem setServerSideDatasource; em algumas builds, setGridOption também funciona
+			if (typeof params.api.setServerSideDatasource === 'function') {
+				params.api.setServerSideDatasource(dataSource);
+			} else {
+				// fallback raro
+				params.api.setGridOption?.('serverSideDatasource', dataSource);
+			}
+
 			setTimeout(() => {
 				try {
 					params.api.sizeColumnsToFit();
@@ -549,70 +411,29 @@ function makeGrid() {
 		},
 	};
 
-	// AG Grid 31+: createGrid retorna a API
-	const api = getAgGrid().createGrid(gridDiv, gridOptions);
-	return { api, gridDiv };
+	// Compat criar grid (v31: createGrid retorna API; v29/30: new Grid e API via gridOptions.api)
+	let apiOrInstance;
+	if (typeof AG.createGrid === 'function') {
+		apiOrInstance = AG.createGrid(gridDiv, gridOptions);
+	} else {
+		apiOrInstance = new AG.Grid(gridDiv, gridOptions);
+	}
+	return { api: gridOptions.api || apiOrInstance, gridDiv };
 }
 
-// ==================== Page Module ====================
+/* ==================== Page Module ==================== */
 const LionPage = (() => {
 	let gridRef = null;
 
-	function setData(rows) {
-		const api = gridRef?.api;
-		if (!api) return;
-		const data = Array.isArray(rows) ? rows : [];
-		if (api.setGridOption) api.setGridOption('rowData', data);
-		else if (api.setRowData) api.setRowData(data);
-		try {
-			api.sizeColumnsToFit?.();
-		} catch {}
-	}
-
-	async function loadFromUrl(url) {
-		const api = gridRef?.api;
-		if (!api || !url) return;
-		try {
-			api.showLoadingOverlay?.();
-			const json = await fetchJSON(url);
-			const rows = Array.isArray(json) ? json : Array.isArray(json?.rows) ? json.rows : [];
-			setData(rows);
-			if (!rows.length) api.showNoRowsOverlay?.();
-			else api.hideOverlay?.();
-		} catch (err) {
-			console.error('[LionGrid] erro ao carregar:', err);
-			setData([]);
-			gridRef?.api?.showNoRowsOverlay?.();
-		}
-	}
-
-	// público
 	function mount() {
 		gridRef = makeGrid();
-
-		// 1) se o back injetar direto
-		if (Array.isArray(window.LION_DATA)) {
-			setData(window.LION_DATA);
-			return;
-		}
-
-		// 2) carrega de URL (query ?data=... ou <meta name="lion-data-url" .../>)
-		const qsUrl = new URLSearchParams(location.search).get('data');
-		const metaUrl = document.querySelector('meta[name="lion-data-url"]')?.content;
-		const fallbackUrl = '/public/js/clean-dump.json'; // ajuste se necessário
-		loadFromUrl(qsUrl || metaUrl || fallbackUrl);
 	}
 
-	return { mount, setData, loadFromUrl };
+	if (document.readyState !== 'loading') mount();
+	else document.addEventListener('DOMContentLoaded', mount);
+
+	return { mount };
 })();
 
-// Boot
-if (document.readyState !== 'loading') LionPage.mount();
-else document.addEventListener('DOMContentLoaded', () => LionPage.mount());
-
-// Expondo API global
-globalThis.LionGrid = {
-	init: (rows) => LionPage.setData(rows), // seta dados diretamente (array de objetos)
-	setData: (rows) => LionPage.setData(rows),
-	loadFromUrl: (url) => LionPage.loadFromUrl(url),
-};
+// Expondo API global vazia (só pra manter padrão com outros projetos)
+globalThis.LionGrid = globalThis.LionGrid || {};
