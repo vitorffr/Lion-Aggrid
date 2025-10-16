@@ -59,20 +59,82 @@ const intFormatter = (p) => {
 	return n == null ? p.value ?? '' : intFmt.format(Math.round(n));
 };
 
-// Renderers no front (sem HTML vindo do back)
-const statusRenderer = (p) => {
-	const txt = strongText(p.value || '');
-	const span = document.createElement('span');
-	const active = String(txt).toUpperCase() === 'ACTIVE';
-	span.className = 'badge ' + (active ? 'badge--success' : 'badge--secondary');
-	span.textContent = txt || '-';
-	return span;
+const selectCellRenderer = (p) => {
+	const id = p?.data?.id || '';
+	const wrap = document.createElement('label');
+	wrap.style.display = 'flex';
+	wrap.style.alignItems = 'center';
+	wrap.style.height = '100%';
+
+	const input = document.createElement('input');
+	input.type = 'checkbox';
+	input.name = 'selected-campaigns';
+	input.dataset.selectId = id;
+	input.style.width = '18px';
+	input.style.height = '18px';
+
+	wrap.appendChild(input);
+	return wrap;
 };
 
-// ==================== Tema (opcional) ====================
+/* ==================== KTUI Modal helpers ==================== */
+function ensureKtModalDom() {
+	if (document.getElementById('lionKtModal')) return;
+	const tpl = document.createElement('div');
+	tpl.innerHTML = `
+  <div class="kt-modal hidden" data-kt-modal="true" id="lionKtModal" aria-hidden="true">
+    <div class="kt-modal-content max-w-[420px] top-[10%]">
+      <div class="kt-modal-header">
+        <h3 class="kt-modal-title">Detalhes</h3>
+        <button type="button" class="kt-modal-close" aria-label="Close" data-kt-modal-dismiss="#lionKtModal">✕</button>
+      </div>
+      <div class="kt-modal-body">
+        <pre class="whitespace-pre-wrap text-sm"></pre>
+      </div>
+    </div>
+  </div>`;
+	document.body.appendChild(tpl.firstElementChild);
+
+	document
+		.querySelector('[data-kt-modal-dismiss="#lionKtModal"]')
+		?.addEventListener('click', () => closeKTModal('#lionKtModal'));
+	document.getElementById('lionKtModal')?.addEventListener('click', (e) => {
+		if (e.target.id === 'lionKtModal') closeKTModal('#lionKtModal');
+	});
+}
+
+function openKTModal(selector = '#lionKtModal') {
+	const el = document.querySelector(selector);
+	if (!el) return;
+	el.style.display = 'block';
+	el.classList.add('kt-modal--open');
+	el.classList.remove('hidden');
+	el.removeAttribute('aria-hidden');
+}
+function closeKTModal(selector = '#lionKtModal') {
+	const el = document.querySelector(selector);
+	if (!el) return;
+	el.style.display = 'none';
+	el.classList.remove('kt-modal--open');
+	el.classList.add('hidden');
+	el.setAttribute('aria-hidden', 'true');
+}
+function showKTModal({ title = 'Detalhes', content = '' } = {}) {
+	ensureKtModalDom();
+	const modal = document.querySelector('#lionKtModal');
+	if (!modal) return;
+	const titleEl = modal.querySelector('.kt-modal-title');
+	const bodyEl = modal.querySelector('.kt-modal-body > pre, .kt-modal-body');
+	if (titleEl) titleEl.textContent = title;
+	if (bodyEl) bodyEl.textContent = content;
+	openKTModal('#lionKtModal');
+}
+
+/* ==================== Tema (opcional) ==================== */
 function createAgTheme() {
 	const AG = getAgGrid();
 	const { themeQuartz, iconSetMaterial } = AG;
+	if (!themeQuartz || !iconSetMaterial) return undefined;
 	return themeQuartz.withPart(iconSetMaterial).withParams({
 		browserColorScheme: 'dark',
 		backgroundColor: '#0C0C0D',
@@ -99,20 +161,50 @@ function makeGrid() {
 	}
 	gridDiv.classList.add('ag-theme-quartz');
 
-	// estilos mínimos para badge
-	const style = document.createElement('style');
-	style.textContent = `
-    .badge{display:inline-block;padding:2px 6px;border-radius:6px;font-size:11px;font-weight:600}
-    .badge--success{background:#e8f7ef;color:#0f8a4b}
-    .badge--secondary{background:#eee;color:#333}
-  `;
-	document.head.appendChild(style);
+	// colunas que DEVEM abrir modal ao clicar
+	const MODAL_FIELDS = new Set([
+		'profile_name',
+		'bc_name',
+		'account_name',
+		'account_status',
+		'account_limit',
+		'campaign_name',
+		'utm_campaign',
+		'bid',
+		'campaign_status',
+		'budget',
+		'xabu_ads',
+		'xabu_adsets',
+		'cpc',
+		'cpa_fb',
+		'real_conversions',
+		'real_cpa',
+		'spent',
+		'fb_revenue',
+		'push_revenue',
+		'revenue',
+		'mx',
+		'profit',
+	]);
 
 	// ===== Columns =====
 	const columnDefs = [
-		{ headerName: 'ID', field: 'id', minWidth: 160, pinned: 'left', flex: 0.9 },
 		{
-			headerName: 'Perfil',
+			headerName: '',
+			field: 'select',
+			pinned: 'left',
+			width: 50,
+			minWidth: 50,
+			maxWidth: 50,
+			resizable: false,
+			suppressSizeToFit: true,
+			suppressAutoSize: true,
+			cellRenderer: selectCellRenderer,
+		},
+
+		// Textos / identificação
+		{
+			headerName: 'Profile',
 			field: 'profile_name',
 			valueGetter: (p) => stripHtml(p.data?.profile_name),
 			minWidth: 180,
@@ -120,7 +212,7 @@ function makeGrid() {
 			tooltipValueGetter: (p) => p.value || '',
 		},
 		{
-			headerName: 'BM',
+			headerName: 'BC',
 			field: 'bc_name',
 			valueGetter: (p) => stripHtml(p.data?.bc_name),
 			minWidth: 160,
@@ -136,16 +228,15 @@ function makeGrid() {
 			tooltipValueGetter: (p) => p.value || '',
 		},
 
+		// Status (badges/strings)
 		{
-			headerName: 'Status (Conta)',
+			headerName: 'Status Conta',
 			field: 'account_status',
-			cellRenderer: statusRenderer,
 			minWidth: 140,
 			flex: 0.7,
 		},
-
 		{
-			headerName: 'Limite Diário',
+			headerName: 'Limite',
 			field: 'account_limit',
 			type: 'rightAligned',
 			valueGetter: (p) => toNumberBR(p.data?.account_limit),
@@ -170,6 +261,7 @@ function makeGrid() {
 			tooltipValueGetter: (p) => p.value || '',
 		},
 
+		// Valores (moeda)
 		{
 			headerName: 'Bid',
 			field: 'bid',
@@ -180,14 +272,13 @@ function makeGrid() {
 			flex: 0.6,
 		},
 		{
-			headerName: 'Status (Campanha)',
+			headerName: 'Status Campanha',
 			field: 'campaign_status',
-			cellRenderer: statusRenderer,
 			minWidth: 160,
 			flex: 0.8,
 		},
 		{
-			headerName: 'Orçamento',
+			headerName: 'Budget',
 			field: 'budget',
 			type: 'rightAligned',
 			valueGetter: (p) => toNumberBR(p.data?.budget),
@@ -196,8 +287,25 @@ function makeGrid() {
 			flex: 0.7,
 		},
 
+		// Chips 0/3 e 0/1
 		{
-			headerName: 'Imp',
+			headerName: 'Ads',
+			field: 'xabu_ads',
+			minWidth: 100,
+			maxWidth: 120,
+			tooltipValueGetter: (p) => stripHtml(p.data?.xabu_ads),
+		},
+		{
+			headerName: 'Adsets',
+			field: 'xabu_adsets',
+			minWidth: 110,
+			maxWidth: 130,
+			tooltipValueGetter: (p) => stripHtml(p.data?.xabu_adsets),
+		},
+
+		// Métricas inteiras
+		{
+			headerName: 'Impr.',
 			field: 'impressions',
 			type: 'rightAligned',
 			valueFormatter: intFormatter,
@@ -213,7 +321,7 @@ function makeGrid() {
 			flex: 0.6,
 		},
 		{
-			headerName: 'Visitas',
+			headerName: 'Visit.',
 			field: 'visitors',
 			type: 'rightAligned',
 			valueFormatter: intFormatter,
@@ -221,6 +329,7 @@ function makeGrid() {
 			flex: 0.6,
 		},
 
+		// Custo/conversão
 		{
 			headerName: 'CPC',
 			field: 'cpc',
@@ -247,7 +356,6 @@ function makeGrid() {
 			minWidth: 110,
 			flex: 0.6,
 		},
-
 		{
 			headerName: 'Conv. Real',
 			field: 'real_conversions',
@@ -267,6 +375,7 @@ function makeGrid() {
 			flex: 0.6,
 		},
 
+		// Dinheiro
 		{
 			headerName: 'Gasto',
 			field: 'spent',
@@ -295,8 +404,9 @@ function makeGrid() {
 			flex: 0.8,
 		},
 
+		// Compostos
 		{
-			headerName: 'Feito',
+			headerName: 'Revenue',
 			field: 'revenue',
 			valueGetter: (p) => stripHtml(p.data?.revenue),
 			minWidth: 220,
@@ -310,9 +420,8 @@ function makeGrid() {
 			valueGetter: (p) => stripHtml(p.data?.mx),
 			flex: 0.7,
 		},
-
 		{
-			headerName: 'Lucro',
+			headerName: 'Profit',
 			field: 'profit',
 			type: 'rightAligned',
 			valueGetter: (p) => toNumberBR(p.data?.profit),
@@ -335,6 +444,44 @@ function makeGrid() {
 		enableValue: true,
 	};
 
+	// helper para exibir no modal exatamente o que o user vê
+	function resolveDisplayFromParams(params) {
+		// se o grid já formatou (ex.: valueFormatter), vem aqui
+		if (params.valueFormatted != null && params.valueFormatted !== '') {
+			return String(params.valueFormatted);
+		}
+		// fallback: limpa HTML e tenta números
+		const field = params.colDef?.field;
+		const val = params.value;
+		if (typeof val === 'string') return stripHtml(val);
+		if (val == null) return '';
+		if (
+			[
+				'account_limit',
+				'bid',
+				'budget',
+				'cpc',
+				'cpa_fb',
+				'real_cpa',
+				'spent',
+				'fb_revenue',
+				'push_revenue',
+				'profit',
+			].includes(field)
+		) {
+			const n = toNumberBR(val);
+			return n == null ? '' : brlFmt.format(n);
+		}
+		if (['impressions', 'clicks', 'visitors', 'conversions', 'real_conversions'].includes(field)) {
+			const n = Number(val);
+			return Number.isFinite(n) ? intFmt.format(n) : String(val);
+		}
+		if (field === 'account_status' || field === 'campaign_status') {
+			return strongText(String(val || ''));
+		}
+		return String(val);
+	}
+
 	const gridOptions = {
 		columnDefs,
 		defaultColDef,
@@ -351,26 +498,46 @@ function makeGrid() {
 		sideBar: { toolPanels: ['columns', 'filters'], defaultToolPanel: null, position: 'right' },
 		theme: createAgTheme(),
 
+		// abre modal sem mexer no renderer/visual
+		onCellClicked(params) {
+			const field = params.colDef?.field;
+			if (!field || !MODAL_FIELDS.has(field)) return;
+
+			// pega o texto exibido (ou próximo disso) e mostra no modal
+			const display = resolveDisplayFromParams(params);
+			const title = params.colDef?.headerName || 'Detalhes';
+			showKTModal({ title, content: display || '(vazio)' });
+		},
+
 		onGridReady(params) {
-			// Datasource compat (v29–v31+)
-			const dataSource = {
+			const ds = {
 				getRows: async (dsParams) => {
+					const callSuccess = (payload) => {
+						if (typeof dsParams.success === 'function') dsParams.success(payload);
+						else if (typeof dsParams.successCallback === 'function')
+							dsParams.successCallback(payload.rowData, payload.rowCount);
+					};
+					const callFail = () => {
+						if (typeof dsParams.fail === 'function') dsParams.fail();
+						else if (typeof dsParams.failCallback === 'function') dsParams.failCallback();
+					};
+
 					try {
-						const payload = dsParams.request; // { startRow, endRow, sortModel, filterModel }
-						// Tenta POST primeiro (padrão SSRM moderno)
+						const rq = dsParams.request; // { startRow, endRow, sortModel, filterModel }
+						// tenta POST (padrão)
 						let res = await fetch(ENDPOINTS.SSRM, {
 							method: 'POST',
 							headers: { 'Content-Type': 'application/json' },
-							body: JSON.stringify(payload),
+							body: JSON.stringify(rq),
 						});
 
-						// Se o back NÃO aceitar POST, tenta GET como fallback (útil em mock simples)
+						// fallback GET (mock simples)
 						if (!res.ok) {
 							const qs = new URLSearchParams({
-								startRow: String(payload.startRow ?? 0),
-								endRow: String(payload.endRow ?? 200),
-								sortModel: JSON.stringify(payload.sortModel || []),
-								filterModel: JSON.stringify(payload.filterModel || {}),
+								startRow: String(rq.startRow ?? 0),
+								endRow: String(rq.endRow ?? 200),
+								sortModel: JSON.stringify(rq.sortModel || []),
+								filterModel: JSON.stringify(rq.filterModel || {}),
 							});
 							res = await fetch(`${ENDPOINTS.SSRM}&${qs.toString()}`, { method: 'GET' });
 						}
@@ -381,26 +548,22 @@ function makeGrid() {
 						const rows = Array.isArray(data?.rows) ? data.rows : [];
 						const lastRow = Number.isInteger(data?.lastRow)
 							? data.lastRow
-							: rows.length < payload.endRow - payload.startRow
-							? payload.startRow + rows.length
+							: rows.length < rq.endRow - rq.startRow
+							? rq.startRow + rows.length
 							: -1;
 
-						dsParams.success({ rowData: rows, rowCount: lastRow });
+						callSuccess({ rowData: rows, rowCount: lastRow });
 					} catch (e) {
 						console.error('[SSRM] getRows failed:', e);
-						try {
-							dsParams.fail();
-						} catch {}
+						callFail();
 					}
 				},
 			};
 
-			// v31 tem setServerSideDatasource; em algumas builds, setGridOption também funciona
 			if (typeof params.api.setServerSideDatasource === 'function') {
-				params.api.setServerSideDatasource(dataSource);
+				params.api.setServerSideDatasource(ds);
 			} else {
-				// fallback raro
-				params.api.setGridOption?.('serverSideDatasource', dataSource);
+				params.api.setGridOption?.('serverSideDatasource', ds);
 			}
 
 			setTimeout(() => {
@@ -411,12 +574,13 @@ function makeGrid() {
 		},
 	};
 
-	// Compat criar grid (v31: createGrid retorna API; v29/30: new Grid e API via gridOptions.api)
+	// createGrid (v31+) / fallback (v29/30)
 	let apiOrInstance;
-	if (typeof AG.createGrid === 'function') {
-		apiOrInstance = AG.createGrid(gridDiv, gridOptions);
+	const AGg = getAgGrid();
+	if (typeof AGg.createGrid === 'function') {
+		apiOrInstance = AGg.createGrid(gridDiv, gridOptions);
 	} else {
-		apiOrInstance = new AG.Grid(gridDiv, gridOptions);
+		apiOrInstance = new AGg.Grid(gridDiv, gridOptions);
 	}
 	return { api: gridOptions.api || apiOrInstance, gridDiv };
 }
@@ -435,5 +599,5 @@ const LionPage = (() => {
 	return { mount };
 })();
 
-// Expondo API global vazia (só pra manter padrão com outros projetos)
+// Expondo API global vazia (padrão)
 globalThis.LionGrid = globalThis.LionGrid || {};

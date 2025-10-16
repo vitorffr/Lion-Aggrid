@@ -114,7 +114,7 @@ async function ssrm(req, env) {
 
 	// Carrega arquivo JSON “fonte de verdade”
 	// Se você estiver em Cloudflare Pages, isso funciona:
-	const res = await fetch(new URL('/public/js/dump-convertido.json', req.url));
+	const res = await fetch(new URL('/public/js/clean-dump.json', req.url));
 	const full = await res.json(); // array de linhas
 
 	let rows = clean ? full.map(cleanRow) : full;
