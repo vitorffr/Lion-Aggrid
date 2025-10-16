@@ -46,6 +46,32 @@ const toNumberBR = (s) => {
 	const n = parseFloat(raw);
 	return Number.isFinite(n) ? n : null;
 };
+// === Status "pill" verde pra ACTIVE, cinza caso contrário ===
+function statusPillRenderer(p) {
+	// pega o texto limpo (suporta HTML vindo do back)
+	const raw = p.value ?? '';
+	const label = (strongText(raw) || stripHtml(raw) || '—').toUpperCase();
+	const isActive = label === 'ACTIVE';
+
+	const span = document.createElement('span');
+	span.textContent = label || '—';
+
+	// estilos inline pra não interferir no tema da AG Grid
+	span.style.display = 'inline-block';
+	span.style.padding = '2px 8px';
+	span.style.borderRadius = '999px';
+	span.style.fontSize = '12px';
+	span.style.fontWeight = '600';
+	span.style.lineHeight = '1.4';
+	if (isActive) {
+		span.style.background = '#e8f7ef';
+		span.style.color = '#0f8a4b';
+	} else {
+		span.style.background = '#eee';
+		span.style.color = '#444';
+	}
+	return span;
+}
 
 const brlFmt = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 const intFmt = new Intl.NumberFormat('pt-BR');
@@ -234,6 +260,7 @@ function makeGrid() {
 			field: 'account_status',
 			minWidth: 140,
 			flex: 0.7,
+			cellRenderer: statusPillRenderer, // <== AQUI
 		},
 		{
 			headerName: 'Limite',
@@ -276,6 +303,7 @@ function makeGrid() {
 			field: 'campaign_status',
 			minWidth: 160,
 			flex: 0.8,
+			cellRenderer: statusPillRenderer, // <== E AQUI
 		},
 		{
 			headerName: 'Budget',
@@ -539,7 +567,11 @@ function makeGrid() {
 								sortModel: JSON.stringify(rq.sortModel || []),
 								filterModel: JSON.stringify(rq.filterModel || {}),
 							});
-							res = await fetch(`${ENDPOINTS.SSRM}&${qs.toString()}`, { method: 'GET' });
+							res = await fetch(
+								`${ENDPOINTS.SSRM}&${qs.toString()}`,
+								{ method: 'GET' },
+								{ credentials: 'same-origin' | 'include' }
+							);
 						}
 
 						const data = await res.json().catch(() => ({}));

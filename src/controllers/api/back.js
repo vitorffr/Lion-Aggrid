@@ -1,6 +1,6 @@
 // routes/lionRows.js
-// Handler SSRM que lê um JSON local, aplica limpeza/filtro/sort/paginação por bloco
-// e responde no formato que o AG Grid Server-Side espera.
+// SSRM handler: lê um JSON estático, limpa/ordena/filtra/pagina
+// e responde no formato esperado pelo AG Grid Server-Side.
 
 const stripHtml = (s) =>
 	typeof s === 'string'
@@ -16,15 +16,19 @@ const strongText = (s) => {
 	return stripHtml(m ? m[1] : s);
 };
 
+// "R$ 1.618,65" | "-R$ 1,00" | "2.360,73" -> Number
 const toNumberBR = (s) => {
 	if (s == null) return null;
-	if (typeof s === 'number') return s;
-	const raw = String(s)
+	if (typeof s === 'number' && Number.isFinite(s)) return s;
+	const raw = String(s).trim();
+	if (!raw) return null;
+	const sign = raw.includes('-') ? -1 : 1;
+	const only = raw
 		.replace(/[^\d,.-]/g, '')
 		.replace(/\./g, '')
 		.replace(',', '.');
-	const n = parseFloat(raw);
-	return Number.isFinite(n) ? n : null;
+	const n = Number(only);
+	return Number.isFinite(n) ? sign * n : null;
 };
 
 function cleanRow(r) {
@@ -33,7 +37,7 @@ function cleanRow(r) {
 		profile_name: stripHtml(r.profile_name),
 		bc_name: stripHtml(r.bc_name),
 		account_name: stripHtml(r.account_name),
-		account_status: strongText(r.account_status), // só o conteúdo do <strong>
+		account_status: strongText(r.account_status), // extrai texto do <strong>
 		campaign_name: stripHtml(r.campaign_name),
 		revenue: stripHtml(r.revenue),
 		mx: stripHtml(r.mx),
@@ -105,28 +109,125 @@ function applyFilters(rows, filterModel) {
 	return rows.filter((r) => checks.every((fn) => fn(r)));
 }
 
-async function ssrm(req, env) {
+// ---- Carregamento do dump via ASSETS ----
+// No wrangler.toml, configure:
+// [assets]
+// binding = "ASSETS"
+// directory = "./public"
+//
+// Se o arquivo estiver em ./public/constants/clean-dump.json,
+// o path aqui é "/constants/clean-dump.json" (sem /public).
+async function loadDump(request, env) {
+	// cache em memória do worker
+	if (globalThis.__LION_DUMP__) return globalThis.__LION_DUMP__;
+
+	const assetPath = '/constants/clean-dump.json';
+
+	// Tenta via binding ASSETS (Workers)
+	if (env.ASSETS && typeof env.ASSETS.fetch === 'function') {
+		const assetReq = new Request(new URL(assetPath, request.url), request);
+		const res = await env.ASSETS.fetch(assetReq);
+		if (!res || !res.ok) {
+			const body = await res?.text?.().catch(() => '');
+			throw new Error(
+				`Falha ao carregar ${assetPath} via ASSETS (${res?.status}). ${
+					body?.slice(0, 120) || ''
+				}`
+			);
+		}
+		const json = await res.json();
+		globalThis.__LION_DUMP__ = json;
+		return json;
+	}
+
+	// Fallback: se estiver em Pages Functions ou servindo /public manualmente
+	const res = await fetch(new URL(`/public${assetPath}`, request.url));
+	if (!res.ok) {
+		const body = await res.text().catch(() => '');
+		throw new Error(
+			`Falha ao carregar /public${assetPath} (${res.status}). ${body?.slice(0, 120) || ''}`
+		);
+	}
+	const json = await res.json();
+	globalThis.__LION_DUMP__ = json;
+	return json;
+}
+
+function parseRequestPayload(req) {
+	// Suporta POST (body JSON) e GET (querystring)
 	const url = new URL(req.url);
-	const clean = url.searchParams.get('clean') === '1';
 
-	const body = await req.json().catch(() => ({}));
-	const { startRow = 0, endRow = 200, sortModel = [], filterModel = {} } = body;
+	// Defaults
+	let startRow = 0;
+	let endRow = 200;
+	let sortModel = [];
+	let filterModel = {};
 
-	// Carrega arquivo JSON “fonte de verdade”
-	// Se você estiver em Cloudflare Pages, isso funciona:
-	const res = await fetch(new URL('/public/js/clean-dump.json', req.url));
-	const full = await res.json(); // array de linhas
+	// Body (POST)
+	return req
+		.json()
+		.catch(() => ({}))
+		.then((body) => {
+			if (body && typeof body === 'object' && Object.keys(body).length) {
+				startRow = Number.isFinite(body.startRow) ? body.startRow : startRow;
+				endRow = Number.isFinite(body.endRow) ? body.endRow : endRow;
+				sortModel = Array.isArray(body.sortModel) ? body.sortModel : sortModel;
+				filterModel = typeof body.filterModel === 'object' ? body.filterModel : filterModel;
+			} else {
+				// Query (GET) fallback
+				const sr = Number(url.searchParams.get('startRow'));
+				const er = Number(url.searchParams.get('endRow'));
+				if (Number.isFinite(sr)) startRow = sr;
+				if (Number.isFinite(er)) endRow = er;
+				try {
+					const sm = JSON.parse(url.searchParams.get('sortModel') || '[]');
+					if (Array.isArray(sm)) sortModel = sm;
+				} catch {}
+				try {
+					const fm = JSON.parse(url.searchParams.get('filterModel') || '{}');
+					if (fm && typeof fm === 'object') filterModel = fm;
+				} catch {}
+			}
+			return { startRow, endRow, sortModel, filterModel, url };
+		});
+}
 
-	let rows = clean ? full.map(cleanRow) : full;
-	rows = applyFilters(rows, filterModel);
-	rows = applySort(rows, sortModel);
+async function ssrm(req, env) {
+	try {
+		const { url, startRow, endRow, sortModel, filterModel } = await parseRequestPayload(req);
+		const clean = new URL(url).searchParams.get('clean') === '1';
 
-	const slice = rows.slice(startRow, Math.min(endRow, rows.length));
-	const lastRow = rows.length;
+		// Carrega dump
+		const full = await loadDump(req, env); // array completo
+		if (!Array.isArray(full)) {
+			throw new Error('Dump JSON inválido (esperado array).');
+		}
 
-	return new Response(JSON.stringify({ rows: slice, lastRow }), {
-		headers: { 'Content-Type': 'application/json' },
-	});
+		// Limpeza opcional
+		let rows = clean ? full.map(cleanRow) : full;
+
+		// Filtro e ordenação
+		rows = applyFilters(rows, filterModel);
+		rows = applySort(rows, sortModel);
+
+		// Paginação em bloco (SSRM)
+		const safeEnd = Math.min(Math.max(endRow, 0), rows.length);
+		const safeStart = Math.min(Math.max(startRow, 0), safeEnd);
+		const slice = rows.slice(safeStart, safeEnd);
+
+		// AG Grid aceita lastRow = rows.length para informar total
+		const lastRow = rows.length;
+
+		return new Response(JSON.stringify({ rows: slice, lastRow }), {
+			headers: { 'Content-Type': 'application/json' },
+		});
+	} catch (err) {
+		// SEMPRE JSON: evita “error code: 1042” no front
+		return new Response(JSON.stringify({ error: String(err?.message || err) }), {
+			status: 500,
+			headers: { 'Content-Type': 'application/json' },
+		});
+	}
 }
 
 export default { ssrm };
