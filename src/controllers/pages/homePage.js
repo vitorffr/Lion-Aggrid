@@ -15,7 +15,7 @@ async function index(request, env, ctx) {
 			header: [
 				{
 					search: '{seo.title}',
-					replace: 'Console - High Stakes Lion Table',
+					replace: 'Table - High Stakes Lion Table',
 				},
 			],
 			content: [],

@@ -90,6 +90,7 @@ function renderBadgeNode(label, colorKey) {
 	span.style.color = fb.fg;
 	return span;
 }
+
 function renderBadge(label, colorKey) {
 	return renderBadgeNode(label, colorKey).outerHTML;
 }
@@ -99,14 +100,31 @@ function pickStatusColor(raw) {
 		.toLowerCase();
 	return s === 'active' ? 'success' : 'secondary';
 }
+// helper pra saber se é linha de total/pinned (não renderizar pill)
+function isPinnedOrTotal(params) {
+	return (
+		params?.node?.rowPinned === 'bottom' ||
+		params?.node?.rowPinned === 'top' ||
+		params?.data?.__nodeType === 'total' ||
+		params?.node?.group === true
+	);
+}
+
 function statusPillRenderer(p) {
 	const raw = p.value ?? '';
-	const label = (strongText(raw) || stripHtml(raw) || '—').toUpperCase();
+	// 👉 não renderiza badge em linha de total/pinned/grupo OU quando não há valor
+	if (isPinnedOrTotal(p) || !raw) {
+		const span = document.createElement('span');
+		span.textContent = stripHtml(raw) || ''; // vazio mesmo
+		return span;
+	}
+	const label = (strongText(raw) || stripHtml(raw) || '').toUpperCase();
 	const color = pickStatusColor(label);
 	const host = document.createElement('span');
-	host.innerHTML = renderBadge(label || '—', color);
+	host.innerHTML = renderBadge(label, color);
 	return host.firstElementChild;
 }
+
 function pickChipColorFromFraction(value) {
 	const txt = stripHtml(value ?? '').trim();
 	const m = txt.match(/^(\d+)\s*\/\s*(\d+)$/);
@@ -122,6 +140,11 @@ function pickChipColorFromFraction(value) {
 	return { label: `${current}/${total}`, color: 'warning' }; // (0, 50%]
 }
 function chipFractionBadgeRenderer(p) {
+	if (isPinnedOrTotal(p) || !p.value) {
+		const span = document.createElement('span');
+		span.textContent = stripHtml(p.value) || '';
+		return span;
+	}
 	const { label, color } = pickChipColorFromFraction(p.value);
 	const host = document.createElement('span');
 	host.innerHTML = renderBadge(label, color);
@@ -203,8 +226,8 @@ const defaultColDef = {
 	sortable: true,
 	filter: true,
 	resizable: true,
-	tooltipShowDelay: 200,
-	tooltipHideDelay: 80,
+	// tooltipShowDelay: 200,
+	// tooltipHideDelay: 80,
 	wrapHeaderText: true,
 	autoHeaderHeight: false,
 	enableRowGroup: true,
@@ -474,6 +497,10 @@ async function fetchJSON(url, opts) {
 	if (!res.ok) throw new Error(data?.error || res.statusText);
 	return data;
 }
+let res = await fetch(ENDPOINTS.SSRM, {
+	/* ... */
+});
+const data = await res.json().catch(() => ({}));
 
 /* ============ Grid (Tree Data + SSRM) ============ */
 function makeGrid() {
@@ -498,11 +525,11 @@ function makeGrid() {
 	const gridOptions = {
 		// Tree + SSRM
 		rowModelType: 'serverSide',
-		serverSideStoreType: 'partial',
+		// serverSideStoreType: 'partial',
 		cacheBlockSize: 200,
 		maxBlocksInCache: 4,
 		// suppressAutoColumns: true,
-
+		// pinnedBottomRowData: [{ account_name: 8 }],
 		treeData: true,
 		isServerSideGroup: (data) => data?.__nodeType === 'campaign' || data?.__nodeType === 'adset',
 		getServerSideGroupKey: (data) => data?.__groupKey ?? '',
@@ -520,7 +547,7 @@ function makeGrid() {
 		defaultColDef,
 		rowSelection: {
 			mode: 'multiRow', // ou 'singleRow'
-			enableClickSelection: true, // substitui suppressRowClickSelection
+			// enableClickSelection: true, // substitui suppressRowClickSelection
 			checkboxes: true, // ativa checkboxes
 			headerCheckbox: true, // checkbox no header
 			selectionColumn: {
@@ -530,13 +557,39 @@ function makeGrid() {
 			},
 		},
 
-		grandTotalRow: 'bottom',
+		// grandTotalRow: 'bottom',
 		animateRows: true,
 		sideBar: { toolPanels: ['columns', 'filters'], defaultToolPanel: null, position: 'right' },
 		theme: createAgTheme(),
 
-		// Modal de detalhes (mesma lógica)
 		onCellClicked(params) {
+			// 🚫 nunca abre modal em filhos/netos
+			if (params?.node?.level > 0) return;
+
+			// coluna de árvore (Campanha)?
+			const isAutoGroupCol =
+				(typeof params.column?.isAutoRowGroupColumn === 'function' &&
+					params.column.isAutoRowGroupColumn()) ||
+				params.colDef?.colId === 'ag-Grid-AutoColumn' ||
+				!!params.colDef?.showRowGroup;
+
+			// clicou no triângulo/checkbox? não abre modal
+			const clickedExpanderOrCheckbox = !!params.event?.target?.closest?.(
+				'.ag-group-expanded, .ag-group-contracted, .ag-group-checkbox'
+			);
+
+			// root + coluna Campanha => modal com label da campanha
+			if (
+				isAutoGroupCol &&
+				!clickedExpanderOrCheckbox &&
+				params?.data?.__nodeType === 'campaign'
+			) {
+				const label = params.data.__label || '(sem nome)';
+				showKTModal({ title: 'Campanha', content: label });
+				return;
+			}
+
+			// demais colunas — só no root
 			const MODAL_FIELDS = new Set([
 				'profile_name',
 				'bc_name',
@@ -551,6 +604,7 @@ function makeGrid() {
 				'xabu_ads',
 				'xabu_adsets',
 			]);
+
 			const field = params.colDef?.field;
 			if (!field || !MODAL_FIELDS.has(field)) return;
 
@@ -586,7 +640,9 @@ function makeGrid() {
 					display = Number.isFinite(n) ? intFmt.format(n) : String(val);
 				} else if (field === 'account_status' || field === 'campaign_status') {
 					display = strongText(String(val || ''));
-				} else display = String(val);
+				} else {
+					display = String(val);
+				}
 			}
 			const title = params.colDef?.headerName || 'Detalhes';
 			showKTModal({ title, content: display || '(vazio)' });
@@ -624,7 +680,70 @@ function makeGrid() {
 								});
 							}
 							const data = await res.json().catch(() => ({ rows: [], lastRow: 0 }));
+							// ===== TOTALS (rodapé) =====
+							const totals = data?.totals || {};
+							const pinnedTotal = {
+								id: '__pinned_total__',
+								account_name: 'TOTAL',
+								impressions: totals.impressions_sum ?? 0,
+								clicks: totals.clicks_sum ?? 0,
+								visitors: totals.visitors_sum ?? 0,
+								conversions: totals.conversions_sum ?? 0,
+								real_conversions: totals.real_conversions_sum ?? 0,
+								spent: totals.spent_sum ?? 0,
+								fb_revenue: totals.fb_revenue_sum ?? 0,
+								push_revenue: totals.push_revenue_sum ?? 0,
+								revenue: totals.revenue_sum ?? 0,
+								profit: totals.profit_sum ?? 0,
+								budget: totals.budget_sum ?? 0,
+								cpc: totals.cpc_total ?? 0,
+								cpa_fb: totals.cpa_fb_total ?? 0,
+								real_cpa: totals.real_cpa_total ?? 0,
+								mx: totals.mx_total ?? 0,
+								ctr: totals.ctr_total ?? 0,
+							};
+
+							// formatação dos principais valores numéricos
+							for (const k of [
+								'spent',
+								'fb_revenue',
+								'push_revenue',
+								'revenue',
+								'profit',
+								'budget',
+								'cpc',
+								'cpa_fb',
+								'real_cpa',
+								'mx',
+							]) {
+								pinnedTotal[k] = brlFmt.format(Number(pinnedTotal[k]) || 0);
+							}
+							for (const k of [
+								'impressions',
+								'clicks',
+								'visitors',
+								'conversions',
+								'real_conversions',
+							]) {
+								pinnedTotal[k] = intFmt.format(Number(pinnedTotal[k]) || 0);
+							}
+							if (typeof pinnedTotal.ctr === 'number') {
+								pinnedTotal.ctr = (pinnedTotal.ctr * 100).toFixed(2) + '%';
+							}
+
 							const rows = (data.rows || []).map(normalizeCampaignRow);
+							// aplica linha TOTAL no rodapé
+							try {
+								const api = params.api;
+								if (api?.setPinnedBottomRowData) {
+									api.setPinnedBottomRowData([pinnedTotal]);
+								} else {
+									params.api?.setGridOption?.('pinnedBottomRowData', [pinnedTotal]);
+								}
+							} catch (e) {
+								console.warn('Erro ao aplicar pinned bottom row:', e);
+							}
+
 							req.success({ rowData: rows, rowCount: data.lastRow ?? -1 });
 							return;
 						}

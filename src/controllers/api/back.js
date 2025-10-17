@@ -118,6 +118,94 @@ function applyFilters(rows, filterModel) {
 	return rows.filter((r) => checks.every((fn) => fn(r)));
 }
 
+/* ==================== Agregadores de rodapé ==================== */
+
+const sum = (a, b) => (Number.isFinite(a) ? a : 0) + (Number.isFinite(b) ? b : 0);
+const safeDiv = (num, den) => (den > 0 ? num / den : 0);
+
+function sumField(rows, field) {
+	return rows.reduce((acc, r) => sum(acc, toNumberBR(r[field])), 0);
+}
+function hasSomeField(rows, field) {
+	return rows.some((r) => toNumberBR(r[field]) != null);
+}
+
+// Totais/rodapé para a RAIZ (campanhas)
+function computeTotalsRoot(rows) {
+	const totals = {};
+
+	// Somas
+	totals.impressions_sum = sumField(rows, 'impressions');
+	totals.clicks_sum = sumField(rows, 'clicks');
+	totals.visitors_sum = sumField(rows, 'visitors');
+	totals.conversions_sum = sumField(rows, 'conversions');
+	totals.real_conversions_sum = sumField(rows, 'real_conversions');
+	totals.spent_sum = sumField(rows, 'spent');
+	totals.fb_revenue_sum = sumField(rows, 'fb_revenue');
+	totals.push_revenue_sum = sumField(rows, 'push_revenue');
+	totals.revenue_sum = totals.fb_revenue_sum + totals.push_revenue_sum;
+	totals.profit_sum = sumField(rows, 'profit');
+	totals.budget_sum = sumField(rows, 'budget');
+
+	// Médias derivadas / ponderadas
+	totals.cpc_total = safeDiv(totals.spent_sum, totals.clicks_sum);
+	totals.cpa_fb_total = safeDiv(totals.spent_sum, totals.conversions_sum);
+	totals.real_cpa_total = safeDiv(totals.spent_sum, totals.real_conversions_sum);
+	totals.ctr_total = safeDiv(totals.clicks_sum, totals.impressions_sum);
+	totals.mx_total = safeDiv(totals.revenue_sum, totals.spent_sum);
+
+	return totals;
+}
+
+// Totais genéricos (adsets/ads). Calcula o que existir.
+function computeTotalsGeneric(rows) {
+	const totals = {};
+
+	// somas "comuns"
+	const maybeSum = (key, outKey = `${key}_sum`) => {
+		if (hasSomeField(rows, key)) totals[outKey] = sumField(rows, key);
+	};
+
+	// campos que podem existir nos mocks
+	[
+		'impressions',
+		'clicks',
+		'visitors',
+		'conversions',
+		'real_conversions',
+		'spent',
+		'budget',
+		'profit',
+		'fb_revenue',
+		'push_revenue',
+		'revenue',
+	].forEach((f) => maybeSum(f));
+
+	// revenue_sum se não veio como field
+	if (totals.revenue_sum == null) {
+		const fb = totals.fb_revenue_sum ?? 0;
+		const pr = totals.push_revenue_sum ?? 0;
+		totals.revenue_sum = fb + pr;
+	}
+
+	// derivadas usuais
+	const clicks = totals.clicks_sum ?? 0;
+	const impressions = totals.impressions_sum ?? 0;
+	const conversions = totals.conversions_sum ?? 0;
+	const realConvs = totals.real_conversions_sum ?? 0;
+	const spent = totals.spent_sum ?? 0;
+	const revenue = totals.revenue_sum ?? 0;
+
+	totals.cpc_total = safeDiv(spent, clicks);
+	totals.cpa_total = safeDiv(spent, conversions); // "CPA" genérico, se existir no dataset
+	totals.real_cpa_total = safeDiv(spent, realConvs);
+	totals.ctr_total = safeDiv(clicks, impressions);
+	totals.epc_total = safeDiv(revenue, clicks);
+	totals.mx_total = safeDiv(revenue, spent);
+
+	return totals;
+}
+
 /* ==================== Carregamento via ASSETS/public ==================== */
 // No wrangler.toml, configure:
 //
@@ -227,28 +315,37 @@ function filterByParentAndPeriod(rows, { idKey, idValue, period }) {
 /* ==================== /api/ssrm/ (raiz) ==================== */
 async function ssrm(req, env) {
 	try {
-		const { url, startRow, endRow, sortModel, filterModel } = await parseRequestPayload(req);
+		// cada uso do Request recebe seu próprio clone
+		const reqForBody = req.clone(); // para ler o body/json
+		const reqForAssets = req.clone(); // para carregar assets/dump
+
+		// lê payload (POST/GET) a partir do clone do body
+		const { url, startRow, endRow, sortModel, filterModel } = await parseRequestPayload(reqForBody);
 		const clean = new URL(url).searchParams.get('clean') === '1';
 
-		// Carrega dump raiz
-		const full = await loadDump(req, env); // array completo
+		// carrega dump raiz a partir do clone para assets
+		const full = await loadDump(reqForAssets, env); // array completo
 		if (!Array.isArray(full)) {
 			throw new Error('Dump JSON inválido (esperado array).');
 		}
 
-		// Limpeza opcional
+		// limpeza opcional
 		let rows = clean ? full.map(cleanRow) : full;
 
-		// Filtro e ordenação
+		// filtro e ordenação
 		rows = applyFilters(rows, filterModel);
 		rows = applySort(rows, sortModel);
 
-		// Paginação em bloco (SSRM)
+		// >>> Totais sobre o CONJUNTO FILTRADO (antes da paginação)
+		const totals = computeTotalsRoot(rows);
+
+		// paginação em bloco (SSRM)
 		const safeEnd = Math.min(Math.max(endRow, 0), rows.length);
 		const safeStart = Math.min(Math.max(startRow, 0), safeEnd);
 		const slice = rows.slice(safeStart, safeEnd);
 
-		return new Response(JSON.stringify({ rows: slice, lastRow: rows.length }), {
+		// resposta sempre em JSON
+		return new Response(JSON.stringify({ rows: slice, lastRow: rows.length, totals }), {
 			headers: { 'Content-Type': 'application/json' },
 		});
 	} catch (err) {
@@ -262,7 +359,10 @@ async function ssrm(req, env) {
 /* ==================== /api/adsets (filtra por campaign_id + period) ==================== */
 async function adsets(req, env) {
 	try {
-		const { startRow, endRow, sortModel, filterModel, url } = await parseRequestPayload(req);
+		const reqForBody = req.clone();
+		const reqForAssets = req.clone();
+
+		const { startRow, endRow, sortModel, filterModel, url } = await parseRequestPayload(reqForBody);
 		const u = new URL(url);
 		const campaignId = u.searchParams.get('campaign_id') || (filterModel?.campaign_id?.filter ?? '');
 		const period = (
@@ -273,7 +373,7 @@ async function adsets(req, env) {
 
 		// Carrega flat adsets (./public/constants/adsets.json)
 		// Esperado: [{ id, idroot: <campaign_id>, period, name, status, ... }, ...]
-		const full = await loadAssetJSON(req, env, '/constants/adsets.json');
+		const full = await loadAssetJSON(reqForAssets, env, '/constants/adsets.json');
 		if (!Array.isArray(full)) throw new Error('adsets.json inválido (esperado array).');
 
 		// 1) parent + period
@@ -285,12 +385,15 @@ async function adsets(req, env) {
 		// 3) ordena
 		rows = applySort(rows, sortModel);
 
+		// >>> Totais sobre o conjunto filtrado
+		const totals = computeTotalsGeneric(rows);
+
 		// 4) SSRM slice
 		const safeEnd = Math.min(Math.max(endRow, 0), rows.length);
 		const safeStart = Math.min(Math.max(startRow, 0), safeEnd);
 		const slice = rows.slice(safeStart, safeEnd);
 
-		return new Response(JSON.stringify({ rows: slice, lastRow: rows.length }), {
+		return new Response(JSON.stringify({ rows: slice, lastRow: rows.length, totals }), {
 			headers: { 'Content-Type': 'application/json' },
 		});
 	} catch (err) {
@@ -304,7 +407,10 @@ async function adsets(req, env) {
 /* ==================== /api/ads (filtra por adset_id + period) ==================== */
 async function ads(req, env) {
 	try {
-		const { startRow, endRow, sortModel, filterModel, url } = await parseRequestPayload(req);
+		const reqForBody = req.clone();
+		const reqForAssets = req.clone();
+
+		const { startRow, endRow, sortModel, filterModel, url } = await parseRequestPayload(reqForBody);
 		const u = new URL(url);
 		const adsetId = u.searchParams.get('adset_id') || (filterModel?.adset_id?.filter ?? '');
 		const period = (
@@ -315,7 +421,7 @@ async function ads(req, env) {
 
 		// Carrega flat ads (./public/constants/ads.json)
 		// Esperado: [{ id, idchild: <adset_id>, period, name, status, preview_url, ... }, ...]
-		const full = await loadAssetJSON(req, env, '/constants/ads.json');
+		const full = await loadAssetJSON(reqForAssets, env, '/constants/ads.json');
 		if (!Array.isArray(full)) throw new Error('ads.json inválido (esperado array).');
 
 		// 1) parent + period
@@ -327,12 +433,15 @@ async function ads(req, env) {
 		// 3) ordena
 		rows = applySort(rows, sortModel);
 
+		// >>> Totais sobre o conjunto filtrado
+		const totals = computeTotalsGeneric(rows);
+
 		// 4) SSRM slice
 		const safeEnd = Math.min(Math.max(endRow, 0), rows.length);
 		const safeStart = Math.min(Math.max(startRow, 0), safeEnd);
 		const slice = rows.slice(safeStart, safeEnd);
 
-		return new Response(JSON.stringify({ rows: slice, lastRow: rows.length }), {
+		return new Response(JSON.stringify({ rows: slice, lastRow: rows.length, totals }), {
 			headers: { 'Content-Type': 'application/json' },
 		});
 	} catch (err) {
