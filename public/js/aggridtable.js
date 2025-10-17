@@ -259,14 +259,14 @@ const columnDefs = [
 		flex: 0.8,
 	},
 
-	{
-		headerName: 'Campanha',
-		field: 'campaign_name',
-		valueGetter: (p) => stripHtml(p.data?.campaign_name),
-		minWidth: 260,
-		flex: 1.6,
-		tooltipValueGetter: (p) => p.value || '',
-	},
+	// {
+	// 	headerName: 'Campanha',
+	// 	field: 'campaign_name',
+	// 	valueGetter: (p) => stripHtml(p.data?.campaign_name),
+	// 	minWidth: 260,
+	// 	flex: 1.6,
+	// 	tooltipValueGetter: (p) => p.value || '',
+	// },
 	{
 		headerName: 'UTM',
 		field: 'utm_campaign',
@@ -487,8 +487,8 @@ function makeGrid() {
 
 	// coluna "árvore"
 	const autoGroupColumnDef = {
-		headerName: 'Item',
-		minWidth: 260,
+		headerName: 'Campanha',
+		minWidth: 400,
 		cellRendererParams: {
 			suppressCount: true,
 			innerRenderer: (p) => p.data?.__label || '',
@@ -501,6 +501,7 @@ function makeGrid() {
 		serverSideStoreType: 'partial',
 		cacheBlockSize: 200,
 		maxBlocksInCache: 4,
+		// suppressAutoColumns: true,
 
 		treeData: true,
 		isServerSideGroup: (data) => data?.__nodeType === 'campaign' || data?.__nodeType === 'adset',
@@ -514,13 +515,21 @@ function makeGrid() {
 			return Math.random().toString(36).slice(2);
 		},
 
-		columnDefs: [
-			{ headerName: 'Item', showRowGroup: true, valueGetter: (p) => p.data?.__label },
-		].concat(columnDefs),
+		columnDefs: [].concat(columnDefs),
 		autoGroupColumnDef,
 		defaultColDef,
-
-		rowSelection: 'multiple',
+		rowSelection: {
+			mode: 'multiRow', // ou 'singleRow'
+			enableClickSelection: true, // substitui suppressRowClickSelection
+			checkboxes: true, // ativa checkboxes
+			headerCheckbox: true, // checkbox no header
+			selectionColumn: {
+				// configura a coluna de seleção
+				width: 80,
+				pinned: 'left',
+				suppressHeaderFilterButton: true,
+			},
+		},
 		grandTotalRow: 'bottom',
 
 		animateRows: true,
