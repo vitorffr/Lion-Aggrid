@@ -25,10 +25,15 @@ router.post('/api/auth/login/', auth);
 /* =================== LION ROWS (SSRM) =================== */
 // IMPORTANTE: mapeie GET e POST, com e sem barra
 import backend from './controllers/api/back.js';
-router.post('/api/ssrm', backend.ssrm);
+
 router.post('/api/ssrm/', backend.ssrm);
-router.get('/api/ssrm', backend.ssrm); // fallback GET do dataSource
+router.post('/api/adsets/', backend.adsets);
+router.post('/api/ads/', backend.ads);
+
+// (opcional GET fallback)
 router.get('/api/ssrm/', backend.ssrm);
+router.get('/api/adsets/', backend.adsets);
+router.get('/api/ads/', backend.ads);
 
 /* =================== AUTH GUARD =================== */
 router.all('*', (request) => {

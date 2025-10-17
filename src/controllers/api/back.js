@@ -1,7 +1,16 @@
 // routes/lionRows.js
-// SSRM handler: lê um JSON estático, limpa/ordena/filtra/pagina
+// SSRM handlers: lê JSONs estáticos, aplica limpeza/filtro/sort/paginação
 // e responde no formato esperado pelo AG Grid Server-Side.
+//
+// Endpoints:
+// - POST /api/ssrm/?clean=1
+// - POST /api/adsets/?campaign_id=...&period=TODAY|YESTERDAY
+// - POST /api/ads/?adset_id=...&period=TODAY|YESTERDAY
+//
+// Observação: todos aceitam também GET com os mesmos parâmetros na querystring.
+// Em caso de erro, SEMPRE retornam JSON (evita “error code: 1042”).
 
+/* ==================== Helpers de texto/número ==================== */
 const stripHtml = (s) =>
 	typeof s === 'string'
 		? s
@@ -109,21 +118,24 @@ function applyFilters(rows, filterModel) {
 	return rows.filter((r) => checks.every((fn) => fn(r)));
 }
 
-// ---- Carregamento do dump via ASSETS ----
+/* ==================== Carregamento via ASSETS/public ==================== */
 // No wrangler.toml, configure:
+//
 // [assets]
 // binding = "ASSETS"
 // directory = "./public"
 //
 // Se o arquivo estiver em ./public/constants/clean-dump.json,
 // o path aqui é "/constants/clean-dump.json" (sem /public).
-async function loadDump(request, env) {
-	// cache em memória do worker
-	if (globalThis.__LION_DUMP__) return globalThis.__LION_DUMP__;
 
-	const assetPath = '/constants/clean-dump.json';
+async function loadAssetJSON(request, env, assetPath) {
+	// cache leve por arquivo
+	globalThis.__LION_CACHE__ = globalThis.__LION_CACHE__ || new Map();
+	if (globalThis.__LION_CACHE__.has(assetPath)) {
+		return globalThis.__LION_CACHE__.get(assetPath);
+	}
 
-	// Tenta via binding ASSETS (Workers)
+	// 1) via binding ASSETS (Workers)
 	if (env.ASSETS && typeof env.ASSETS.fetch === 'function') {
 		const assetReq = new Request(new URL(assetPath, request.url), request);
 		const res = await env.ASSETS.fetch(assetReq);
@@ -136,11 +148,11 @@ async function loadDump(request, env) {
 			);
 		}
 		const json = await res.json();
-		globalThis.__LION_DUMP__ = json;
+		globalThis.__LION_CACHE__.set(assetPath, json);
 		return json;
 	}
 
-	// Fallback: se estiver em Pages Functions ou servindo /public manualmente
+	// 2) fallback via /public
 	const res = await fetch(new URL(`/public${assetPath}`, request.url));
 	if (!res.ok) {
 		const body = await res.text().catch(() => '');
@@ -149,10 +161,16 @@ async function loadDump(request, env) {
 		);
 	}
 	const json = await res.json();
-	globalThis.__LION_DUMP__ = json;
+	globalThis.__LION_CACHE__.set(assetPath, json);
 	return json;
 }
 
+// Loader “especial” do dump raiz (mantido por compatibilidade)
+async function loadDump(request, env) {
+	return loadAssetJSON(request, env, '/constants/clean-dump.json');
+}
+
+/* ==================== Parser do request (POST body ou GET query) ==================== */
 function parseRequestPayload(req) {
 	// Suporta POST (body JSON) e GET (querystring)
 	const url = new URL(req.url);
@@ -163,7 +181,6 @@ function parseRequestPayload(req) {
 	let sortModel = [];
 	let filterModel = {};
 
-	// Body (POST)
 	return req
 		.json()
 		.catch(() => ({}))
@@ -173,6 +190,11 @@ function parseRequestPayload(req) {
 				endRow = Number.isFinite(body.endRow) ? body.endRow : endRow;
 				sortModel = Array.isArray(body.sortModel) ? body.sortModel : sortModel;
 				filterModel = typeof body.filterModel === 'object' ? body.filterModel : filterModel;
+
+				// permite também passar campaign_id/adset_id/period no body
+				if (body.campaign_id) url.searchParams.set('campaign_id', body.campaign_id);
+				if (body.adset_id) url.searchParams.set('adset_id', body.adset_id);
+				if (body.period) url.searchParams.set('period', body.period);
 			} else {
 				// Query (GET) fallback
 				const sr = Number(url.searchParams.get('startRow'));
@@ -188,16 +210,27 @@ function parseRequestPayload(req) {
 					if (fm && typeof fm === 'object') filterModel = fm;
 				} catch {}
 			}
-			return { startRow, endRow, sortModel, filterModel, url };
+			return { startRow, endRow, sortModel, filterModel, url: url.toString() };
 		});
 }
 
+/* ==================== Filtro por parent + period ==================== */
+function filterByParentAndPeriod(rows, { idKey, idValue, period }) {
+	const wantPeriod = String(period || 'TODAY').toUpperCase();
+	return rows.filter((r) => {
+		const idOk = !idValue || String(r[idKey]) === String(idValue);
+		const periodOk = String(r.period || 'TODAY').toUpperCase() === wantPeriod;
+		return idOk && periodOk;
+	});
+}
+
+/* ==================== /api/ssrm/ (raiz) ==================== */
 async function ssrm(req, env) {
 	try {
 		const { url, startRow, endRow, sortModel, filterModel } = await parseRequestPayload(req);
 		const clean = new URL(url).searchParams.get('clean') === '1';
 
-		// Carrega dump
+		// Carrega dump raiz
 		const full = await loadDump(req, env); // array completo
 		if (!Array.isArray(full)) {
 			throw new Error('Dump JSON inválido (esperado array).');
@@ -215,14 +248,10 @@ async function ssrm(req, env) {
 		const safeStart = Math.min(Math.max(startRow, 0), safeEnd);
 		const slice = rows.slice(safeStart, safeEnd);
 
-		// AG Grid aceita lastRow = rows.length para informar total
-		const lastRow = rows.length;
-
-		return new Response(JSON.stringify({ rows: slice, lastRow }), {
+		return new Response(JSON.stringify({ rows: slice, lastRow: rows.length }), {
 			headers: { 'Content-Type': 'application/json' },
 		});
 	} catch (err) {
-		// SEMPRE JSON: evita “error code: 1042” no front
 		return new Response(JSON.stringify({ error: String(err?.message || err) }), {
 			status: 500,
 			headers: { 'Content-Type': 'application/json' },
@@ -230,4 +259,93 @@ async function ssrm(req, env) {
 	}
 }
 
-export default { ssrm };
+/* ==================== /api/adsets (filtra por campaign_id + period) ==================== */
+async function adsets(req, env) {
+	try {
+		const { startRow, endRow, sortModel, filterModel, url } = await parseRequestPayload(req);
+		const u = new URL(url);
+		const campaignId = u.searchParams.get('campaign_id') || (filterModel?.campaign_id?.filter ?? '');
+		const period = (
+			u.searchParams.get('period') ||
+			filterModel?.period?.filter ||
+			'TODAY'
+		).toUpperCase();
+
+		// Carrega flat adsets (./public/constants/adsets.json)
+		// Esperado: [{ id, idroot: <campaign_id>, period, name, status, ... }, ...]
+		const full = await loadAssetJSON(req, env, '/constants/adsets.json');
+		if (!Array.isArray(full)) throw new Error('adsets.json inválido (esperado array).');
+
+		// 1) parent + period
+		let rows = filterByParentAndPeriod(full, { idKey: 'idroot', idValue: campaignId, period });
+
+		// 2) filtros genéricos
+		rows = applyFilters(rows, filterModel);
+
+		// 3) ordena
+		rows = applySort(rows, sortModel);
+
+		// 4) SSRM slice
+		const safeEnd = Math.min(Math.max(endRow, 0), rows.length);
+		const safeStart = Math.min(Math.max(startRow, 0), safeEnd);
+		const slice = rows.slice(safeStart, safeEnd);
+
+		return new Response(JSON.stringify({ rows: slice, lastRow: rows.length }), {
+			headers: { 'Content-Type': 'application/json' },
+		});
+	} catch (err) {
+		return new Response(JSON.stringify({ error: String(err?.message || err) }), {
+			status: 500,
+			headers: { 'Content-Type': 'application/json' },
+		});
+	}
+}
+
+/* ==================== /api/ads (filtra por adset_id + period) ==================== */
+async function ads(req, env) {
+	try {
+		const { startRow, endRow, sortModel, filterModel, url } = await parseRequestPayload(req);
+		const u = new URL(url);
+		const adsetId = u.searchParams.get('adset_id') || (filterModel?.adset_id?.filter ?? '');
+		const period = (
+			u.searchParams.get('period') ||
+			filterModel?.period?.filter ||
+			'TODAY'
+		).toUpperCase();
+
+		// Carrega flat ads (./public/constants/ads.json)
+		// Esperado: [{ id, idchild: <adset_id>, period, name, status, preview_url, ... }, ...]
+		const full = await loadAssetJSON(req, env, '/constants/ads.json');
+		if (!Array.isArray(full)) throw new Error('ads.json inválido (esperado array).');
+
+		// 1) parent + period
+		let rows = filterByParentAndPeriod(full, { idKey: 'idchild', idValue: adsetId, period });
+
+		// 2) filtros genéricos
+		rows = applyFilters(rows, filterModel);
+
+		// 3) ordena
+		rows = applySort(rows, sortModel);
+
+		// 4) SSRM slice
+		const safeEnd = Math.min(Math.max(endRow, 0), rows.length);
+		const safeStart = Math.min(Math.max(startRow, 0), safeEnd);
+		const slice = rows.slice(safeStart, safeEnd);
+
+		return new Response(JSON.stringify({ rows: slice, lastRow: rows.length }), {
+			headers: { 'Content-Type': 'application/json' },
+		});
+	} catch (err) {
+		return new Response(JSON.stringify({ error: String(err?.message || err) }), {
+			status: 500,
+			headers: { 'Content-Type': 'application/json' },
+		});
+	}
+}
+
+/* ==================== Export ==================== */
+export default {
+	ssrm, // /api/ssrm/
+	adsets, // /api/adsets
+	ads, // /api/ads
+};
