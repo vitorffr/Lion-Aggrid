@@ -524,14 +524,13 @@ function makeGrid() {
 			checkboxes: true, // ativa checkboxes
 			headerCheckbox: true, // checkbox no header
 			selectionColumn: {
-				// configura a coluna de seleção
 				width: 80,
 				pinned: 'left',
 				suppressHeaderFilterButton: true,
 			},
 		},
-		grandTotalRow: 'bottom',
 
+		grandTotalRow: 'bottom',
 		animateRows: true,
 		sideBar: { toolPanels: ['columns', 'filters'], defaultToolPanel: null, position: 'right' },
 		theme: createAgTheme(),
@@ -551,16 +550,6 @@ function makeGrid() {
 				'budget',
 				'xabu_ads',
 				'xabu_adsets',
-				'cpc',
-				'cpa_fb',
-				'real_conversions',
-				'real_cpa',
-				'spent',
-				'fb_revenue',
-				'push_revenue',
-				'revenue',
-				'mx',
-				'profit',
 			]);
 			const field = params.colDef?.field;
 			if (!field || !MODAL_FIELDS.has(field)) return;
