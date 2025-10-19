@@ -2,12 +2,14 @@ import login from './files/auth/login.html';
 import header from './files/header.html';
 import footer from './files/footer.html';
 import homePage from './files/home/index.html';
+import masterdetailPage from './files/masterdetail/index.html';
 
 const cache = Object.freeze({
 	header,
 	footer,
 	login,
 	homePage,
+	masterdetailPage,
 });
 
 /**

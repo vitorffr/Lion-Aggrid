@@ -53,16 +53,51 @@ function cleanRow(r) {
 	};
 }
 
+// extrai apenas o primeiro número principal (ex: "R$ 2.553,34 (R$ 341,69...)" → 2553.34)
+function toNumberFirst(s) {
+	if (s == null) return null;
+	const str = String(s);
+	const match = str.match(/-?\d{1,3}(?:\.\d{3})*,\d{2}/) || str.match(/-?\d+(?:\.\d+)?/);
+	if (!match) return null;
+	const clean = match[0].replace(/\./g, '').replace(',', '.');
+	const n = parseFloat(clean);
+	return Number.isFinite(n) ? n : null;
+}
+
+// sort universal (com suporte a revenue e status custom)
 function applySort(rows, sortModel) {
 	if (!Array.isArray(sortModel) || !sortModel.length) return rows;
+
 	return rows.slice().sort((a, b) => {
 		for (const s of sortModel) {
 			const { colId, sort } = s;
 			const dir = sort === 'desc' ? -1 : 1;
 
-			const av = a[colId];
-			const bv = b[colId];
+			let av = a[colId];
+			let bv = b[colId];
 
+			/* ======== 1️⃣ ordem customizada para STATUS ======== */
+			if (colId === 'account_status' || colId === 'campaign_status') {
+				const order = ['ACTIVE', 'PAUSED', 'DISABLED', 'CLOSED'];
+				const ai = order.indexOf(String(av).toUpperCase());
+				const bi = order.indexOf(String(bv).toUpperCase());
+				const cmp = (ai - bi) * dir;
+				if (cmp !== 0) return cmp;
+				continue;
+			}
+
+			/* ======== 2️⃣ caso especial para REVENUE ======== */
+			if (colId === 'revenue') {
+				const an = toNumberFirst(av);
+				const bn = toNumberFirst(bv);
+				if (an == null && bn == null) continue;
+				if (an == null) return -1 * dir;
+				if (bn == null) return 1 * dir;
+				if (an !== bn) return (an < bn ? -1 : 1) * dir;
+				continue;
+			}
+
+			/* ======== 3️⃣ comportamento padrão ======== */
 			const an = toNumberBR(av);
 			const bn = toNumberBR(bv);
 			const bothNumeric = an != null && bn != null;
@@ -75,6 +110,7 @@ function applySort(rows, sortModel) {
 				const bs = String(bv ?? '').toLowerCase();
 				cmp = as.localeCompare(bs, 'pt-BR');
 			}
+
 			if (cmp !== 0) return cmp * dir;
 		}
 		return 0;

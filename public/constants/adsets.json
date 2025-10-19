@@ -5,7 +5,7 @@
 		"period": "TODAY",
 
 		"name": "Adset FULL | BID",
-		"status": "ACTIVE",
+		"campaign_status": "ACTIVE",
 
 		"bid": 2.3,
 		"budget": null,
@@ -13,26 +13,26 @@
 		"cpc": 0.22,
 		"cpa_fb": 2.11,
 		"real_cpa": null,
-		"epc": 0.0,
 
 		"clicks": 47,
-		"conversions_fb": 5,
-		"conversions_real": 0,
+		"conversions": 5,
+		"real_conversions": 0,
 		"ctr": 0.1064,
 
 		"spent": 10.56,
+		"fb_revenue": 0.0,
+		"push_revenue": 0.0,
 		"revenue": 0.0,
 		"mx": 0.0,
 		"profit": -10.56
 	},
-
 	{
 		"id": "120232797260260009",
 		"idroot": "120232797258240008",
 		"period": "TODAY",
 
 		"name": "Adset TESTE | LAL 1%",
-		"status": "ACTIVE",
+		"campaign_status": "ACTIVE",
 
 		"bid": 2.1,
 		"budget": null,
@@ -40,14 +40,15 @@
 		"cpc": 0.19,
 		"cpa_fb": 1.95,
 		"real_cpa": null,
-		"epc": 0.0,
 
 		"clicks": 82,
-		"conversions_fb": 12,
-		"conversions_real": 1,
+		"conversions": 12,
+		"real_conversions": 1,
 		"ctr": 0.124,
 
 		"spent": 15.58,
+		"fb_revenue": 0.0,
+		"push_revenue": 0.0,
 		"revenue": 0.0,
 		"mx": 0.0,
 		"profit": -15.58
@@ -58,7 +59,7 @@
 		"period": "YESTERDAY",
 
 		"name": "Adset CBO | ENG",
-		"status": "PAUSED",
+		"campaign_status": "PAUSED",
 
 		"bid": 2.3,
 		"budget": null,
@@ -66,14 +67,15 @@
 		"cpc": 0.27,
 		"cpa_fb": 2.4,
 		"real_cpa": null,
-		"epc": 0.0,
 
 		"clicks": 51,
-		"conversions_fb": 6,
-		"conversions_real": 0,
+		"conversions": 6,
+		"real_conversions": 0,
 		"ctr": 0.0875,
 
 		"spent": 13.77,
+		"fb_revenue": 0.0,
+		"push_revenue": 0.0,
 		"revenue": 0.0,
 		"mx": 0.0,
 		"profit": -13.77
@@ -84,7 +86,7 @@
 		"period": "TODAY",
 
 		"name": "Adset MOBILE | ANDROID",
-		"status": "ACTIVE",
+		"campaign_status": "ACTIVE",
 
 		"bid": 2.5,
 		"budget": null,
@@ -92,14 +94,15 @@
 		"cpc": 0.21,
 		"cpa_fb": 1.8,
 		"real_cpa": 2.1,
-		"epc": 0.0,
 
 		"clicks": 96,
-		"conversions_fb": 14,
-		"conversions_real": 9,
+		"conversions": 14,
+		"real_conversions": 9,
 		"ctr": 0.132,
 
 		"spent": 20.16,
+		"fb_revenue": 0.0,
+		"push_revenue": 0.0,
 		"revenue": 0.0,
 		"mx": 0.0,
 		"profit": -20.16
@@ -110,7 +113,7 @@
 		"period": "YESTERDAY",
 
 		"name": "Adset WIFI | NOCTURN",
-		"status": "WITH_ISSUES",
+		"campaign_status": "WITH_ISSUES",
 
 		"bid": 2.2,
 		"budget": null,
@@ -118,14 +121,15 @@
 		"cpc": 0.3,
 		"cpa_fb": null,
 		"real_cpa": null,
-		"epc": 0.0,
 
 		"clicks": 24,
-		"conversions_fb": 0,
-		"conversions_real": 0,
+		"conversions": 0,
+		"real_conversions": 0,
 		"ctr": 0.054,
 
 		"spent": 7.2,
+		"fb_revenue": 0.0,
+		"push_revenue": 0.0,
 		"revenue": 0.0,
 		"mx": 0.0,
 		"profit": -7.2

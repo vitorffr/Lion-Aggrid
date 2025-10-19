@@ -5,7 +5,7 @@
 		"period": "TODAY",
 
 		"name": "INST2 Video Ad for Video 680151027974457",
-		"status": "ACTIVE",
+		"campaign_status": "ACTIVE",
 
 		"preview_url": "https://www.facebook.com/774860115702949/posts/122129173628956426/",
 		"story_id": "774860115702949_122129173628956426",
@@ -13,14 +13,15 @@
 		"cpc": 0.22,
 		"cpa_fb": 2.05,
 		"real_cpa": null,
-		"epc": 0.0,
 
 		"clicks": 47,
-		"conversions_fb": 5,
-		"conversions_real": 0,
+		"conversions": 5,
+		"real_conversions": 0,
 		"ctr": 0.1064,
 
 		"spent": 10.24,
+		"fb_revenue": 0.0,
+		"push_revenue": 0.0,
 		"revenue": 0.0,
 		"mx": 0.0,
 		"profit": -10.24
@@ -31,7 +32,7 @@
 		"period": "TODAY",
 
 		"name": "INST2 Video Ad for Video 864005282961401",
-		"status": "ACTIVE",
+		"campaign_status": "ACTIVE",
 
 		"preview_url": "https://www.facebook.com/774860115702949/posts/122129182454956426/",
 		"story_id": "774860115702949_122129182454956426",
@@ -39,14 +40,15 @@
 		"cpc": null,
 		"cpa_fb": null,
 		"real_cpa": null,
-		"epc": 0.0,
 
 		"clicks": 0,
-		"conversions_fb": 0,
-		"conversions_real": 0,
+		"conversions": 0,
+		"real_conversions": 0,
 		"ctr": 0.0,
 
 		"spent": 0.32,
+		"fb_revenue": 0.0,
+		"push_revenue": 0.0,
 		"revenue": 0.0,
 		"mx": 0.0,
 		"profit": -0.32
@@ -57,7 +59,7 @@
 		"period": "TODAY",
 
 		"name": "INST2 Video Ad for Video 5213409082207753",
-		"status": "ACTIVE",
+		"campaign_status": "ACTIVE",
 
 		"preview_url": "https://www.facebook.com/774860115702949/posts/122129173598956426/",
 		"story_id": "774860115702949_122129173598956426",
@@ -65,14 +67,15 @@
 		"cpc": null,
 		"cpa_fb": null,
 		"real_cpa": null,
-		"epc": 0.0,
 
 		"clicks": 0,
-		"conversions_fb": 0,
-		"conversions_real": 0,
+		"conversions": 0,
+		"real_conversions": 0,
 		"ctr": 0.0,
 
 		"spent": 0.0,
+		"fb_revenue": 0.0,
+		"push_revenue": 0.0,
 		"revenue": 0.0,
 		"mx": 0.0,
 		"profit": 0.0
@@ -83,7 +86,7 @@
 		"period": "TODAY",
 
 		"name": "INST2 Video Ad for Video 706512340118900",
-		"status": "ACTIVE",
+		"campaign_status": "ACTIVE",
 
 		"preview_url": "https://www.facebook.com/774860115702949/posts/122129199999956426/",
 		"story_id": "774860115702949_122129199999956426",
@@ -91,14 +94,15 @@
 		"cpc": 0.18,
 		"cpa_fb": 1.92,
 		"real_cpa": null,
-		"epc": 0.0,
 
 		"clicks": 38,
-		"conversions_fb": 4,
-		"conversions_real": 0,
+		"conversions": 4,
+		"real_conversions": 0,
 		"ctr": 0.0945,
 
 		"spent": 6.84,
+		"fb_revenue": 0.0,
+		"push_revenue": 0.0,
 		"revenue": 0.0,
 		"mx": 0.0,
 		"profit": -6.84
@@ -109,7 +113,7 @@
 		"period": "TODAY",
 
 		"name": "INST2 Image Ad — Variant A",
-		"status": "PAUSED",
+		"campaign_status": "PAUSED",
 
 		"preview_url": "https://www.facebook.com/774860115702949/posts/122129200111156426/",
 		"story_id": "774860115702949_122129200111156426",
@@ -117,14 +121,15 @@
 		"cpc": 0.27,
 		"cpa_fb": 2.4,
 		"real_cpa": null,
-		"epc": 0.0,
 
 		"clicks": 11,
-		"conversions_fb": 1,
-		"conversions_real": 0,
+		"conversions": 1,
+		"real_conversions": 0,
 		"ctr": 0.051,
 
 		"spent": 2.97,
+		"fb_revenue": 0.0,
+		"push_revenue": 0.0,
 		"revenue": 0.0,
 		"mx": 0.0,
 		"profit": -2.97
@@ -135,7 +140,7 @@
 		"period": "TODAY",
 
 		"name": "INST2 Video Ad for Video 889001337445211",
-		"status": "WITH_ISSUES",
+		"campaign_status": "WITH_ISSUES",
 
 		"preview_url": "https://www.facebook.com/774860115702949/posts/122129200222256426/",
 		"story_id": "774860115702949_122129200222256426",
@@ -143,14 +148,15 @@
 		"cpc": null,
 		"cpa_fb": null,
 		"real_cpa": null,
-		"epc": 0.0,
 
 		"clicks": 0,
-		"conversions_fb": 0,
-		"conversions_real": 0,
+		"conversions": 0,
+		"real_conversions": 0,
 		"ctr": 0.0,
 
 		"spent": 0.0,
+		"fb_revenue": 0.0,
+		"push_revenue": 0.0,
 		"revenue": 0.0,
 		"mx": 0.0,
 		"profit": 0.0
@@ -161,7 +167,7 @@
 		"period": "TODAY",
 
 		"name": "INST2 Carousel — Variant B",
-		"status": "ACTIVE",
+		"campaign_status": "ACTIVE",
 
 		"preview_url": "https://www.facebook.com/774860115702949/posts/122129200333356426/",
 		"story_id": "774860115702949_122129200333356426",
@@ -169,14 +175,15 @@
 		"cpc": 0.21,
 		"cpa_fb": 1.75,
 		"real_cpa": null,
-		"epc": 0.0,
 
 		"clicks": 29,
-		"conversions_fb": 3,
-		"conversions_real": 0,
+		"conversions": 3,
+		"real_conversions": 0,
 		"ctr": 0.088,
 
 		"spent": 6.09,
+		"fb_revenue": 0.0,
+		"push_revenue": 0.0,
 		"revenue": 0.0,
 		"mx": 0.0,
 		"profit": -6.09

@@ -67,6 +67,10 @@ router.all('*', (request) => {
 import homePage from './controllers/pages/homePage.js';
 router.get('/', homePage.index);
 
+/* =================== MASTERDETAIL (protegida) =================== */
+import masterdetailPage from './controllers/pages/masterdetail.js';
+router.get('/masterdetail/', masterdetailPage.index);
+
 /* =================== CATCH ALL =================== */
 router.all(
 	'*',

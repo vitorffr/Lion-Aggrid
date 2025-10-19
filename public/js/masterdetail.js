@@ -541,6 +541,7 @@ function makeGrid() {
 		// suppressAutoColumns: true,
 		// pinnedBottomRowData: [{ account_name: 8 }],
 		treeData: true,
+		masterDetail: true,
 		isServerSideGroup: (data) => data?.__nodeType === 'campaign' || data?.__nodeType === 'adset',
 		getServerSideGroupKey: (data) => data?.__groupKey ?? '',
 
