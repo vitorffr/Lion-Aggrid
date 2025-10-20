@@ -1,13 +1,10 @@
-/* public/js/lion-grid-nested.js */
-const ENDPOINTS = {
-	SSRM: '/api/ssrm/?clean=1',
-};
+/* public/js/lion-grid-nested.js — versão limpa e fiel ao JSON */
+const ENDPOINTS = { SSRM: '/api/ssrm/?clean=1' };
 const DRILL_ENDPOINTS = {
 	ADSETS: '/api/adsets/',
 	ADS: '/api/ads/',
 };
 const DRILL = { period: 'TODAY' };
-
 /* ============ AG Grid boot/licença ============ */
 function getAgGrid() {
 	const AG = globalThis.agGrid;
@@ -24,31 +21,39 @@ function getAgGrid() {
 	} catch {}
 })();
 
-/* ============ Helpers ============ */
+const brlFmt = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+const intFmt = new Intl.NumberFormat('pt-BR');
+const toNumberBR = (s) => {
+	if (s == null) return null;
+	if (typeof s === 'number') return s;
+	const n = parseFloat(
+		String(s)
+			.replace(/[^\d,.-]/g, '')
+			.replace(/\./g, '')
+			.replace(',', '.')
+	);
+	return Number.isFinite(n) ? n : null;
+};
+const currencyFormatter = (p) => {
+	const n = toNumberBR(p.value);
+	return n == null ? '' : brlFmt.format(n);
+};
+const intFormatter = (p) => {
+	const n = toNumberBR(p.value);
+	return n == null ? '' : intFmt.format(Math.round(n));
+};
 async function fetchJSON(url, opts) {
 	const res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...opts });
 	const text = await res.text();
-	let data;
 	try {
-		data = JSON.parse(text);
+		const data = JSON.parse(text);
+		if (!res.ok) throw new Error(data?.error || res.statusText);
+		return data;
 	} catch {
-		console.warn('[fetchJSON] Resposta não era JSON válido:', text.slice(0, 200));
-		data = {};
+		console.error('[fetchJSON] Erro JSON', text.slice(0, 200));
+		return {};
 	}
-	if (!res.ok) throw new Error(data?.error || res.statusText);
-	return data;
 }
-
-const brlFmt = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
-const intFmt = new Intl.NumberFormat('pt-BR');
-const currencyFormatter = (p) => {
-	const n = Number(p.value);
-	return Number.isFinite(n) ? brlFmt.format(n) : p.value ?? '';
-};
-const intFormatter = (p) => {
-	const n = Number(p.value);
-	return Number.isFinite(n) ? intFmt.format(n) : p.value ?? '';
-};
 
 /* ============ Tema opcional ============ */
 function createAgTheme() {
@@ -71,168 +76,400 @@ function createAgTheme() {
 	});
 }
 
-/* ============ Build Grid ============ */
+/* ======= Colunas ======= */
+
+// 🏁 ROOT — campanhas
+const rootCols = [
+	{
+		field: 'campaign_name',
+		headerName: 'Campanha',
+		minWidth: 400,
+		cellRenderer: 'agGroupCellRenderer',
+	},
+	{ field: 'campaign_status', headerName: 'Status', minWidth: 110 },
+	{ field: 'profile_name', headerName: 'Profile', minWidth: 190 },
+	{ field: 'bc_name', headerName: 'BC', minWidth: 200 },
+	{ field: 'account_name', headerName: 'Conta', minWidth: 220 },
+	{
+		field: 'bid',
+		headerName: 'Bid',
+		valueFormatter: currencyFormatter,
+		minWidth: 90,
+		type: 'rightAligned',
+	},
+	{
+		field: 'budget',
+		headerName: 'Budget',
+		valueFormatter: currencyFormatter,
+		minWidth: 110,
+		type: 'rightAligned',
+	},
+	{ field: 'xabu_ads', headerName: 'Xabu Ads', minWidth: 100 },
+	{ field: 'xabu_adsets', headerName: 'Xabu Adsets', minWidth: 110 },
+	{
+		field: 'impressions',
+		headerName: 'Imp.',
+		valueFormatter: intFormatter,
+		minWidth: 100,
+		type: 'rightAligned',
+	},
+	{
+		field: 'clicks',
+		headerName: 'Cliques',
+		valueFormatter: intFormatter,
+		minWidth: 90,
+		type: 'rightAligned',
+	},
+	{
+		field: 'visitors',
+		headerName: 'Visitantes',
+		valueFormatter: intFormatter,
+		minWidth: 110,
+		type: 'rightAligned',
+	},
+	{
+		field: 'cpc',
+		headerName: 'CPC',
+		valueFormatter: currencyFormatter,
+		minWidth: 90,
+		type: 'rightAligned',
+	},
+	{
+		field: 'conversions',
+		headerName: 'Conv.',
+		valueFormatter: intFormatter,
+		minWidth: 90,
+		type: 'rightAligned',
+	},
+	{
+		field: 'cpa_fb',
+		headerName: 'CPA FB',
+		valueFormatter: currencyFormatter,
+		minWidth: 100,
+		type: 'rightAligned',
+	},
+	{
+		field: 'real_conversions',
+		headerName: 'Conv. Real',
+		valueFormatter: intFormatter,
+		minWidth: 110,
+		type: 'rightAligned',
+	},
+	{
+		field: 'real_cpa',
+		headerName: 'CPA Real',
+		valueFormatter: currencyFormatter,
+		minWidth: 100,
+		type: 'rightAligned',
+	},
+	{
+		field: 'spent',
+		headerName: 'Gasto',
+		valueFormatter: currencyFormatter,
+		minWidth: 120,
+		type: 'rightAligned',
+	},
+	{
+		field: 'fb_revenue',
+		headerName: 'FB Rev',
+		valueFormatter: currencyFormatter,
+		minWidth: 110,
+		type: 'rightAligned',
+	},
+	{
+		field: 'push_revenue',
+		headerName: 'Push Rev',
+		valueFormatter: currencyFormatter,
+		minWidth: 120,
+		type: 'rightAligned',
+	},
+	{ field: 'revenue', headerName: 'Revenue', minWidth: 250 },
+	{ field: 'mx', headerName: 'MX', minWidth: 120 },
+	{
+		field: 'profit',
+		headerName: 'Lucro',
+		valueFormatter: currencyFormatter,
+		minWidth: 110,
+		type: 'rightAligned',
+	},
+];
+
+// 📊 ADSETS
+const adsetCols = [
+	{ field: 'name', headerName: 'Adset', minWidth: 360, cellRenderer: 'agGroupCellRenderer' },
+	{ field: 'campaign_status', headerName: 'Status', minWidth: 110 },
+	{
+		field: 'bid',
+		headerName: 'Bid',
+		valueFormatter: currencyFormatter,
+		minWidth: 90,
+		type: 'rightAligned',
+	},
+	{
+		field: 'budget',
+		headerName: 'Budget',
+		valueFormatter: currencyFormatter,
+		minWidth: 100,
+		type: 'rightAligned',
+	},
+	{
+		field: 'cpc',
+		headerName: 'CPC',
+		valueFormatter: currencyFormatter,
+		minWidth: 80,
+		type: 'rightAligned',
+	},
+	{
+		field: 'cpa_fb',
+		headerName: 'CPA FB',
+		valueFormatter: currencyFormatter,
+		minWidth: 90,
+		type: 'rightAligned',
+	},
+	{
+		field: 'real_cpa',
+		headerName: 'CPA Real',
+		valueFormatter: currencyFormatter,
+		minWidth: 90,
+		type: 'rightAligned',
+	},
+	{
+		field: 'clicks',
+		headerName: 'Cliques',
+		valueFormatter: intFormatter,
+		minWidth: 90,
+		type: 'rightAligned',
+	},
+	{
+		field: 'conversions',
+		headerName: 'Conv.',
+		valueFormatter: intFormatter,
+		minWidth: 90,
+		type: 'rightAligned',
+	},
+	{
+		field: 'real_conversions',
+		headerName: 'Conv. Real',
+		valueFormatter: intFormatter,
+		minWidth: 110,
+		type: 'rightAligned',
+	},
+	{ field: 'ctr', headerName: 'CTR', minWidth: 80, type: 'rightAligned' },
+	{
+		field: 'spent',
+		headerName: 'Gasto',
+		valueFormatter: currencyFormatter,
+		minWidth: 100,
+		type: 'rightAligned',
+	},
+	{
+		field: 'fb_revenue',
+		headerName: 'FB Rev',
+		valueFormatter: currencyFormatter,
+		minWidth: 110,
+		type: 'rightAligned',
+	},
+	{
+		field: 'push_revenue',
+		headerName: 'Push Rev',
+		valueFormatter: currencyFormatter,
+		minWidth: 110,
+		type: 'rightAligned',
+	},
+	{
+		field: 'revenue',
+		headerName: 'Revenue',
+		valueFormatter: currencyFormatter,
+		minWidth: 110,
+		type: 'rightAligned',
+	},
+	{ field: 'mx', headerName: 'MX', minWidth: 80 },
+	{
+		field: 'profit',
+		headerName: 'Lucro',
+		valueFormatter: currencyFormatter,
+		minWidth: 100,
+		type: 'rightAligned',
+	},
+];
+
+// 📢 ADS
+const adCols = [
+	{ field: 'name', headerName: 'Anúncio', minWidth: 380, cellRenderer: 'agGroupCellRenderer' },
+	{ field: 'campaign_status', headerName: 'Status', minWidth: 110 },
+	{ field: 'preview_url', headerName: 'Preview', minWidth: 300 },
+	{ field: 'story_id', headerName: 'Story ID', minWidth: 240 },
+	{
+		field: 'cpc',
+		headerName: 'CPC',
+		valueFormatter: currencyFormatter,
+		minWidth: 80,
+		type: 'rightAligned',
+	},
+	{
+		field: 'cpa_fb',
+		headerName: 'CPA FB',
+		valueFormatter: currencyFormatter,
+		minWidth: 90,
+		type: 'rightAligned',
+	},
+	{
+		field: 'real_cpa',
+		headerName: 'CPA Real',
+		valueFormatter: currencyFormatter,
+		minWidth: 90,
+		type: 'rightAligned',
+	},
+	{
+		field: 'clicks',
+		headerName: 'Cliques',
+		valueFormatter: intFormatter,
+		minWidth: 90,
+		type: 'rightAligned',
+	},
+	{
+		field: 'conversions',
+		headerName: 'Conv.',
+		valueFormatter: intFormatter,
+		minWidth: 90,
+		type: 'rightAligned',
+	},
+	{
+		field: 'real_conversions',
+		headerName: 'Conv. Real',
+		valueFormatter: intFormatter,
+		minWidth: 110,
+		type: 'rightAligned',
+	},
+	{ field: 'ctr', headerName: 'CTR', minWidth: 80, type: 'rightAligned' },
+	{
+		field: 'spent',
+		headerName: 'Gasto',
+		valueFormatter: currencyFormatter,
+		minWidth: 100,
+		type: 'rightAligned',
+	},
+	{
+		field: 'fb_revenue',
+		headerName: 'FB Rev',
+		valueFormatter: currencyFormatter,
+		minWidth: 110,
+		type: 'rightAligned',
+	},
+	{
+		field: 'push_revenue',
+		headerName: 'Push Rev',
+		valueFormatter: currencyFormatter,
+		minWidth: 110,
+		type: 'rightAligned',
+	},
+	{
+		field: 'revenue',
+		headerName: 'Revenue',
+		valueFormatter: currencyFormatter,
+		minWidth: 110,
+		type: 'rightAligned',
+	},
+	{ field: 'mx', headerName: 'MX', minWidth: 80 },
+	{
+		field: 'profit',
+		headerName: 'Lucro',
+		valueFormatter: currencyFormatter,
+		minWidth: 100,
+		type: 'rightAligned',
+	},
+];
+
+/* ======= Grid ======= */
 function makeGrid() {
-	const AG = globalThis.agGrid;
 	const gridDiv = document.getElementById('lionGrid');
 	if (!gridDiv) return console.error('Div #lionGrid não encontrada');
 	gridDiv.classList.add('ag-theme-quartz');
 
 	const gridOptions = {
 		masterDetail: true,
-		detailRowHeight: 420,
-		columnDefs: [
-			{
-				field: 'campaign_name',
-				headerName: 'Campanha',
-				cellRenderer: 'agGroupCellRenderer',
-				flex: 1.4,
-			},
-			{ field: 'campaign_status', headerName: 'Status', flex: 0.8 },
-			{
-				field: 'spent',
-				headerName: 'Gasto',
-				type: 'rightAligned',
-				valueFormatter: currencyFormatter,
-			},
-			{
-				field: 'profit',
-				headerName: 'Lucro',
-				type: 'rightAligned',
-				valueFormatter: currencyFormatter,
-			},
-		],
-		defaultColDef: { flex: 1, resizable: true, sortable: true, filter: true },
-		animateRows: true,
+		detailRowHeight: 400,
+		domLayout: 'normal',
 		theme: createAgTheme(),
 
-		// ======== Nível 1 (Adsets) ========
+		suppressColumnVirtualisation: false,
+		alwaysShowHorizontalScroll: true,
+		columnDefs: rootCols,
+		defaultColDef: { resizable: true, sortable: true, filter: true },
+		animateRows: true,
+
+		// 🔹 Adsets
 		detailCellRendererParams: {
 			detailGridOptions: {
 				masterDetail: true,
-				detailRowHeight: 350,
-				columnDefs: [
-					{
-						field: 'name',
-						headerName: 'Adset',
-						cellRenderer: 'agGroupCellRenderer',
-						flex: 1.4,
-					},
-					{ field: 'status', headerName: 'Status', flex: 0.8 },
-					{ field: 'spent', headerName: 'Gasto', valueFormatter: currencyFormatter },
-					{ field: 'clicks', headerName: 'Cliques', valueFormatter: intFormatter },
-					{ field: 'conversions', headerName: 'Conv.', valueFormatter: intFormatter },
-				],
-				defaultColDef: { flex: 1, resizable: true, sortable: true, filter: true },
+				detailRowAutoHeight: true,
+				columnDefs: adsetCols,
+				defaultColDef: { resizable: true, sortable: true, filter: true },
 
-				// ======== Nível 2 (Ads) ========
+				// 🔹 Ads
 				detailCellRendererParams: {
 					detailGridOptions: {
-						columnDefs: [
-							{ field: 'name', headerName: 'Ad', flex: 1.6 },
-							{ field: 'status', headerName: 'Status', flex: 0.8 },
-							{ field: 'spent', headerName: 'Gasto', valueFormatter: currencyFormatter },
-							{ field: 'clicks', headerName: 'Cliques', valueFormatter: intFormatter },
-							{ field: 'impressions', headerName: 'Impr.', valueFormatter: intFormatter },
-						],
-						defaultColDef: { flex: 1, resizable: true, sortable: true, filter: true },
+						columnDefs: adCols,
+						detailRowAutoHeight: true,
+						defaultColDef: { resizable: true, sortable: true, filter: true },
 					},
-					// 🔹 fetch ads (nível 3)
 					getDetailRowData: async (params) => {
-						const adsetId = params.data?.id;
+						const id = params.data?.id;
 						const qs = new URLSearchParams({
-							adset_id: adsetId,
+							adset_id: id,
 							period: DRILL.period,
 							startRow: 0,
 							endRow: 200,
 						});
-						const url = `${DRILL_ENDPOINTS.ADS}?${qs.toString()}`;
-						console.log('[ADS] Fetching:', url);
-						try {
-							const data = await fetchJSON(url);
-							const rows = data.rows || data.data || [];
-							console.log(`[ADS] Recebidos ${rows.length} anúncios`, rows.slice(0, 2));
-							params.successCallback(rows);
-						} catch (e) {
-							console.error('[ADS] Erro ao buscar ads:', e);
-							params.successCallback([]);
-						}
+						const url = `${DRILL_ENDPOINTS.ADS}?${qs}`;
+						console.log('[ADS]', url);
+						const data = await fetchJSON(url);
+						params.successCallback(data.rows || data.data || []);
 					},
 				},
 
-				// 🔹 fetch adsets (nível 2)
 				getDetailRowData: async (params) => {
-					const campaignId = params.data?.id || params.data?.utm_campaign;
+					const id = params.data?.id;
 					const qs = new URLSearchParams({
-						campaign_id: campaignId,
+						campaign_id: id,
 						period: DRILL.period,
 						startRow: 0,
 						endRow: 200,
 					});
-					const url = `${DRILL_ENDPOINTS.ADSETS}?${qs.toString()}`;
-					console.log('[ADSETS] Fetching:', url);
-					try {
-						const data = await fetchJSON(url);
-						const rows = data.rows || data.data || [];
-						console.log(`[ADSETS] Recebidos ${rows.length} adsets`, rows.slice(0, 2));
-						params.successCallback(rows);
-					} catch (e) {
-						console.error('[ADSETS] Erro ao buscar adsets:', e);
-						params.successCallback([]);
-					}
+					const url = `${DRILL_ENDPOINTS.ADSETS}?${qs}`;
+					console.log('[ADSETS]', url);
+					const data = await fetchJSON(url);
+					params.successCallback(data.rows || data.data || []);
 				},
 			},
 
-			// 🔹 fetch adsets (nível raiz → mesmo endpoint, mas primeiro expand)
 			getDetailRowData: async (params) => {
-				const campaignId = params.data?.id;
+				const id = params.data?.id;
 				const qs = new URLSearchParams({
-					campaign_id: campaignId,
+					campaign_id: id,
 					period: DRILL.period,
 					startRow: 0,
 					endRow: 200,
 				});
-				const url = `${DRILL_ENDPOINTS.ADSETS}?${qs.toString()}`;
-				console.log('[ROOT->ADSETS] Fetching:', url);
-				try {
-					const data = await fetchJSON(url);
-					const rows = data.rows || data.data || [];
-					console.log(`[ROOT->ADSETS] Recebidos ${rows.length} adsets`, rows.slice(0, 2));
-					params.successCallback(rows);
-				} catch (e) {
-					console.error('[ROOT->ADSETS] Erro ao expandir campanha:', e);
-					params.successCallback([]);
-				}
+				const url = `${DRILL_ENDPOINTS.ADSETS}?${qs}`;
+				console.log('[ROOT->ADSETS]', url);
+				const data = await fetchJSON(url);
+				params.successCallback(data.rows || data.data || []);
 			},
 		},
 
-		// 🔹 fetch campaigns (nível 0)
 		onGridReady: async (params) => {
-			try {
-				console.log('[ROOT] Fetching campanhas...');
-				let res = await fetch(ENDPOINTS.SSRM, {
-					method: 'POST',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ startRow: 0, endRow: 500 }),
-				});
-				if (!res.ok) {
-					console.warn('[ROOT] POST falhou, tentando GET...');
-					res = await fetch(`${ENDPOINTS.SSRM}&limit=500`);
-				}
-				const text = await res.text();
-				let data;
-				try {
-					data = JSON.parse(text);
-				} catch {
-					console.warn('[ROOT] Resposta não era JSON válido:', text.slice(0, 200));
-					data = {};
-				}
-				const rows = data.rows || data.data || [];
-				console.log(`[ROOT] Recebidas ${rows.length} campanhas`, rows.slice(0, 2));
-				params.api.setGridOption('rowData', rows);
-			} catch (e) {
-				console.error('[ROOT] Erro ao buscar campanhas:', e);
-			}
+			console.log('[ROOT] Fetching campanhas...');
+			let res = await fetch(ENDPOINTS.SSRM, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ startRow: 0, endRow: 500 }),
+			});
+			if (!res.ok) res = await fetch(`${ENDPOINTS.SSRM}&limit=500`);
+			const data = await res.json().catch(() => ({}));
+			const rows = data.rows || data.data || [];
+			console.log(`[ROOT] Recebidas ${rows.length} campanhas`);
+			params.api.setGridOption('rowData', rows);
 		},
 	};
 
