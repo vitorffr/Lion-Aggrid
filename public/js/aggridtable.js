@@ -238,13 +238,6 @@ const defaultColDef = {
 const columnDefs = [
 	// Identificação
 	{
-		headerName: 'Status Campanha',
-		field: 'campaign_status',
-		minWidth: 160,
-		flex: 0.8,
-		cellRenderer: statusPillRenderer,
-	},
-	{
 		headerName: 'Profile',
 		field: 'profile_name',
 		valueGetter: (p) => stripHtml(p.data?.profile_name),
@@ -253,7 +246,7 @@ const columnDefs = [
 		tooltipValueGetter: (p) => p.value || '',
 	},
 	{
-		headerName: 'BC',
+		headerName: 'Business Center',
 		field: 'bc_name',
 		valueGetter: (p) => stripHtml(p.data?.bc_name),
 		minWidth: 160,
@@ -261,13 +254,48 @@ const columnDefs = [
 		tooltipValueGetter: (p) => p.value || '',
 	},
 	{
-		headerName: 'Conta',
+		headerName: 'Account',
 		field: 'account_name',
 		valueGetter: (p) => stripHtml(p.data?.account_name),
 		minWidth: 200,
 		flex: 1.3,
 		tooltipValueGetter: (p) => p.value || '',
 	},
+	{
+		headerName: 'Account Status',
+		field: 'account_status',
+		minWidth: 140,
+		flex: 0.7,
+		cellRenderer: statusPillRenderer,
+	},
+	{
+		headerName: 'Daily Limit',
+		field: 'account_limit',
+		type: 'rightAligned',
+		valueGetter: (p) => toNumberBR(p.data?.account_limit),
+		valueFormatter: currencyFormatter,
+		minWidth: 120,
+		flex: 0.8,
+	},
+
+	// // Campanha / UTM
+	// {
+	// 	headerName: 'Campaign',
+	// 	field: 'campaign_name',
+	// 	valueGetter: (p) => stripHtml(p.data?.campaign_name),
+	// 	minWidth: 260,
+	// 	flex: 1.6,
+	// 	tooltipValueGetter: (p) => p.value || '',
+	// },
+	{
+		headerName: 'UTM',
+		field: 'utm_campaign',
+		minWidth: 160,
+		flex: 0.9,
+		tooltipValueGetter: (p) => p.value || '',
+	},
+
+	// Lance / status campanha / orçamento
 	{
 		headerName: 'Bid',
 		field: 'bid',
@@ -278,7 +306,76 @@ const columnDefs = [
 		flex: 0.6,
 	},
 	{
-		headerName: 'Conv.',
+		headerName: 'Campaign Status',
+		field: 'campaign_status',
+		minWidth: 160,
+		flex: 0.8,
+		cellRenderer: statusPillRenderer,
+	},
+	{
+		headerName: 'Budget',
+		field: 'budget',
+		type: 'rightAligned',
+		valueGetter: (p) => toNumberBR(p.data?.budget),
+		valueFormatter: currencyFormatter,
+		minWidth: 120,
+		flex: 0.7,
+	},
+
+	// Xabu
+	{
+		headerName: 'Xabu Ads',
+		field: 'xabu_ads',
+		minWidth: 100,
+		maxWidth: 120,
+		tooltipValueGetter: (p) => stripHtml(p.data?.xabu_ads),
+		cellRenderer: chipFractionBadgeRenderer,
+	},
+	{
+		headerName: 'Xabu Adsets',
+		field: 'xabu_adsets',
+		minWidth: 110,
+		maxWidth: 130,
+		tooltipValueGetter: (p) => stripHtml(p.data?.xabu_adsets),
+		cellRenderer: chipFractionBadgeRenderer,
+	},
+
+	// Métricas
+	{
+		headerName: 'Impressions',
+		field: 'impressions',
+		type: 'rightAligned',
+		valueFormatter: intFormatter,
+		minWidth: 110,
+		flex: 0.7,
+	},
+	{
+		headerName: 'Clicks',
+		field: 'clicks',
+		type: 'rightAligned',
+		valueFormatter: intFormatter,
+		minWidth: 100,
+		flex: 0.6,
+	},
+	{
+		headerName: 'Visitors',
+		field: 'visitors',
+		type: 'rightAligned',
+		valueFormatter: intFormatter,
+		minWidth: 100,
+		flex: 0.6,
+	},
+	{
+		headerName: 'CPC',
+		field: 'cpc',
+		type: 'rightAligned',
+		valueGetter: (p) => toNumberBR(p.data?.cpc),
+		valueFormatter: currencyFormatter,
+		minWidth: 100,
+		flex: 0.6,
+	},
+	{
+		headerName: 'Conversions',
 		field: 'conversions',
 		type: 'rightAligned',
 		valueFormatter: intFormatter,
@@ -286,12 +383,61 @@ const columnDefs = [
 		flex: 0.6,
 	},
 	{
-		headerName: 'Cliques',
-		field: 'clicks',
+		headerName: 'CPA FB',
+		field: 'cpa_fb',
 		type: 'rightAligned',
-		valueFormatter: intFormatter,
-		minWidth: 100,
+		valueGetter: (p) => toNumberBR(p.data?.cpa_fb),
+		valueFormatter: currencyFormatter,
+		minWidth: 110,
 		flex: 0.6,
+	},
+	{
+		headerName: 'Real Conversions',
+		field: 'real_conversions',
+		type: 'rightAligned',
+		// 2) reutilizando seu helper numérico
+		valueGetter: (p) => toNumberBR(p.data?.real_conversions),
+		valueFormatter: intFormatter,
+		minWidth: 120,
+		flex: 0.7,
+	},
+	{
+		headerName: 'Real CPA',
+		field: 'real_cpa',
+		type: 'rightAligned',
+		valueGetter: (p) => toNumberBR(p.data?.real_cpa),
+		valueFormatter: currencyFormatter,
+		minWidth: 110,
+		flex: 0.6,
+	},
+
+	// Dinheiro
+	{
+		headerName: 'Spend',
+		field: 'spent',
+		type: 'rightAligned',
+		valueGetter: (p) => toNumberBR(p.data?.spent),
+		valueFormatter: currencyFormatter,
+		minWidth: 120,
+		flex: 0.8,
+	},
+	{
+		headerName: 'Facebook Revenue',
+		field: 'fb_revenue',
+		type: 'rightAligned',
+		valueGetter: (p) => toNumberBR(p.data?.fb_revenue),
+		valueFormatter: currencyFormatter,
+		minWidth: 120,
+		flex: 0.8,
+	},
+	{
+		headerName: 'Push Revenue',
+		field: 'push_revenue',
+		type: 'rightAligned',
+		valueGetter: (p) => toNumberBR(p.data?.push_revenue),
+		valueFormatter: currencyFormatter,
+		minWidth: 120,
+		flex: 0.8,
 	},
 	{
 		headerName: 'Revenue',
@@ -316,159 +462,6 @@ const columnDefs = [
 		valueFormatter: currencyFormatter,
 		minWidth: 120,
 		flex: 0.8,
-	},
-	{
-		headerName: 'Gasto',
-		field: 'spent',
-		type: 'rightAligned',
-		valueGetter: (p) => toNumberBR(p.data?.spent),
-		valueFormatter: currencyFormatter,
-		minWidth: 120,
-		flex: 0.8,
-	},
-	{
-		headerName: 'Cliques',
-		field: 'clicks',
-		type: 'rightAligned',
-		valueFormatter: intFormatter,
-		minWidth: 100,
-		flex: 0.6,
-	},
-	{
-		headerName: 'CPC',
-		field: 'cpc',
-		type: 'rightAligned',
-		valueGetter: (p) => toNumberBR(p.data?.cpc),
-		valueFormatter: currencyFormatter,
-		minWidth: 100,
-		flex: 0.6,
-	},
-	{
-		headerName: 'CPA FB',
-		field: 'cpa_fb',
-		type: 'rightAligned',
-		valueGetter: (p) => toNumberBR(p.data?.cpa_fb),
-		valueFormatter: currencyFormatter,
-		minWidth: 110,
-		flex: 0.6,
-	},
-	{
-		headerName: 'FB Rev',
-		field: 'fb_revenue',
-		type: 'rightAligned',
-		valueGetter: (p) => toNumberBR(p.data?.fb_revenue),
-		valueFormatter: currencyFormatter,
-		minWidth: 120,
-		flex: 0.8,
-	},
-	{
-		headerName: 'Push Rev',
-		field: 'push_revenue',
-		type: 'rightAligned',
-		valueGetter: (p) => toNumberBR(p.data?.push_revenue),
-		valueFormatter: currencyFormatter,
-		minWidth: 120,
-		flex: 0.8,
-	},
-	{
-		headerName: 'Conv. Real',
-		field: 'real_conversions',
-		type: 'rightAligned',
-		valueGetter: (p) => Number(stripHtml(p.data?.real_conversions) || NaN),
-		valueFormatter: intFormatter,
-		minWidth: 120,
-		flex: 0.7,
-	},
-
-	// Status
-	{
-		headerName: 'Status Conta',
-		field: 'account_status',
-		minWidth: 140,
-		flex: 0.7,
-		cellRenderer: statusPillRenderer,
-	},
-
-	// Dinheiro/numéricos
-	{
-		headerName: 'Limite',
-		field: 'account_limit',
-		type: 'rightAligned',
-		valueGetter: (p) => toNumberBR(p.data?.account_limit),
-		valueFormatter: currencyFormatter,
-		minWidth: 120,
-		flex: 0.8,
-	},
-
-	// {
-	// 	headerName: 'Campanha',
-	// 	field: 'campaign_name',
-	// 	valueGetter: (p) => stripHtml(p.data?.campaign_name),
-	// 	minWidth: 260,
-	// 	flex: 1.6,
-	// 	tooltipValueGetter: (p) => p.value || '',
-	// },
-	{
-		headerName: 'UTM',
-		field: 'utm_campaign',
-		minWidth: 160,
-		flex: 0.9,
-		tooltipValueGetter: (p) => p.value || '',
-	},
-
-	{
-		headerName: 'Budget',
-		field: 'budget',
-		type: 'rightAligned',
-		valueGetter: (p) => toNumberBR(p.data?.budget),
-		valueFormatter: currencyFormatter,
-		minWidth: 120,
-		flex: 0.7,
-	},
-
-	{
-		headerName: 'Xabu Ads',
-		field: 'xabu_ads',
-		minWidth: 100,
-		maxWidth: 120,
-		tooltipValueGetter: (p) => stripHtml(p.data?.xabu_ads),
-		cellRenderer: chipFractionBadgeRenderer,
-	},
-	{
-		headerName: 'Xabu Adsets',
-		field: 'xabu_adsets',
-		minWidth: 110,
-		maxWidth: 130,
-		tooltipValueGetter: (p) => stripHtml(p.data?.xabu_adsets),
-		cellRenderer: chipFractionBadgeRenderer,
-	},
-
-	{
-		headerName: 'Impr.',
-		field: 'impressions',
-		type: 'rightAligned',
-		valueFormatter: intFormatter,
-		minWidth: 110,
-		flex: 0.7,
-	},
-
-	{
-		headerName: 'Visit.',
-		field: 'visitors',
-		type: 'rightAligned',
-		valueFormatter: intFormatter,
-		minWidth: 100,
-		flex: 0.6,
-	},
-
-	{
-		headerName: 'CPA Real',
-		field: 'real_cpa',
-		type: 'rightAligned',
-		valueGetter: (p) => toNumberBR(p.data?.real_cpa),
-		valueFormatter: currencyFormatter,
-		minWidth: 110,
-		flex: 0.6,
 	},
 ];
 
@@ -521,7 +514,7 @@ function makeGrid() {
 
 	// coluna "árvore"
 	const autoGroupColumnDef = {
-		headerName: 'Campanha',
+		headerName: 'Campaign',
 		sortable: false,
 		minWidth: 400,
 		cellRendererParams: {
@@ -595,7 +588,7 @@ function makeGrid() {
 				params?.data?.__nodeType === 'campaign'
 			) {
 				const label = params.data.__label || '(sem nome)';
-				showKTModal({ title: 'Campanha', content: label });
+				showKTModal({ title: 'Campaign', content: label });
 				return;
 			}
 

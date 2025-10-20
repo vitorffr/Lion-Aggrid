@@ -487,7 +487,17 @@ function makeGrid() {
 		rowModelType: 'serverSide',
 		cacheBlockSize: 200,
 		maxBlocksInCache: 4,
-
+		rowSelection: {
+			mode: 'multiRow', // ou 'singleRow'
+			// enableClickSelection: true, // substitui suppressRowClickSelection
+			checkboxes: true, // ativa checkboxes
+			headerCheckbox: true, // checkbox no header
+			selectionColumn: {
+				width: 80,
+				pinned: 'left',
+				suppressHeaderFilterButton: true,
+			},
+		},
 		masterDetail: true,
 		detailRowHeight: 400,
 		isRowMaster: () => true,
