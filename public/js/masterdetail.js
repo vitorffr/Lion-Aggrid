@@ -54,6 +54,53 @@ async function fetchJSON(url, opts) {
 		return {};
 	}
 }
+function pickChipColorFromFraction(value) {
+	const txt = stripHtml(value ?? '').trim();
+	const m = txt.match(/^(\d+)\s*\/\s*(\d+)$/);
+	if (!m) return { label: txt || '—', color: 'secondary' };
+	const current = Number(m[1]);
+	const total = Number(m[2]);
+	if (!Number.isFinite(current) || !Number.isFinite(total) || total <= 0) {
+		return { label: `${current}/${total}`, color: 'secondary' };
+	}
+	if (current <= 0) return { label: `${current}/${total}`, color: 'success' }; // 0%
+	const ratio = current / total;
+	if (ratio > 0.5) return { label: `${current}/${total}`, color: 'danger' }; // > 50%
+	return { label: `${current}/${total}`, color: 'warning' }; // (0, 50%]
+}
+function chipFractionBadgeRenderer(params) {
+	const value = String(params?.value || '').trim();
+	if (!value) return '';
+
+	// tenta extrair formato "X / Y"
+	const match = value.match(/^(\d+)\s*\/\s*(\d+)$/);
+	let color = '#6b7280'; // cinza default
+	let textColor = '#fff';
+
+	if (match) {
+		const current = Number(match[1]);
+		const total = Number(match[2]);
+		if (Number.isFinite(current) && Number.isFinite(total) && total > 0) {
+			const ratio = current / total;
+			if (current <= 0) color = '#22c55e'; // verde (ok / 0)
+			else if (ratio > 0.5) color = '#dc2626'; // vermelho (>50%)
+			else (color = '#eab308'), (textColor = '#111'); // amarelo (até 50%)
+		}
+	}
+
+	const span = document.createElement('span');
+	span.textContent = value;
+	span.style.display = 'inline-block';
+	span.style.padding = '2px 8px';
+	span.style.borderRadius = '999px';
+	span.style.fontSize = '12px';
+	span.style.fontWeight = '600';
+	span.style.lineHeight = '1.4';
+	span.style.backgroundColor = color;
+	span.style.color = textColor;
+
+	return span;
+}
 
 /* ============ Tema opcional ============ */
 function createAgTheme() {
@@ -75,6 +122,35 @@ function createAgTheme() {
 		spacing: 6,
 	});
 }
+function statusPillRenderer(params) {
+	const value = String(params?.value || '').trim();
+	if (!value) return '';
+
+	const span = document.createElement('span');
+	span.textContent = value.toUpperCase();
+	span.style.display = 'inline-block';
+	span.style.padding = '2px 8px';
+	span.style.borderRadius = '999px';
+	span.style.fontSize = '12px';
+	span.style.fontWeight = '600';
+	span.style.lineHeight = '1.4';
+	span.style.color = '#fff';
+
+	// Define cor conforme status
+	const lower = value.toLowerCase();
+	if (lower === 'active') {
+		span.style.backgroundColor = '#22c55e'; // verde
+	} else if (lower === 'paused') {
+		span.style.backgroundColor = '#6b7280'; // amarelo
+		span.style.color = '#ffffffff';
+	} else if (lower === 'error' || lower === 'rejected' || lower === 'off') {
+		span.style.backgroundColor = '#dc2626'; // vermelho
+	} else {
+		span.style.backgroundColor = '#6b7280'; // cinza (default)
+	}
+
+	return span;
+}
 
 /* ======= Colunas ======= */
 
@@ -86,10 +162,24 @@ const rootCols = [
 		minWidth: 400,
 		cellRenderer: 'agGroupCellRenderer',
 	},
-	{ field: 'campaign_status', headerName: 'Status', minWidth: 110 },
+	{
+		field: 'campaign_status',
+		headerName: 'Status Campanha',
+		minWidth: 110,
+		cellRenderer: statusPillRenderer,
+	},
+	// Status
+
 	{ field: 'profile_name', headerName: 'Profile', minWidth: 190 },
 	{ field: 'bc_name', headerName: 'BC', minWidth: 200 },
 	{ field: 'account_name', headerName: 'Conta', minWidth: 220 },
+	{
+		headerName: 'Status Conta',
+		field: 'account_status',
+		minWidth: 140,
+		flex: 0.7,
+		cellRenderer: statusPillRenderer,
+	},
 	{
 		field: 'bid',
 		headerName: 'Bid',
@@ -104,8 +194,18 @@ const rootCols = [
 		minWidth: 110,
 		type: 'rightAligned',
 	},
-	{ field: 'xabu_ads', headerName: 'Xabu Ads', minWidth: 100 },
-	{ field: 'xabu_adsets', headerName: 'Xabu Adsets', minWidth: 110 },
+	{
+		field: 'xabu_ads',
+		headerName: 'Xabu Ads',
+		minWidth: 100,
+		cellRenderer: chipFractionBadgeRenderer,
+	},
+	{
+		field: 'xabu_adsets',
+		headerName: 'Xabu Adsets',
+		minWidth: 110,
+		cellRenderer: chipFractionBadgeRenderer,
+	},
 	{
 		field: 'impressions',
 		headerName: 'Imp.',
@@ -120,6 +220,7 @@ const rootCols = [
 		minWidth: 90,
 		type: 'rightAligned',
 	},
+
 	{
 		field: 'visitors',
 		headerName: 'Visitantes',
@@ -197,7 +298,7 @@ const rootCols = [
 // 📊 ADSETS
 const adsetCols = [
 	{ field: 'name', headerName: 'Adset', minWidth: 360, cellRenderer: 'agGroupCellRenderer' },
-	{ field: 'campaign_status', headerName: 'Status', minWidth: 110 },
+	{ field: 'campaign_status', headerName: 'Status', minWidth: 110, cellRenderer: statusPillRenderer },
 	{
 		field: 'bid',
 		headerName: 'Bid',
@@ -296,7 +397,7 @@ const adsetCols = [
 // 📢 ADS
 const adCols = [
 	{ field: 'name', headerName: 'Anúncio', minWidth: 380, cellRenderer: 'agGroupCellRenderer' },
-	{ field: 'campaign_status', headerName: 'Status', minWidth: 110 },
+	{ field: 'campaign_status', headerName: 'Status', minWidth: 110, cellRenderer: statusPillRenderer },
 	{ field: 'preview_url', headerName: 'Preview', minWidth: 300 },
 	{ field: 'story_id', headerName: 'Story ID', minWidth: 240 },
 	{
@@ -391,7 +492,7 @@ function makeGrid() {
 		detailRowHeight: 400,
 		domLayout: 'normal',
 		theme: createAgTheme(),
-
+		rowModelType: 'clientSide',
 		suppressColumnVirtualisation: false,
 		alwaysShowHorizontalScroll: true,
 		columnDefs: rootCols,
