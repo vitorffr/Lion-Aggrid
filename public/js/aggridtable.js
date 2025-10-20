@@ -1,12 +1,6 @@
 /* public/js/lion-grid.js */
-const ENDPOINTS = {
-	SSRM: '/api/ssrm/?clean=1',
-};
-const DRILL_ENDPOINTS = {
-	ADSETS: '/api/adsets/',
-	ADS: '/api/ads/',
-};
-// período padrão p/ drill; se tiver um seletor, atualize DRILL.period on-the-fly
+const ENDPOINTS = { SSRM: '/api/ssrm/?clean=1' };
+const DRILL_ENDPOINTS = { ADSETS: '/api/adsets/', ADS: '/api/ads/' };
 const DRILL = { period: 'TODAY' };
 
 /* ============ AG Grid boot/licença ============ */
@@ -40,7 +34,6 @@ const strongText = (s) => {
 	return stripHtml(m ? m[1] : s);
 };
 
-// "R$ 1.618,65" -> 1618.65  | "-" -> null
 const toNumberBR = (s) => {
 	if (s == null) return null;
 	if (typeof s === 'number') return s;
@@ -90,7 +83,6 @@ function renderBadgeNode(label, colorKey) {
 	span.style.color = fb.fg;
 	return span;
 }
-
 function renderBadge(label, colorKey) {
 	return renderBadgeNode(label, colorKey).outerHTML;
 }
@@ -100,7 +92,6 @@ function pickStatusColor(raw) {
 		.toLowerCase();
 	return s === 'active' ? 'success' : 'secondary';
 }
-// helper pra saber se é linha de total/pinned (não renderizar pill)
 function isPinnedOrTotal(params) {
 	return (
 		params?.node?.rowPinned === 'bottom' ||
@@ -109,13 +100,11 @@ function isPinnedOrTotal(params) {
 		params?.node?.group === true
 	);
 }
-
 function statusPillRenderer(p) {
 	const raw = p.value ?? '';
-	// 👉 não renderiza badge em linha de total/pinned/grupo OU quando não há valor
 	if (isPinnedOrTotal(p) || !raw) {
 		const span = document.createElement('span');
-		span.textContent = stripHtml(raw) || ''; // vazio mesmo
+		span.textContent = stripHtml(raw) || '';
 		return span;
 	}
 	const label = (strongText(raw) || stripHtml(raw) || '').toUpperCase();
@@ -136,8 +125,8 @@ function pickChipColorFromFraction(value) {
 	}
 	if (current <= 1) return { label: `${current}/${total}`, color: 'success' }; // 0%
 	const ratio = current / total;
-	if (ratio > 0.5) return { label: `${current}/${total}`, color: 'danger' }; // > 50%
-	return { label: `${current}/${total}`, color: 'warning' }; // (0, 50%]
+	if (ratio > 0.5) return { label: `${current}/${total}`, color: 'danger' }; // >50%
+	return { label: `${current}/${total}`, color: 'warning' }; // (0,50%]
 }
 function chipFractionBadgeRenderer(p) {
 	if (isPinnedOrTotal(p) || !p.value) {
@@ -226,19 +215,15 @@ const defaultColDef = {
 	sortable: true,
 	filter: true,
 	resizable: true,
-	// tooltipShowDelay: 200,
-	// tooltipHideDelay: 80,
 	wrapHeaderText: true,
 	autoHeaderHeight: false,
 	enableRowGroup: true,
 	enablePivot: true,
 	enableValue: true,
 };
-// 🔹 valueParser: input de célula -> number seguro
 function parseCurrencyInput(params) {
 	return toNumberBR(params.newValue);
 }
-// permite dblclick só no root, na coluna de status
 function isPinnedOrGroup(params) {
 	return params?.node?.rowPinned || params?.node?.group;
 }
@@ -251,81 +236,77 @@ function normalizeStatus(s) {
 	return 'PAUSED';
 }
 async function toggleCampaignStatus(params) {
-	// só campanha (nível 0), não pinned, coluna certa e tem id
 	if (isPinnedOrGroup(params)) return;
 	if (params?.node?.level !== 0) return;
 	if (params?.colDef?.field !== 'campaign_status') return;
 	const row = params.data || {};
 	const id = row.id;
 	if (!id) return;
-
 	const current = normalizeStatus(row.campaign_status);
 	const next = current === 'ACTIVE' ? 'PAUSED' : 'ACTIVE';
-
-	// update otimista
 	row.campaign_status = next;
 	params.api.refreshCells({ rowNodes: [params.node], columns: ['campaign_status'], force: true });
 }
 
-// 🔹 handler de edição
-async function onBidChanged(params) {
-	// só aceita em linhas “raiz” (campanhas)
-	if (!params?.data || params?.node?.level !== 0) return;
-
-	const id = params.data.id; // ← teu JSON já tem id
-	const oldVal = params.oldValue;
-	const newVal = toNumberBR(params.newValue);
-
-	// se não mudou ou ficou inválido, reverte
-	if (newVal == null || newVal === oldVal) {
-		params.node.setDataValue('bid', oldVal);
-		return;
-	}
-	try {
-		await saveBidOnServer({ id, bid: newVal });
-		// mantém valor (ok)
-	} catch (e) {
-		console.error('Falha ao salvar Bid:', e);
-		// rollback visual
-		params.node.setDataValue('bid', oldVal);
-		// feedback simples
-		alert('Erro ao salvar Bid no servidor.');
-	}
-}
-
+/* Profile renderer */
 function profileCellRenderer(params) {
 	const raw = String(params?.value ?? '').trim();
 	if (!raw) return '';
-
-	// tenta separar no último " - " (para evitar quebrar nomes que contenham "-")
 	const idx = raw.lastIndexOf(' - ');
 	const name = idx > -1 ? raw.slice(0, idx).trim() : raw;
 	const meta = idx > -1 ? raw.slice(idx + 3).trim() : '';
-
 	const wrap = document.createElement('span');
 	wrap.style.display = 'inline-flex';
 	wrap.style.alignItems = 'baseline';
-	wrap.style.gap = '8px'; // espaço entre nome e meta
+	wrap.style.gap = '8px';
 	wrap.style.whiteSpace = 'nowrap';
-
 	const nameEl = document.createElement('span');
 	nameEl.textContent = name;
-	// opcional: dar mais ênfase
-	// nameEl.style.fontWeight = '600';
-
 	wrap.appendChild(nameEl);
-
 	if (meta) {
 		const metaEl = document.createElement('span');
 		metaEl.textContent = meta;
-		metaEl.style.fontSize = '10px'; // 👈 menor
-		metaEl.style.opacity = '0.65'; // 👈 mais “apagado”
+		metaEl.style.fontSize = '10px';
+		metaEl.style.opacity = '0.65';
 		metaEl.style.letterSpacing = '0.2px';
-		// opcional: cor fixa
-		// metaEl.style.color = '#9CA3AF';   // gray-400
 		wrap.appendChild(metaEl);
 	}
+	return wrap;
+}
 
+/* Revenue renderer (total + partes) */
+const REVENUE_LABELS = ['A', 'B'];
+function parseRevenue(raw) {
+	const txt = stripHtml(raw ?? '').trim();
+	const m = txt.match(/^(.*?)\s*\(\s*(.*?)\s*\|\s*(.*?)\s*\)\s*$/);
+	if (!m) return { total: txt, parts: [] };
+	return { total: m[1].trim(), parts: [m[2].trim(), m[3].trim()] };
+}
+function revenueCellRenderer(p) {
+	const raw = p.value ?? p.data?.revenue ?? '';
+	if (isPinnedOrTotal(p) || !raw) {
+		const span = document.createElement('span');
+		span.textContent = stripHtml(raw) || '';
+		return span;
+	}
+	const { total, parts } = parseRevenue(raw);
+	const wrap = document.createElement('span');
+	wrap.style.display = 'inline-flex';
+	wrap.style.flexDirection = 'column';
+	wrap.style.lineHeight = '1.1';
+	wrap.style.gap = '2px';
+	const totalEl = document.createElement('span');
+	totalEl.textContent = total || '';
+	wrap.appendChild(totalEl);
+	if (parts.length === 2) {
+		const metaText = document.createElement('span');
+		metaText.textContent = `(${REVENUE_LABELS[0] || 'A'}: ${parts[0]} | ${
+			REVENUE_LABELS[1] || 'B'
+		}: ${parts[1]})`;
+		metaText.style.fontSize = '11px';
+		metaText.style.opacity = '0.75';
+		wrap.appendChild(metaText);
+	}
 	return wrap;
 }
 
@@ -337,9 +318,8 @@ const columnDefs = [
 		valueGetter: (p) => stripHtml(p.data?.profile_name),
 		minWidth: 180,
 		flex: 1.2,
-		cellRenderer: profileCellRenderer, // 👈 renderiza com nome + meta menor
-
-		pinned: 'left',
+		cellRenderer: profileCellRenderer,
+		pinned: 'left', // <- padrão ligado
 		tooltipValueGetter: (p) => p.value || '',
 	},
 	{
@@ -375,15 +355,6 @@ const columnDefs = [
 		flex: 0.8,
 	},
 
-	// // Campanha / UTM
-	// {
-	// 	headerName: 'Campaign',
-	// 	field: 'campaign_name',
-	// 	valueGetter: (p) => stripHtml(p.data?.campaign_name),
-	// 	minWidth: 260,
-	// 	flex: 1.6,
-	// 	tooltipValueGetter: (p) => p.value || '',
-	// },
 	{
 		headerName: 'UTM',
 		field: 'utm_campaign',
@@ -392,19 +363,17 @@ const columnDefs = [
 		tooltipValueGetter: (p) => p.value || '',
 	},
 
-	// Lance / status campanha / orçamento
 	{
 		headerName: 'Bid',
 		field: 'bid',
 		type: 'rightAligned',
-		editable: (p) => p.node?.level === 0, // só nas campanhas
+		editable: (p) => p.node?.level === 0,
 		cellEditor: 'agNumberCellEditor',
-		valueParser: parseCurrencyInput, // string -> number
-		valueFormatter: currencyFormatter, // number -> "R$"
+		valueParser: parseCurrencyInput,
+		valueFormatter: currencyFormatter,
 		minWidth: 110,
 		flex: 0.6,
 	},
-
 	{
 		headerName: 'Campaign Status',
 		field: 'campaign_status',
@@ -416,15 +385,14 @@ const columnDefs = [
 		headerName: 'Budget',
 		field: 'budget',
 		type: 'rightAligned',
-		editable: (p) => p.node?.level === 0, // só nas campanhas
+		editable: (p) => p.node?.level === 0,
 		cellEditor: 'agNumberCellEditor',
-		valueParser: parseCurrencyInput, // string -> number
-		valueFormatter: currencyFormatter, // number -> "R$"
+		valueParser: parseCurrencyInput,
+		valueFormatter: currencyFormatter,
 		minWidth: 110,
 		flex: 0.6,
 	},
 
-	// Xabu
 	{
 		headerName: 'Ads',
 		field: '_ads',
@@ -442,7 +410,6 @@ const columnDefs = [
 		cellRenderer: chipFractionBadgeRenderer,
 	},
 
-	// Métricas
 	{
 		headerName: 'Impressions',
 		field: 'impressions',
@@ -497,7 +464,6 @@ const columnDefs = [
 		headerName: 'Real Conversions',
 		field: 'real_conversions',
 		type: 'rightAligned',
-		// 2) reutilizando seu helper numérico
 		valueGetter: (p) => toNumberBR(p.data?.real_conversions),
 		valueFormatter: intFormatter,
 		minWidth: 150,
@@ -513,7 +479,6 @@ const columnDefs = [
 		flex: 0.6,
 	},
 
-	// Dinheiro
 	{
 		headerName: 'Spend',
 		field: 'spent',
@@ -541,14 +506,19 @@ const columnDefs = [
 		minWidth: 120,
 		flex: 0.8,
 	},
+
 	{
 		headerName: 'Revenue',
 		field: 'revenue',
 		valueGetter: (p) => stripHtml(p.data?.revenue),
-		minWidth: 220,
-		flex: 1.2,
-		tooltipValueGetter: (p) => p.value || '',
+		minWidth: 200,
+		flex: 1.0,
+		wrapText: true,
+		autoHeight: false,
+		cellRenderer: revenueCellRenderer,
+		tooltipValueGetter: (p) => p.data?.revenue || '',
 	},
+
 	{
 		headerName: 'MX',
 		field: 'mx',
@@ -585,24 +555,8 @@ function normalizeAdsetRow(r) {
 	};
 }
 function normalizeAdRow(r) {
-	return {
-		__nodeType: 'ad',
-		__label: stripHtml(r.name || '(ad)'),
-		...r,
-	};
+	return { __nodeType: 'ad', __label: stripHtml(r.name || '(ad)'), ...r };
 }
-
-/* ============ Fetch helper ============ */
-async function fetchJSON(url, opts) {
-	const res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...opts });
-	const data = await res.json().catch(() => ({}));
-	if (!res.ok) throw new Error(data?.error || res.statusText);
-	return data;
-}
-let res = await fetch(ENDPOINTS.SSRM, {
-	/* ... */
-});
-const data = await res.json().catch(() => ({}));
 
 /* ============ Grid (Tree Data + SSRM) ============ */
 function makeGrid() {
@@ -614,38 +568,24 @@ function makeGrid() {
 	}
 	gridDiv.classList.add('ag-theme-quartz');
 
-	// coluna "árvore"
 	const autoGroupColumnDef = {
 		headerName: 'Campaign',
 		sortable: false,
-		// autoHeight: true,
 		wrapText: true,
 		minWidth: 350,
-		pinned: 'left',
-		cellStyle: (p) => (p?.node?.level === 0 ? { fontSize: '12px', lineHeight: '1.3' } : null),
-
-		cellRendererParams: {
-			suppressCount: true,
-			innerRenderer: (p) => p.data?.__label || '',
-		},
+		pinned: 'left', // <- padrão ligado
+		cellStyle: (p) => (p?.node?.level === 0 ? { fontSize: '12px', lineHeight: '1.6' } : null),
+		cellRendererParams: { suppressCount: true, innerRenderer: (p) => p.data?.__label || '' },
 	};
 
 	const gridOptions = {
-		// Tree + SSRM
-		onCellDoubleClicked: toggleCampaignStatus, // 👈 aqui
-
+		onCellDoubleClicked: toggleCampaignStatus,
 		rowModelType: 'serverSide',
-		// serverSideStoreType: 'partial',
-		// serverSideSortAllLevels: true,
-
 		cacheBlockSize: 200,
 		maxBlocksInCache: 4,
-		// suppressAutoColumns: true,
-		// pinnedBottomRowData: [{ account_name: 8 }],
 		treeData: true,
 		isServerSideGroup: (data) => data?.__nodeType === 'campaign' || data?.__nodeType === 'adset',
 		getServerSideGroupKey: (data) => data?.__groupKey ?? '',
-
 		getRowId: (p) => {
 			if (p.data?.__nodeType === 'campaign') return `c:${p.data.__groupKey}`;
 			if (p.data?.__nodeType === 'adset') return `s:${p.data.__groupKey}`;
@@ -658,39 +598,26 @@ function makeGrid() {
 		autoGroupColumnDef,
 		defaultColDef,
 		rowSelection: {
-			mode: 'multiRow', // ou 'singleRow'
-			// enableClickSelection: true, // substitui suppressRowClickSelection
-			checkboxes: true, // ativa checkboxes
-			headerCheckbox: true, // checkbox no header
-			selectionColumn: {
-				width: 80,
-				pinned: 'left',
-				suppressHeaderFilterButton: true,
-			},
+			mode: 'multiRow',
+			checkboxes: true,
+			headerCheckbox: true,
+			selectionColumn: { width: 80, pinned: 'left', suppressHeaderFilterButton: true },
 		},
-
-		// grandTotalRow: 'bottom',
+		rowHeight: 42,
 		animateRows: true,
 		sideBar: { toolPanels: ['columns', 'filters'], defaultToolPanel: null, position: 'right' },
 		theme: createAgTheme(),
 
 		onCellClicked(params) {
-			// 🚫 nunca abre modal em filhos/netos
 			if (params?.node?.level > 0) return;
-
-			// coluna de árvore (Campanha)?
 			const isAutoGroupCol =
 				(typeof params.column?.isAutoRowGroupColumn === 'function' &&
 					params.column.isAutoRowGroupColumn()) ||
 				params.colDef?.colId === 'ag-Grid-AutoColumn' ||
 				!!params.colDef?.showRowGroup;
-
-			// clicou no triângulo/checkbox? não abre modal
 			const clickedExpanderOrCheckbox = !!params.event?.target?.closest?.(
 				'.ag-group-expanded, .ag-group-contracted, .ag-group-checkbox'
 			);
-
-			// root + coluna Campanha => modal com label da campanha
 			if (
 				isAutoGroupCol &&
 				!clickedExpanderOrCheckbox &&
@@ -700,8 +627,6 @@ function makeGrid() {
 				showKTModal({ title: 'Campaign', content: label });
 				return;
 			}
-
-			// demais colunas — só no root
 			const MODAL_FIELDS = new Set([
 				'profile_name',
 				'bc_name',
@@ -713,7 +638,6 @@ function makeGrid() {
 				'xabu_ads',
 				'xabu_adsets',
 			]);
-
 			const field = params.colDef?.field;
 			if (!field || !MODAL_FIELDS.has(field)) return;
 
@@ -749,9 +673,7 @@ function makeGrid() {
 					display = Number.isFinite(n) ? intFmt.format(n) : String(val);
 				} else if (field === 'account_status' || field === 'campaign_status') {
 					display = strongText(String(val || ''));
-				} else {
-					display = String(val);
-				}
+				} else display = String(val);
 			}
 			const title = params.colDef?.headerName || 'Detalhes';
 			showKTModal({ title, content: display || '(vazio)' });
@@ -789,7 +711,6 @@ function makeGrid() {
 								});
 							}
 							const data = await res.json().catch(() => ({ rows: [], lastRow: 0 }));
-							// ===== TOTALS (rodapé) =====
 							const totals = data?.totals || {};
 							const pinnedTotal = {
 								id: '__pinned_total__',
@@ -811,8 +732,6 @@ function makeGrid() {
 								mx: totals.mx_total ?? 0,
 								ctr: totals.ctr_total ?? 0,
 							};
-
-							// formatação dos principais valores numéricos
 							for (const k of [
 								'spent',
 								'fb_revenue',
@@ -824,31 +743,25 @@ function makeGrid() {
 								'cpa_fb',
 								'real_cpa',
 								'mx',
-							]) {
+							])
 								pinnedTotal[k] = brlFmt.format(Number(pinnedTotal[k]) || 0);
-							}
 							for (const k of [
 								'impressions',
 								'clicks',
 								'visitors',
 								'conversions',
 								'real_conversions',
-							]) {
+							])
 								pinnedTotal[k] = intFmt.format(Number(pinnedTotal[k]) || 0);
-							}
-							if (typeof pinnedTotal.ctr === 'number') {
+							if (typeof pinnedTotal.ctr === 'number')
 								pinnedTotal.ctr = (pinnedTotal.ctr * 100).toFixed(2) + '%';
-							}
 
 							const rows = (data.rows || []).map(normalizeCampaignRow);
-							// aplica linha TOTAL no rodapé
 							try {
 								const api = params.api;
-								if (api?.setPinnedBottomRowData) {
+								if (api?.setPinnedBottomRowData)
 									api.setPinnedBottomRowData([pinnedTotal]);
-								} else {
-									params.api?.setGridOption?.('pinnedBottomRowData', [pinnedTotal]);
-								}
+								else params.api?.setGridOption?.('pinnedBottomRowData', [pinnedTotal]);
 							} catch (e) {
 								console.warn('Erro ao aplicar pinned bottom row:', e);
 							}
@@ -857,7 +770,7 @@ function makeGrid() {
 							return;
 						}
 
-						// Nível 1 => adsets (filhos de campaignId)
+						// Nível 1 => adsets
 						if (groupKeys.length === 1) {
 							const campaignId = groupKeys[0];
 							const qs = new URLSearchParams({
@@ -872,7 +785,7 @@ function makeGrid() {
 							return;
 						}
 
-						// Nível 2 => ads (filhos de adsetId)
+						// Nível 2 => ads
 						if (groupKeys.length === 2) {
 							const adsetId = groupKeys[1];
 							const qs = new URLSearchParams({
@@ -887,7 +800,6 @@ function makeGrid() {
 							return;
 						}
 
-						// além de ads: vazio
 						req.success({ rowData: [], rowCount: 0 });
 					} catch (e) {
 						console.error('[TREE SSRM] getRows failed:', e);
@@ -915,7 +827,75 @@ function makeGrid() {
 			? AG.createGrid(gridDiv, gridOptions)
 			: new AG.Grid(gridDiv, gridOptions);
 
-	return { api: gridOptions.api || apiOrInstance, gridDiv };
+	const api = gridOptions.api || apiOrInstance;
+
+	// expõe a API pra outras funções (toggle)
+	globalThis.LionGrid = globalThis.LionGrid || {};
+	globalThis.LionGrid.api = api;
+
+	return { api, gridDiv };
+}
+
+/* ============ Toast simples (Toastify) ============ */
+function showToast(msg, type = 'info') {
+	const colors = {
+		info: 'linear-gradient(90deg,#06b6d4,#3b82f6)',
+		success: 'linear-gradient(90deg,#22c55e,#16a34a)',
+		warning: 'linear-gradient(90deg,#f59e0b,#eab308)',
+		danger: 'linear-gradient(90deg,#ef4444,#dc2626)',
+	};
+	if (globalThis.Toastify) {
+		Toastify({
+			text: msg,
+			duration: 2200,
+			close: true,
+			gravity: 'bottom',
+			position: 'right',
+			stopOnFocus: true,
+			backgroundColor: colors[type] || colors.info,
+		}).showToast();
+	} else {
+		console.log(`[Toast] ${msg}`);
+	}
+}
+
+/* ============ Toggle de colunas pinadas ============ */
+// tenta descobrir o ID da coluna de seleção
+function getSelectionColId(api) {
+	try {
+		const cols = api.getColumns() || [];
+		const ids = cols.map((c) => c.getColId());
+		if (ids.includes('ag-Grid-Selection')) return 'ag-Grid-Selection';
+		const found = cols.find(
+			(c) => c.getColDef()?.headerCheckboxSelection || c.getColDef()?.checkboxSelection
+		);
+		return found?.getColId() || null;
+	} catch {
+		return null;
+	}
+}
+
+function togglePinnedColsFromCheckbox() {
+	const api = globalThis.LionGrid?.api;
+	if (!api) return;
+
+	const el = document.getElementById('pinToggle');
+	if (!el) return;
+	const checked = !!el.checked;
+
+	const selectionColId = getSelectionColId(api);
+
+	const base = [
+		{ colId: 'ag-Grid-AutoColumn', pinned: checked ? 'left' : null },
+		{ colId: 'profile_name', pinned: checked ? 'left' : null },
+	];
+	if (selectionColId) base.push({ colId: selectionColId, pinned: checked ? 'left' : null });
+
+	api.applyColumnState({ state: base, defaultState: { pinned: null } });
+	showToast(
+		checked ? 'Colunas fixadas à esquerda' : 'Colunas desfixadas',
+		checked ? 'success' : 'info'
+	);
 }
 
 /* ============ Page module ============ */
@@ -923,9 +903,25 @@ const LionPage = (() => {
 	let gridRef = null;
 	function mount() {
 		gridRef = makeGrid();
+
+		// liga o checkbox
+		const el = document.getElementById('pinToggle');
+		if (el) {
+			// estado inicial (se colunas começam pinadas, deixe marcado)
+			if (!el.hasAttribute('data-init-bound')) {
+				el.checked = true; // seu default é pinado
+				el.addEventListener('change', togglePinnedColsFromCheckbox);
+				el.setAttribute('data-init-bound', '1');
+			}
+		}
+
+		// aplica o estado atual do checkbox imediatamente
+		togglePinnedColsFromCheckbox();
 	}
+
 	if (document.readyState !== 'loading') mount();
 	else document.addEventListener('DOMContentLoaded', mount);
+
 	return { mount };
 })();
 globalThis.LionGrid = globalThis.LionGrid || {};

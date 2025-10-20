@@ -1,4 +1,5 @@
 
+  <link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/toastify-js/src/toastify.min.css">
   <div id="kv-page-root" class="kt-container-fluid py-6">
     <!-- Separador superior -->
     <div class="border-b border-border mb-4"></div>
@@ -11,25 +12,22 @@
           <p class="text-sm text-muted-foreground">AG Grid table: drill-down, filters, and totals.
 </p>
         </div>
-      </div>
+<label class="flex items-center gap-2 ms-2 select-none" title="Pin Columns">
+  <input id="pinToggle" type="checkbox" class="kt-checkbox" />
+  <span class="text">Pinned</span>
+</label>
 
+      </div>
       <!-- Separador fino -->
       <div class="border-b border-border"></div>
     </div>
-
-
-    <!-- Grid -->
+<!-- Grid -->
     <div
       id="lionGrid"
       class="ag-theme-quartz w-full rounded-lg border border-border mt-4 overflow-hidden"
       style="height: 700px"
     ></div>
-
-
-
-
-  <script type="module" src="/public/js/aggridtable.js"></script>
-
-
+  <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/toastify-js"></script>
+    <script type="module" src="/public/js/aggridtable.js"></script>
 
 </div>

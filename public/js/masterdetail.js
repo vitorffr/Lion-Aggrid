@@ -499,7 +499,7 @@ function makeGrid() {
 			},
 		},
 		masterDetail: true,
-		detailRowHeight: 400,
+		// detailRowHeight: 400,
 		isRowMaster: () => true,
 
 		domLayout: 'normal',
