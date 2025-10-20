@@ -238,20 +238,6 @@ const defaultColDef = {
 function parseCurrencyInput(params) {
 	return toNumberBR(params.newValue);
 }
-
-// 🔹 salva no servidor
-async function saveBidOnServer({ id, bid }) {
-	const res = await fetch('/api/campaigns/bid', {
-		method: 'PATCH',
-		headers: { 'Content-Type': 'application/json' },
-		credentials: 'same-origin',
-		body: JSON.stringify({ id, bid }),
-	});
-	if (!res.ok) {
-		const txt = await res.text().catch(() => '');
-		throw new Error(txt || res.statusText);
-	}
-}
 // permite dblclick só no root, na coluna de status
 function isPinnedOrGroup(params) {
 	return params?.node?.rowPinned || params?.node?.group;
@@ -279,24 +265,6 @@ async function toggleCampaignStatus(params) {
 	// update otimista
 	row.campaign_status = next;
 	params.api.refreshCells({ rowNodes: [params.node], columns: ['campaign_status'], force: true });
-
-	try {
-		const res = await fetch('/api/campaigns/status', {
-			method: 'PATCH',
-			headers: { 'Content-Type': 'application/json' },
-			credentials: 'same-origin',
-			body: JSON.stringify({ id, status: next }),
-		});
-		if (!res.ok) {
-			throw new Error((await res.json().catch(() => ({})))?.error || res.statusText);
-		}
-	} catch (e) {
-		// rollback se falhar
-		row.campaign_status = current;
-		params.api.refreshCells({ rowNodes: [params.node], columns: ['campaign_status'], force: true });
-		console.error('[STATUS PATCH] falhou:', e);
-		// (opcional) toast
-	}
 }
 
 // 🔹 handler de edição
@@ -650,8 +618,11 @@ function makeGrid() {
 	const autoGroupColumnDef = {
 		headerName: 'Campaign',
 		sortable: false,
-		minWidth: 400,
+		// autoHeight: true,
+		wrapText: true,
+		minWidth: 350,
 		pinned: 'left',
+		cellStyle: (p) => (p?.node?.level === 0 ? { fontSize: '12px', lineHeight: '1.3' } : null),
 
 		cellRendererParams: {
 			suppressCount: true,
