@@ -324,6 +324,43 @@ async function onBidChanged(params) {
 		alert('Erro ao salvar Bid no servidor.');
 	}
 }
+
+function profileCellRenderer(params) {
+	const raw = String(params?.value ?? '').trim();
+	if (!raw) return '';
+
+	// tenta separar no último " - " (para evitar quebrar nomes que contenham "-")
+	const idx = raw.lastIndexOf(' - ');
+	const name = idx > -1 ? raw.slice(0, idx).trim() : raw;
+	const meta = idx > -1 ? raw.slice(idx + 3).trim() : '';
+
+	const wrap = document.createElement('span');
+	wrap.style.display = 'inline-flex';
+	wrap.style.alignItems = 'baseline';
+	wrap.style.gap = '8px'; // espaço entre nome e meta
+	wrap.style.whiteSpace = 'nowrap';
+
+	const nameEl = document.createElement('span');
+	nameEl.textContent = name;
+	// opcional: dar mais ênfase
+	// nameEl.style.fontWeight = '600';
+
+	wrap.appendChild(nameEl);
+
+	if (meta) {
+		const metaEl = document.createElement('span');
+		metaEl.textContent = meta;
+		metaEl.style.fontSize = '10px'; // 👈 menor
+		metaEl.style.opacity = '0.65'; // 👈 mais “apagado”
+		metaEl.style.letterSpacing = '0.2px';
+		// opcional: cor fixa
+		// metaEl.style.color = '#9CA3AF';   // gray-400
+		wrap.appendChild(metaEl);
+	}
+
+	return wrap;
+}
+
 const columnDefs = [
 	// Identificação
 	{
@@ -332,6 +369,9 @@ const columnDefs = [
 		valueGetter: (p) => stripHtml(p.data?.profile_name),
 		minWidth: 180,
 		flex: 1.2,
+		cellRenderer: profileCellRenderer, // 👈 renderiza com nome + meta menor
+
+		pinned: 'left',
 		tooltipValueGetter: (p) => p.value || '',
 	},
 	{
@@ -440,7 +480,7 @@ const columnDefs = [
 		field: 'impressions',
 		type: 'rightAligned',
 		valueFormatter: intFormatter,
-		minWidth: 110,
+		minWidth: 150,
 		flex: 0.7,
 	},
 	{
@@ -448,7 +488,7 @@ const columnDefs = [
 		field: 'clicks',
 		type: 'rightAligned',
 		valueFormatter: intFormatter,
-		minWidth: 100,
+		minWidth: 150,
 		flex: 0.6,
 	},
 	{
@@ -456,7 +496,7 @@ const columnDefs = [
 		field: 'visitors',
 		type: 'rightAligned',
 		valueFormatter: intFormatter,
-		minWidth: 100,
+		minWidth: 150,
 		flex: 0.6,
 	},
 	{
@@ -473,7 +513,7 @@ const columnDefs = [
 		field: 'conversions',
 		type: 'rightAligned',
 		valueFormatter: intFormatter,
-		minWidth: 100,
+		minWidth: 150,
 		flex: 0.6,
 	},
 	{
@@ -492,7 +532,7 @@ const columnDefs = [
 		// 2) reutilizando seu helper numérico
 		valueGetter: (p) => toNumberBR(p.data?.real_conversions),
 		valueFormatter: intFormatter,
-		minWidth: 120,
+		minWidth: 150,
 		flex: 0.7,
 	},
 	{
@@ -521,7 +561,7 @@ const columnDefs = [
 		type: 'rightAligned',
 		valueGetter: (p) => toNumberBR(p.data?.fb_revenue),
 		valueFormatter: currencyFormatter,
-		minWidth: 120,
+		minWidth: 180,
 		flex: 0.8,
 	},
 	{
@@ -611,6 +651,8 @@ function makeGrid() {
 		headerName: 'Campaign',
 		sortable: false,
 		minWidth: 400,
+		pinned: 'left',
+
 		cellRendererParams: {
 			suppressCount: true,
 			innerRenderer: (p) => p.data?.__label || '',
@@ -780,7 +822,7 @@ function makeGrid() {
 							const totals = data?.totals || {};
 							const pinnedTotal = {
 								id: '__pinned_total__',
-								account_name: 'TOTAL',
+								bc_name: 'TOTAL',
 								impressions: totals.impressions_sum ?? 0,
 								clicks: totals.clicks_sum ?? 0,
 								visitors: totals.visitors_sum ?? 0,
