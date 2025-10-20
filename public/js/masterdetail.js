@@ -499,7 +499,7 @@ function makeGrid() {
 			},
 		},
 		masterDetail: true,
-		// detailRowHeight: 400,
+		detailRowAutoHeight: true, // detailRowHeight: 400,
 		isRowMaster: () => true,
 
 		domLayout: 'normal',
@@ -514,43 +514,77 @@ function makeGrid() {
 			detailGridOptions: {
 				columnDefs: adsetCols,
 				defaultColDef: { resizable: true, sortable: true, filter: true },
+
+				// ✅ MASTER DETAIL aninhado (adsets -> ads)
 				masterDetail: true,
-				detailRowAutoHeight: true,
+				detailRowAutoHeight: true, // altura automática para o nível de ads
+
+				theme: createAgTheme(),
+				domLayout: 'autoHeight', // grid ajusta altura automaticamente
 
 				detailCellRendererParams: {
 					detailGridOptions: {
 						columnDefs: adCols,
-						detailRowAutoHeight: true,
 						defaultColDef: { resizable: true, sortable: true, filter: true },
+						theme: createAgTheme(),
+						domLayout: 'autoHeight', // ads também com altura automática
 					},
 					getDetailRowData: async (params) => {
 						const id = params.data?.id;
+						if (!id) {
+							console.warn('[ADS] Sem adset id');
+							params.successCallback([]);
+							return;
+						}
+
 						const qs = new URLSearchParams({
 							adset_id: id,
 							period: DRILL.period,
-							startRow: 0,
-							endRow: 200,
+							startRow: '0',
+							endRow: '200',
 						});
 						const url = `${DRILL_ENDPOINTS.ADS}?${qs}`;
-						console.log('[ADS]', url);
-						const data = await fetchJSON(url);
-						params.successCallback(data.rows || data.data || []);
+						console.log('[ADS] Fetching:', url);
+
+						try {
+							const data = await fetchJSON(url);
+							const rows = data.rows || data.data || (Array.isArray(data) ? data : []);
+							console.log('[ADS] Recebidos:', rows.length, 'ads');
+							params.successCallback(rows);
+						} catch (e) {
+							console.error('[ADS] Erro:', e);
+							params.successCallback([]);
+						}
 					},
 				},
 			},
 
 			getDetailRowData: async (params) => {
-				const id = params.data?.id;
+				const id = params.data?.id || params.data?.utm_campaign;
+				if (!id) {
+					console.warn('[ADSETS] Sem campaign id');
+					params.successCallback([]);
+					return;
+				}
+
 				const qs = new URLSearchParams({
 					campaign_id: id,
 					period: DRILL.period,
-					startRow: 0,
-					endRow: 200,
+					startRow: '0',
+					endRow: '200',
 				});
 				const url = `${DRILL_ENDPOINTS.ADSETS}?${qs}`;
-				console.log('[ADSETS]', url);
-				const data = await fetchJSON(url);
-				params.successCallback(data.rows || data.data || []);
+				console.log('[ADSETS] Fetching:', url);
+
+				try {
+					const data = await fetchJSON(url);
+					const rows = data.rows || data.data || (Array.isArray(data) ? data : []);
+					console.log('[ADSETS] Recebidos:', rows.length, 'adsets');
+					params.successCallback(rows);
+				} catch (e) {
+					console.error('[ADSETS] Erro:', e);
+					params.successCallback([]);
+				}
 			},
 		},
 

@@ -309,53 +309,20 @@ function revenueCellRenderer(p) {
 	}
 	return wrap;
 }
-// helper mínimo para GET/POST JSON
-async function fetchJSON(url, opts) {
-	const res = await fetch(url, {
-		headers: { 'Content-Type': 'application/json' },
-		credentials: 'same-origin',
-		...opts,
-	});
-	// tenta parsear JSON mesmo em erro pra extrair msg do backend
-	let data;
-	try {
-		data = await res.json();
-	} catch {
-		data = {};
-	}
-	if (!res.ok) throw new Error(data?.error || res.statusText || 'Request failed');
-	return data;
-}
-
 function StatusSliderRenderer() {}
-
 StatusSliderRenderer.prototype.init = function (p) {
 	this.p = p;
 
-	// params configuráveis na coluna
-	const cfg = p.colDef?.cellRendererParams || {};
-	const interactiveLevels = Array.isArray(cfg.interactiveLevels) ? cfg.interactiveLevels : [0];
-	const smallKnob = !!cfg.smallKnob;
-
-	const level = p?.node?.level ?? 0;
-	const isInteractive = interactiveLevels.includes(level);
-
-	// helper p/ pegar valor normalizado (ACTIVE/PAUSED) de qualquer campo
-	const getOn = () => {
-		const raw = p.data?.campaign_status ?? p.data?.status ?? p.value;
-		return String(raw || '').toUpperCase() === 'ACTIVE';
-	};
-
-	// Se não for interativo nesse nível, mostra só texto/label
-	if (isPinnedOrTotal(p) || !isInteractive) {
+	// em linhas totais / grupo / não-campanha: volta texto simples
+	if (isPinnedOrTotal(p) || p.node.level !== 0) {
 		this.eGui = document.createElement('span');
 		this.eGui.textContent = strongText(String(p.value ?? ''));
 		return;
 	}
 
-	const isOn = getOn();
+	const normalize = (s) => String(s || '').toUpperCase() === 'ACTIVE';
+	const isOn = normalize(p.value);
 
-	// estrutura
 	const root = document.createElement('div');
 	root.className = 'ag-status-pill';
 	root.setAttribute('role', 'switch');
@@ -364,11 +331,8 @@ StatusSliderRenderer.prototype.init = function (p) {
 
 	const fill = document.createElement('div');
 	fill.className = 'ag-status-fill';
-
 	const knob = document.createElement('div');
 	knob.className = 'ag-status-knob';
-	if (smallKnob) knob.classList.add('ag-status-knob--sm');
-
 	const label = document.createElement('div');
 	label.className = 'ag-status-label';
 	label.textContent = isOn ? 'ACTIVE' : 'PAUSED';
@@ -376,43 +340,30 @@ StatusSliderRenderer.prototype.init = function (p) {
 	root.append(fill, label, knob);
 	this.eGui = root;
 
-	// helpers visuais
-	const maxX = () => root.clientWidth - root.clientHeight; // faixa útil
+	// helpers
+	const maxX = () => root.clientWidth - root.clientHeight; // faixa útil do knob
 	const setProgress = (pgr) => {
 		const pct = Math.max(0, Math.min(1, pgr));
 		fill.style.width = pct * 100 + '%';
 		knob.style.transform = `translateX(${pct * maxX()}px)`;
-		const on = pct >= 0.5;
-		label.textContent = on ? 'ACTIVE' : 'PAUSED';
-		root.setAttribute('aria-checked', String(on));
+		label.textContent = pct >= 0.5 ? 'ACTIVE' : 'PAUSED';
+		root.setAttribute('aria-checked', String(pct >= 0.5));
 	};
 	setProgress(isOn ? 1 : 0);
 
-	// commit: atualiza ambos os campos, se existirem
 	const commit = (on) => {
+		// update otimista na linha + refresh da célula
 		const next = on ? 'ACTIVE' : 'PAUSED';
-		if (p.data) {
-			if ('campaign_status' in p.data) p.data.campaign_status = next;
-			if ('status' in p.data) p.data.status = next;
-		}
+		if (p.data) p.data.campaign_status = next;
 		setProgress(on ? 1 : 0);
 		p.api.refreshCells({ rowNodes: [p.node], columns: [p.column.getId()], force: true });
 
-		// toast apenas se foi interação do usuário
-		if (this._userInteracted && globalThis.Toastify) {
-			Toastify({
-				text: on ? 'Campanha ativada' : 'Campanha pausada',
-				duration: 2200,
-				close: true,
-				gravity: 'bottom',
-				position: 'right',
-				style: {
-					background: on
-						? 'linear-gradient(90deg,#22c55e,#16a34a)'
-						: 'linear-gradient(90deg,#06b6d4,#3b82f6)',
-				},
-				stopOnFocus: true,
-			}).showToast();
+		// se quiser disparar requisição, faça aqui:
+		// fetch('/api/campaign-status', { method:'POST', body: JSON.stringify({ id:p.data.id, status: next }) })
+
+		// se tiver um showToast no contexto, chame só em interação do usuário
+		if (p?.context?.showToast && this._userInteracted) {
+			p.context.showToast(on ? 'Campanha ativada' : 'Campanha pausada', on ? 'success' : 'info');
 		}
 	};
 
@@ -439,6 +390,7 @@ StatusSliderRenderer.prototype.init = function (p) {
 		const p0 = startOn ? 1 : 0;
 		const pgr = p0 + (x - startX) / Math.max(1, maxX());
 		commit(pgr >= 0.5);
+		// dá um tick pra evitar click “fantasma”
 		setTimeout(() => (this._dragging = false), 0);
 	};
 
@@ -450,31 +402,25 @@ StatusSliderRenderer.prototype.init = function (p) {
 	window.addEventListener('touchmove', (e) => onMove(e.touches[0].clientX), { passive: true });
 	window.addEventListener('touchend', (e) => onUp(e.changedTouches[0].clientX));
 };
-
 StatusSliderRenderer.prototype.getGui = function () {
 	return this.eGui;
 };
-
 StatusSliderRenderer.prototype.refresh = function (p) {
-	// mesmo critério de níveis
-	const cfg = p.colDef?.cellRendererParams || {};
-	const interactiveLevels = Array.isArray(cfg.interactiveLevels) ? cfg.interactiveLevels : [0];
-	const level = p?.node?.level ?? 0;
-	if (!this.eGui || isPinnedOrTotal(p) || !interactiveLevels.includes(level)) return false;
-
-	const raw = p.data?.campaign_status ?? p.data?.status ?? p.value;
-	const isOn = String(raw || '').toUpperCase() === 'ACTIVE';
-
+	// atualiza label ao recarregar dados
+	if (!this.eGui || isPinnedOrTotal(p) || p.node.level !== 0) return false;
+	const isOn = String(p.value || '').toUpperCase() === 'ACTIVE';
 	const fill = this.eGui.querySelector('.ag-status-fill');
 	const knob = this.eGui.querySelector('.ag-status-knob');
 	const label = this.eGui.querySelector('.ag-status-label');
 	const maxX = () => this.eGui.clientWidth - this.eGui.clientHeight;
-
 	fill.style.width = (isOn ? 100 : 0) + '%';
 	knob.style.transform = `translateX(${(isOn ? 1 : 0) * Math.max(0, maxX())}px)`;
 	label.textContent = isOn ? 'ACTIVE' : 'PAUSED';
 	this.eGui.setAttribute('aria-checked', String(isOn));
 	return true;
+};
+StatusSliderRenderer.prototype.destroy = function () {
+	/* nada */
 };
 
 const columnDefs = [
@@ -546,29 +492,9 @@ const columnDefs = [
 		field: 'campaign_status',
 		minWidth: 160,
 		flex: 0.8,
-
-		// lê de campaign_status OU status (filhos/netos)
-		valueGetter: (p) => {
-			const v = p.data?.campaign_status ?? p.data?.status ?? p.value;
-			return typeof v === 'string' ? v.toUpperCase() : v;
-		},
-		// quando mudar, grava em todos os campos relevantes
-		valueSetter: (p) => {
-			const next = String(p.newValue || '').toUpperCase();
-			if (p.data) {
-				if ('campaign_status' in p.data) p.data.campaign_status = next;
-				if ('status' in p.data) p.data.status = next;
-			}
-			return true;
-		},
-
-		cellRenderer: StatusSliderRenderer,
-		// 👇 habilita slider em raiz (0), filhos (1) e netos (2) + knob menor
-		cellRendererParams: {
-			interactiveLevels: [0, 1, 2],
-			smallKnob: true,
-		},
+		cellRenderer: StatusSliderRenderer, // 👈 aqui
 	},
+
 	{
 		headerName: 'Budget',
 		field: 'budget',
@@ -769,7 +695,7 @@ function makeGrid() {
 	const gridOptions = {
 		context: { showToast: (msg, type) => Toastify({ text: msg }).showToast() },
 
-		// onCellDoubleClicked: toggleCampaignStatus,
+		onCellDoubleClicked: toggleCampaignStatus,
 		rowModelType: 'serverSide',
 		cacheBlockSize: 200,
 		maxBlocksInCache: 4,

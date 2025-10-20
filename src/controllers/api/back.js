@@ -254,47 +254,46 @@ function computeTotalsGeneric(rows) {
 
 // troque o seu loadAssetJSON por este
 async function loadAssetJSON(request, env, assetPath) {
-	// cache leve por arquivo
+	// cache leve por arquivo (por isolate)
 	globalThis.__LION_CACHE__ = globalThis.__LION_CACHE__ || new Map();
 	const cache = globalThis.__LION_CACHE__;
 	if (cache.has(assetPath)) return cache.get(assetPath);
 
-	const urlFrom = (path) => new URL(path, request.url);
+	// precisa ser URL absoluta
+	const absolute = new URL(assetPath, 'https://assets.local');
 
-	// 1) tenta ASSETS, mas não dá throw se falhar; loga e faz fallback
+	// 1) Deploy: usar somente ASSETS
 	if (env.ASSETS && typeof env.ASSETS.fetch === 'function') {
-		try {
-			const assetReq = new Request(urlFrom(assetPath), request);
-			const res = await env.ASSETS.fetch(assetReq);
-			if (res && res.ok) {
-				const json = await res.json();
-				cache.set(assetPath, json);
-				return json;
-			} else {
-				console.warn('[ASSETS] non-ok', res?.status, assetPath);
-			}
-		} catch (e) {
-			console.warn('[ASSETS] fetch failed, falling back to /public', e);
+		const res = await env.ASSETS.fetch(new Request(absolute.href, request));
+		if (!res || !res.ok) {
+			const body = await res?.text?.().catch(() => '');
+			throw new Error(
+				`[ASSETS] ${res?.status || 'ERR'} ao ler ${assetPath}: ${body?.slice?.(0, 200) || ''}`
+			);
 		}
+		const json = await res.json();
+		cache.set(assetPath, json);
+		return json;
 	}
 
-	// 2) fallback /public SEMPRE que ASSETS falhar
-	try {
-		const res2 = await fetch(urlFrom(`/public${assetPath}`));
+	// 2) Dev fallback (opcional): tentar no mesmo host SEM /public
+	// Ative somente se você realmente tem um servidor servindo estático em /constants/*
+	if (globalThis.__DEV_ALLOW_HTTP_ASSETS__) {
+		const devUrl = new URL(assetPath, request.url);
+		const res2 = await fetch(devUrl.href);
 		if (!res2.ok) {
 			const body = await res2.text().catch(() => '');
-			console.error('[PUBLIC] non-ok', res2.status, assetPath, body.slice(0, 200));
-			// último recurso: evita 500 duro; devolve array vazio (ou lance erro se preferir)
-			return [];
+			throw new Error(
+				`[DEV-FALLBACK] ${res2.status} ao ler ${devUrl.href}: ${body.slice(0, 200)}`
+			);
 		}
 		const json = await res2.json();
 		cache.set(assetPath, json);
 		return json;
-	} catch (e) {
-		console.error('[PUBLIC] fetch failed', e);
-		// último recurso: evita 500 duro
-		return [];
 	}
+
+	// 3) Se nada disso, erro explícito
+	throw new Error('ASSETS não configurado e DEV fallback desativado.');
 }
 
 // Loader “especial” do dump raiz (mantido por compatibilidade)
