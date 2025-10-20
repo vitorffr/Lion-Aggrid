@@ -9,6 +9,31 @@
 //
 // Observação: todos aceitam também GET com os mesmos parâmetros na querystring.
 // Em caso de erro, SEMPRE retornam JSON (evita “error code: 1042”).
+// no topo do routes/lionRows.js
+const BID_OVERRIDES = new Map(); // id -> number
+
+async function patchCampaignBid(req) {
+	try {
+		const body = await req.json().catch(() => ({}));
+		const id = String(body.id || '').trim();
+		const bid = Number(body.bid);
+		if (!id || !Number.isFinite(bid)) {
+			return new Response(JSON.stringify({ error: 'id/bid inválidos' }), {
+				status: 400,
+				headers: { 'Content-Type': 'application/json' },
+			});
+		}
+		BID_OVERRIDES.set(id, bid);
+		return new Response(JSON.stringify({ ok: true }), {
+			headers: { 'Content-Type': 'application/json' },
+		});
+	} catch (err) {
+		return new Response(JSON.stringify({ error: String(err?.message || err) }), {
+			status: 500,
+			headers: { 'Content-Type': 'application/json' },
+		});
+	}
+}
 
 /* ==================== Helpers de texto/número ==================== */
 const stripHtml = (s) =>
@@ -379,6 +404,10 @@ async function ssrm(req, env) {
 		// filtro e ordenação
 		rows = applyFilters(rows, filterModel);
 		rows = applySort(rows, sortModel);
+		rows = rows.map((r) => {
+			const ov = BID_OVERRIDES.get(String(r.id));
+			return ov != null ? { ...r, bid: ov } : r;
+		});
 
 		// >>> Totais sobre o CONJUNTO FILTRADO (antes da paginação)
 		const totals = computeTotalsRoot(rows);
@@ -498,7 +527,8 @@ async function ads(req, env) {
 
 /* ==================== Export ==================== */
 export default {
-	ssrm, // /api/ssrm/
-	adsets, // /api/adsets
-	ads, // /api/ads
+	ssrm,
+	adsets,
+	ads,
+	bid: patchCampaignBid, // opcional se você roteia por nome
 };

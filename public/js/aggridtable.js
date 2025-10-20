@@ -134,7 +134,7 @@ function pickChipColorFromFraction(value) {
 	if (!Number.isFinite(current) || !Number.isFinite(total) || total <= 0) {
 		return { label: `${current}/${total}`, color: 'secondary' };
 	}
-	if (current <= 0) return { label: `${current}/${total}`, color: 'success' }; // 0%
+	if (current <= 1) return { label: `${current}/${total}`, color: 'success' }; // 0%
 	const ratio = current / total;
 	if (ratio > 0.5) return { label: `${current}/${total}`, color: 'danger' }; // > 50%
 	return { label: `${current}/${total}`, color: 'warning' }; // (0, 50%]
@@ -234,7 +234,96 @@ const defaultColDef = {
 	enablePivot: true,
 	enableValue: true,
 };
+// 🔹 valueParser: input de célula -> number seguro
+function parseCurrencyInput(params) {
+	return toNumberBR(params.newValue);
+}
 
+// 🔹 salva no servidor
+async function saveBidOnServer({ id, bid }) {
+	const res = await fetch('/api/campaigns/bid', {
+		method: 'PATCH',
+		headers: { 'Content-Type': 'application/json' },
+		credentials: 'same-origin',
+		body: JSON.stringify({ id, bid }),
+	});
+	if (!res.ok) {
+		const txt = await res.text().catch(() => '');
+		throw new Error(txt || res.statusText);
+	}
+}
+// permite dblclick só no root, na coluna de status
+function isPinnedOrGroup(params) {
+	return params?.node?.rowPinned || params?.node?.group;
+}
+function normalizeStatus(s) {
+	const v = String(s || '').toUpperCase();
+	if (v === 'ACTIVE') return 'ACTIVE';
+	if (v === 'PAUSED') return 'PAUSED';
+	if (v === 'DISABLED') return 'DISABLED';
+	if (v === 'CLOSED') return 'CLOSED';
+	return 'PAUSED';
+}
+async function toggleCampaignStatus(params) {
+	// só campanha (nível 0), não pinned, coluna certa e tem id
+	if (isPinnedOrGroup(params)) return;
+	if (params?.node?.level !== 0) return;
+	if (params?.colDef?.field !== 'campaign_status') return;
+	const row = params.data || {};
+	const id = row.id;
+	if (!id) return;
+
+	const current = normalizeStatus(row.campaign_status);
+	const next = current === 'ACTIVE' ? 'PAUSED' : 'ACTIVE';
+
+	// update otimista
+	row.campaign_status = next;
+	params.api.refreshCells({ rowNodes: [params.node], columns: ['campaign_status'], force: true });
+
+	try {
+		const res = await fetch('/api/campaigns/status', {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json' },
+			credentials: 'same-origin',
+			body: JSON.stringify({ id, status: next }),
+		});
+		if (!res.ok) {
+			throw new Error((await res.json().catch(() => ({})))?.error || res.statusText);
+		}
+	} catch (e) {
+		// rollback se falhar
+		row.campaign_status = current;
+		params.api.refreshCells({ rowNodes: [params.node], columns: ['campaign_status'], force: true });
+		console.error('[STATUS PATCH] falhou:', e);
+		// (opcional) toast
+	}
+}
+
+// 🔹 handler de edição
+async function onBidChanged(params) {
+	// só aceita em linhas “raiz” (campanhas)
+	if (!params?.data || params?.node?.level !== 0) return;
+
+	const id = params.data.id; // ← teu JSON já tem id
+	const oldVal = params.oldValue;
+	const newVal = toNumberBR(params.newValue);
+
+	// se não mudou ou ficou inválido, reverte
+	if (newVal == null || newVal === oldVal) {
+		params.node.setDataValue('bid', oldVal);
+		return;
+	}
+	try {
+		await saveBidOnServer({ id, bid: newVal });
+		// mantém valor (ok)
+	} catch (e) {
+		console.error('Falha ao salvar Bid:', e);
+		// rollback visual
+		params.node.setDataValue('bid', oldVal);
+		// feedback simples
+		alert('Erro ao salvar Bid no servidor.');
+	}
+}
 const columnDefs = [
 	// Identificação
 	{
@@ -264,7 +353,7 @@ const columnDefs = [
 	{
 		headerName: 'Account Status',
 		field: 'account_status',
-		minWidth: 140,
+		minWidth: 160,
 		flex: 0.7,
 		cellRenderer: statusPillRenderer,
 	},
@@ -300,11 +389,14 @@ const columnDefs = [
 		headerName: 'Bid',
 		field: 'bid',
 		type: 'rightAligned',
-		valueGetter: (p) => toNumberBR(p.data?.bid),
-		valueFormatter: currencyFormatter,
+		editable: (p) => p.node?.level === 0, // só nas campanhas
+		cellEditor: 'agNumberCellEditor',
+		valueParser: parseCurrencyInput, // string -> number
+		valueFormatter: currencyFormatter, // number -> "R$"
 		minWidth: 110,
 		flex: 0.6,
 	},
+
 	{
 		headerName: 'Campaign Status',
 		field: 'campaign_status',
@@ -316,24 +408,26 @@ const columnDefs = [
 		headerName: 'Budget',
 		field: 'budget',
 		type: 'rightAligned',
-		valueGetter: (p) => toNumberBR(p.data?.budget),
-		valueFormatter: currencyFormatter,
-		minWidth: 120,
-		flex: 0.7,
+		editable: (p) => p.node?.level === 0, // só nas campanhas
+		cellEditor: 'agNumberCellEditor',
+		valueParser: parseCurrencyInput, // string -> number
+		valueFormatter: currencyFormatter, // number -> "R$"
+		minWidth: 110,
+		flex: 0.6,
 	},
 
 	// Xabu
 	{
-		headerName: 'Xabu Ads',
-		field: 'xabu_ads',
+		headerName: 'Ads',
+		field: '_ads',
 		minWidth: 100,
 		maxWidth: 120,
 		tooltipValueGetter: (p) => stripHtml(p.data?.xabu_ads),
 		cellRenderer: chipFractionBadgeRenderer,
 	},
 	{
-		headerName: 'Xabu Adsets',
-		field: 'xabu_adsets',
+		headerName: 'Adsets',
+		field: '_adsets',
 		minWidth: 110,
 		maxWidth: 130,
 		tooltipValueGetter: (p) => stripHtml(p.data?.xabu_adsets),
@@ -525,6 +619,8 @@ function makeGrid() {
 
 	const gridOptions = {
 		// Tree + SSRM
+		onCellDoubleClicked: toggleCampaignStatus, // 👈 aqui
+
 		rowModelType: 'serverSide',
 		// serverSideStoreType: 'partial',
 		// serverSideSortAllLevels: true,
@@ -601,9 +697,6 @@ function makeGrid() {
 				'account_limit',
 				'campaign_name',
 				'utm_campaign',
-				'bid',
-				'campaign_status',
-				'budget',
 				'xabu_ads',
 				'xabu_adsets',
 			]);

@@ -171,7 +171,7 @@ const rootCols = [
 	{
 		headerName: 'Status Conta',
 		field: 'account_status',
-		minWidth: 140,
+		minWidth: 160,
 		cellRenderer: statusPillRenderer,
 	},
 	{
@@ -189,14 +189,14 @@ const rootCols = [
 		type: 'rightAligned',
 	},
 	{
-		field: 'xabu_ads',
-		headerName: 'Xabu Ads',
+		field: '_ads',
+		headerName: 'Ads',
 		minWidth: 100,
 		cellRenderer: chipFractionBadgeRenderer,
 	},
 	{
-		field: 'xabu_adsets',
-		headerName: 'Xabu Adsets',
+		field: '_adsets',
+		headerName: 'Adsets',
 		minWidth: 110,
 		cellRenderer: chipFractionBadgeRenderer,
 	},
