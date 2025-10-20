@@ -1,28 +1,41 @@
-/* public/js/lion-grid-nested.js — versão limpa e fiel ao JSON */
+/* public/js/lion-grid-nested.js — SSRM + Master/Detail (campanhas -> adsets -> ads) */
 const ENDPOINTS = { SSRM: '/api/ssrm/?clean=1' };
-const DRILL_ENDPOINTS = {
-	ADSETS: '/api/adsets/',
-	ADS: '/api/ads/',
-};
+const DRILL_ENDPOINTS = { ADSETS: '/api/adsets/', ADS: '/api/ads/' };
 const DRILL = { period: 'TODAY' };
-/* ============ AG Grid boot/licença ============ */
+
+/* ============ AG Grid boot/licença + módulos ============ */
 function getAgGrid() {
 	const AG = globalThis.agGrid;
 	if (!AG)
 		throw new Error('AG Grid UMD não carregado. Verifique a ORDEM dos scripts e o path do CDN.');
 	return AG;
 }
-(function applyAgGridLicense() {
+(function applyAgGridLicenseAndModules() {
 	try {
 		const AG = getAgGrid();
+
+		// 🔹 Se estiver usando build modular, registra os módulos necessários
+		const SSRM = AG.ServerSideRowModelModule || AG?.enterprise?.ServerSideRowModelModule;
+		const MDM = AG.MasterDetailModule || AG?.enterprise?.MasterDetailModule;
+		if (AG?.ModuleRegistry && SSRM && MDM) {
+			try {
+				AG.ModuleRegistry.registerModules([SSRM, MDM]);
+			} catch (e) {
+				console.warn('[AG] Registro de módulos falhou (pode já estar registrado):', e);
+			}
+		}
+
+		// 🔹 Licença
 		const LM = AG.LicenseManager || AG?.enterprise?.LicenseManager;
 		const key = document.querySelector('meta[name="hs-ag"]')?.content || '';
 		if (key && LM?.setLicenseKey) LM.setLicenseKey(key);
 	} catch {}
 })();
 
+/* ============ Helpers/formatters ============ */
 const brlFmt = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 const intFmt = new Intl.NumberFormat('pt-BR');
+
 const toNumberBR = (s) => {
 	if (s == null) return null;
 	if (typeof s === 'number') return s;
@@ -42,6 +55,14 @@ const intFormatter = (p) => {
 	const n = toNumberBR(p.value);
 	return n == null ? '' : intFmt.format(Math.round(n));
 };
+const stripHtml = (s) =>
+	typeof s === 'string'
+		? s
+				.replace(/<[^>]*>/g, ' ')
+				.replace(/\s+/g, ' ')
+				.trim()
+		: s;
+
 async function fetchJSON(url, opts) {
 	const res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...opts });
 	const text = await res.text();
@@ -54,55 +75,38 @@ async function fetchJSON(url, opts) {
 		return {};
 	}
 }
-function pickChipColorFromFraction(value) {
-	const txt = stripHtml(value ?? '').trim();
-	const m = txt.match(/^(\d+)\s*\/\s*(\d+)$/);
-	if (!m) return { label: txt || '—', color: 'secondary' };
-	const current = Number(m[1]);
-	const total = Number(m[2]);
-	if (!Number.isFinite(current) || !Number.isFinite(total) || total <= 0) {
-		return { label: `${current}/${total}`, color: 'secondary' };
-	}
-	if (current <= 0) return { label: `${current}/${total}`, color: 'success' }; // 0%
-	const ratio = current / total;
-	if (ratio > 0.5) return { label: `${current}/${total}`, color: 'danger' }; // > 50%
-	return { label: `${current}/${total}`, color: 'warning' }; // (0, 50%]
-}
+
 function chipFractionBadgeRenderer(params) {
 	const value = String(params?.value || '').trim();
 	if (!value) return '';
-
-	// tenta extrair formato "X / Y"
 	const match = value.match(/^(\d+)\s*\/\s*(\d+)$/);
-	let color = '#6b7280'; // cinza default
-	let textColor = '#fff';
-
+	let color = '#6b7280',
+		textColor = '#fff';
 	if (match) {
-		const current = Number(match[1]);
-		const total = Number(match[2]);
+		const current = Number(match[1]),
+			total = Number(match[2]);
 		if (Number.isFinite(current) && Number.isFinite(total) && total > 0) {
 			const ratio = current / total;
-			if (current <= 0) color = '#22c55e'; // verde (ok / 0)
-			else if (ratio > 0.5) color = '#dc2626'; // vermelho (>50%)
-			else (color = '#eab308'), (textColor = '#111'); // amarelo (até 50%)
+			if (current <= 0) color = '#22c55e';
+			else if (ratio > 0.5) color = '#dc2626';
+			else (color = '#eab308'), (textColor = '#111');
 		}
 	}
-
 	const span = document.createElement('span');
 	span.textContent = value;
-	span.style.display = 'inline-block';
-	span.style.padding = '2px 8px';
-	span.style.borderRadius = '999px';
-	span.style.fontSize = '12px';
-	span.style.fontWeight = '600';
-	span.style.lineHeight = '1.4';
-	span.style.backgroundColor = color;
-	span.style.color = textColor;
-
+	Object.assign(span.style, {
+		display: 'inline-block',
+		padding: '2px 8px',
+		borderRadius: '999px',
+		fontSize: '12px',
+		fontWeight: '600',
+		lineHeight: '1.4',
+		backgroundColor: color,
+		color: textColor,
+	});
 	return span;
 }
 
-/* ============ Tema opcional ============ */
 function createAgTheme() {
 	const AG = getAgGrid();
 	const { themeQuartz, iconSetMaterial } = AG;
@@ -125,36 +129,29 @@ function createAgTheme() {
 function statusPillRenderer(params) {
 	const value = String(params?.value || '').trim();
 	if (!value) return '';
-
 	const span = document.createElement('span');
 	span.textContent = value.toUpperCase();
-	span.style.display = 'inline-block';
-	span.style.padding = '2px 8px';
-	span.style.borderRadius = '999px';
-	span.style.fontSize = '12px';
-	span.style.fontWeight = '600';
-	span.style.lineHeight = '1.4';
-	span.style.color = '#fff';
-
-	// Define cor conforme status
+	Object.assign(span.style, {
+		display: 'inline-block',
+		padding: '2px 8px',
+		borderRadius: '999px',
+		fontSize: '12px',
+		fontWeight: '600',
+		lineHeight: '1.4',
+		color: '#fff',
+	});
 	const lower = value.toLowerCase();
-	if (lower === 'active') {
-		span.style.backgroundColor = '#22c55e'; // verde
-	} else if (lower === 'paused') {
-		span.style.backgroundColor = '#6b7280'; // amarelo
+	if (lower === 'active') span.style.backgroundColor = '#22c55e';
+	else if (lower === 'paused') {
+		span.style.backgroundColor = '#6b7280';
 		span.style.color = '#ffffffff';
-	} else if (lower === 'error' || lower === 'rejected' || lower === 'off') {
-		span.style.backgroundColor = '#dc2626'; // vermelho
-	} else {
-		span.style.backgroundColor = '#6b7280'; // cinza (default)
-	}
-
+	} else if (lower === 'error' || lower === 'rejected' || lower === 'off')
+		span.style.backgroundColor = '#dc2626';
+	else span.style.backgroundColor = '#6b7280';
 	return span;
 }
 
 /* ======= Colunas ======= */
-
-// 🏁 ROOT — campanhas
 const rootCols = [
 	{
 		field: 'campaign_name',
@@ -168,8 +165,6 @@ const rootCols = [
 		minWidth: 110,
 		cellRenderer: statusPillRenderer,
 	},
-	// Status
-
 	{ field: 'profile_name', headerName: 'Profile', minWidth: 190 },
 	{ field: 'bc_name', headerName: 'BC', minWidth: 200 },
 	{ field: 'account_name', headerName: 'Conta', minWidth: 220 },
@@ -177,7 +172,6 @@ const rootCols = [
 		headerName: 'Status Conta',
 		field: 'account_status',
 		minWidth: 140,
-		flex: 0.7,
 		cellRenderer: statusPillRenderer,
 	},
 	{
@@ -220,7 +214,6 @@ const rootCols = [
 		minWidth: 90,
 		type: 'rightAligned',
 	},
-
 	{
 		field: 'visitors',
 		headerName: 'Visitantes',
@@ -295,7 +288,6 @@ const rootCols = [
 	},
 ];
 
-// 📊 ADSETS
 const adsetCols = [
 	{ field: 'name', headerName: 'Adset', minWidth: 360, cellRenderer: 'agGroupCellRenderer' },
 	{ field: 'campaign_status', headerName: 'Status', minWidth: 110, cellRenderer: statusPillRenderer },
@@ -394,7 +386,6 @@ const adsetCols = [
 	},
 ];
 
-// 📢 ADS
 const adCols = [
 	{ field: 'name', headerName: 'Anúncio', minWidth: 380, cellRenderer: 'agGroupCellRenderer' },
 	{ field: 'campaign_status', headerName: 'Status', minWidth: 110, cellRenderer: statusPillRenderer },
@@ -485,29 +476,37 @@ const adCols = [
 function makeGrid() {
 	const gridDiv = document.getElementById('lionGrid');
 	if (!gridDiv) return console.error('Div #lionGrid não encontrada');
+
+	// ⚠️ Sem altura visível o SSRM não dispara
+	if (!gridDiv.style.height && !gridDiv.style.minHeight) {
+		gridDiv.style.minHeight = '560px';
+	}
 	gridDiv.classList.add('ag-theme-quartz');
 
 	const gridOptions = {
+		rowModelType: 'serverSide',
+		cacheBlockSize: 200,
+		maxBlocksInCache: 4,
+
 		masterDetail: true,
 		detailRowHeight: 400,
+		isRowMaster: () => true,
+
 		domLayout: 'normal',
 		theme: createAgTheme(),
-		rowModelType: 'clientSide',
 		suppressColumnVirtualisation: false,
 		alwaysShowHorizontalScroll: true,
 		columnDefs: rootCols,
 		defaultColDef: { resizable: true, sortable: true, filter: true },
 		animateRows: true,
 
-		// 🔹 Adsets
 		detailCellRendererParams: {
 			detailGridOptions: {
-				masterDetail: true,
-				detailRowAutoHeight: true,
 				columnDefs: adsetCols,
 				defaultColDef: { resizable: true, sortable: true, filter: true },
+				masterDetail: true,
+				detailRowAutoHeight: true,
 
-				// 🔹 Ads
 				detailCellRendererParams: {
 					detailGridOptions: {
 						columnDefs: adCols,
@@ -528,20 +527,6 @@ function makeGrid() {
 						params.successCallback(data.rows || data.data || []);
 					},
 				},
-
-				getDetailRowData: async (params) => {
-					const id = params.data?.id;
-					const qs = new URLSearchParams({
-						campaign_id: id,
-						period: DRILL.period,
-						startRow: 0,
-						endRow: 200,
-					});
-					const url = `${DRILL_ENDPOINTS.ADSETS}?${qs}`;
-					console.log('[ADSETS]', url);
-					const data = await fetchJSON(url);
-					params.successCallback(data.rows || data.data || []);
-				},
 			},
 
 			getDetailRowData: async (params) => {
@@ -553,24 +538,65 @@ function makeGrid() {
 					endRow: 200,
 				});
 				const url = `${DRILL_ENDPOINTS.ADSETS}?${qs}`;
-				console.log('[ROOT->ADSETS]', url);
+				console.log('[ADSETS]', url);
 				const data = await fetchJSON(url);
 				params.successCallback(data.rows || data.data || []);
 			},
 		},
 
-		onGridReady: async (params) => {
-			console.log('[ROOT] Fetching campanhas...');
-			let res = await fetch(ENDPOINTS.SSRM, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ startRow: 0, endRow: 500 }),
-			});
-			if (!res.ok) res = await fetch(`${ENDPOINTS.SSRM}&limit=500`);
-			const data = await res.json().catch(() => ({}));
-			const rows = data.rows || data.data || [];
-			console.log(`[ROOT] Recebidas ${rows.length} campanhas`);
-			params.api.setGridOption('rowData', rows);
+		onGridReady: (params) => {
+			const datasource = {
+				getRows: async (req) => {
+					try {
+						const { startRow = 0, endRow = 200, sortModel, filterModel } = req.request;
+						console.log('[SSRM] request', { startRow, endRow, sortModel, filterModel });
+
+						let res = await fetch(ENDPOINTS.SSRM, {
+							method: 'POST',
+							headers: { 'Content-Type': 'application/json' },
+							body: JSON.stringify({ startRow, endRow, sortModel, filterModel }),
+							credentials: 'same-origin',
+						});
+
+						if (!res.ok) {
+							const qs = new URLSearchParams({
+								startRow: String(startRow),
+								endRow: String(endRow),
+								sortModel: JSON.stringify(sortModel || []),
+								filterModel: JSON.stringify(filterModel || {}),
+							});
+							const url = `${ENDPOINTS.SSRM}&${qs.toString()}`;
+							console.warn('[SSRM] POST falhou, tentando GET:', url);
+							res = await fetch(url, { credentials: 'same-origin' });
+						}
+
+						const data = await res.json().catch(() => ({ rows: [], lastRow: 0 }));
+						const rows = data.rows || data.data || [];
+						const lastRow = Number.isFinite(data.lastRow) ? data.lastRow : rows.length;
+
+						console.log('[SSRM] rows recebidas:', rows.length, 'lastRow:', lastRow);
+						req.success({ rowData: rows, rowCount: lastRow });
+					} catch (e) {
+						console.error('[SSRM] getRows failed:', e);
+						req.fail();
+					}
+				},
+			};
+
+			// ✅ v34+: setar via setGridOption. Mantive fallback p/ versões antigas.
+			const setDS =
+				typeof params.api.setServerSideDatasource === 'function'
+					? (ds) => params.api.setServerSideDatasource(ds)
+					: (ds) => params.api.setGridOption('serverSideDatasource', ds);
+
+			setDS(datasource);
+
+			// ajuste inicial
+			setTimeout(() => {
+				try {
+					params.api.sizeColumnsToFit();
+				} catch {}
+			}, 0);
 		},
 	};
 

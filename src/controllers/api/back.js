@@ -252,41 +252,49 @@ function computeTotalsGeneric(rows) {
 // Se o arquivo estiver em ./public/constants/clean-dump.json,
 // o path aqui é "/constants/clean-dump.json" (sem /public).
 
+// troque o seu loadAssetJSON por este
 async function loadAssetJSON(request, env, assetPath) {
 	// cache leve por arquivo
 	globalThis.__LION_CACHE__ = globalThis.__LION_CACHE__ || new Map();
-	if (globalThis.__LION_CACHE__.has(assetPath)) {
-		return globalThis.__LION_CACHE__.get(assetPath);
-	}
+	const cache = globalThis.__LION_CACHE__;
+	if (cache.has(assetPath)) return cache.get(assetPath);
 
-	// 1) via binding ASSETS (Workers)
+	const urlFrom = (path) => new URL(path, request.url);
+
+	// 1) tenta ASSETS, mas não dá throw se falhar; loga e faz fallback
 	if (env.ASSETS && typeof env.ASSETS.fetch === 'function') {
-		const assetReq = new Request(new URL(assetPath, request.url), request);
-		const res = await env.ASSETS.fetch(assetReq);
-		if (!res || !res.ok) {
-			const body = await res?.text?.().catch(() => '');
-			throw new Error(
-				`Falha ao carregar ${assetPath} via ASSETS (${res?.status}). ${
-					body?.slice(0, 120) || ''
-				}`
-			);
+		try {
+			const assetReq = new Request(urlFrom(assetPath), request);
+			const res = await env.ASSETS.fetch(assetReq);
+			if (res && res.ok) {
+				const json = await res.json();
+				cache.set(assetPath, json);
+				return json;
+			} else {
+				console.warn('[ASSETS] non-ok', res?.status, assetPath);
+			}
+		} catch (e) {
+			console.warn('[ASSETS] fetch failed, falling back to /public', e);
 		}
-		const json = await res.json();
-		globalThis.__LION_CACHE__.set(assetPath, json);
-		return json;
 	}
 
-	// 2) fallback via /public
-	const res = await fetch(new URL(`/public${assetPath}`, request.url));
-	if (!res.ok) {
-		const body = await res.text().catch(() => '');
-		throw new Error(
-			`Falha ao carregar /public${assetPath} (${res.status}). ${body?.slice(0, 120) || ''}`
-		);
+	// 2) fallback /public SEMPRE que ASSETS falhar
+	try {
+		const res2 = await fetch(urlFrom(`/public${assetPath}`));
+		if (!res2.ok) {
+			const body = await res2.text().catch(() => '');
+			console.error('[PUBLIC] non-ok', res2.status, assetPath, body.slice(0, 200));
+			// último recurso: evita 500 duro; devolve array vazio (ou lance erro se preferir)
+			return [];
+		}
+		const json = await res2.json();
+		cache.set(assetPath, json);
+		return json;
+	} catch (e) {
+		console.error('[PUBLIC] fetch failed', e);
+		// último recurso: evita 500 duro
+		return [];
 	}
-	const json = await res.json();
-	globalThis.__LION_CACHE__.set(assetPath, json);
-	return json;
 }
 
 // Loader “especial” do dump raiz (mantido por compatibilidade)
