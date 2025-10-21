@@ -402,7 +402,7 @@ const FALLBACK_STYLE = {
 	danger: { bg: '#dc2626', fg: '#ffffff' }, // red-600
 	warning: { bg: '#eab308', fg: '#111111' }, // yellow-500
 	info: { bg: '#06b6d4', fg: '#ffffff' }, // cyan-500
-	secondary: { bg: '#6b7280', fg: '#ffffff' }, // gray-500
+	secondary: { bg: '#334155', fg: '#ffffff' }, // gray-500
 	light: { bg: '#e5e7eb', fg: '#111111' }, // gray-200
 	dark: { bg: '#1f2937', fg: '#ffffff' }, // gray-800
 };
