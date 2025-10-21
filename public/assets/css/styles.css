@@ -23,7 +23,9 @@
 .ag-status-pill:active {
 	cursor: grabbing;
 }
-
+.ag-center-cols-viewport {
+	min-height: unset !important;
+}
 .ag-status-fill {
 	position: absolute;
 	inset: 0;

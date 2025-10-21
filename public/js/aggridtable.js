@@ -52,6 +52,7 @@ const currencyFormatter = (p) => {
 	const n = toNumberBR(p.value);
 	return n == null ? p.value ?? '' : brlFmt.format(n);
 };
+
 const intFormatter = (p) => {
 	const n = toNumberBR(p.value);
 	return n == null ? p.value ?? '' : intFmt.format(Math.round(n));
@@ -83,15 +84,18 @@ function renderBadgeNode(label, colorKey) {
 	span.style.color = fb.fg;
 	return span;
 }
+
 function renderBadge(label, colorKey) {
 	return renderBadgeNode(label, colorKey).outerHTML;
 }
+
 function pickStatusColor(raw) {
 	const s = String(raw || '')
 		.trim()
 		.toLowerCase();
 	return s === 'active' ? 'success' : 'secondary';
 }
+
 function isPinnedOrTotal(params) {
 	return (
 		params?.node?.rowPinned === 'bottom' ||
@@ -100,6 +104,7 @@ function isPinnedOrTotal(params) {
 		params?.node?.group === true
 	);
 }
+
 function statusPillRenderer(p) {
 	const raw = p.value ?? '';
 	if (isPinnedOrTotal(p) || !raw) {
@@ -128,6 +133,7 @@ function pickChipColorFromFraction(value) {
 	if (ratio > 0.5) return { label: `${current}/${total}`, color: 'danger' }; // >50%
 	return { label: `${current}/${total}`, color: 'warning' }; // (0,50%]
 }
+
 function chipFractionBadgeRenderer(p) {
 	if (isPinnedOrTotal(p) || !p.value) {
 		const span = document.createElement('span');
@@ -164,6 +170,7 @@ function ensureKtModalDom() {
 		if (e.target.id === 'lionKtModal') closeKTModal('#lionKtModal');
 	});
 }
+
 function openKTModal(selector = '#lionKtModal') {
 	const el = document.querySelector(selector);
 	if (!el) return;
@@ -340,13 +347,13 @@ StatusSliderRenderer.prototype.init = function (p) {
 	const level = p?.node?.level ?? 0;
 	const isInteractive = interactiveLevels.includes(level);
 
-	// helper p/ pegar valor normalizado (ACTIVE/PAUSED) de qualquer campo
+	// helper p/ pegar valor normalizado
 	const getOn = () => {
 		const raw = p.data?.campaign_status ?? p.data?.status ?? p.value;
 		return String(raw || '').toUpperCase() === 'ACTIVE';
 	};
 
-	// Se não for interativo nesse nível, mostra só texto/label
+	// só label quando não interativo/pinned
 	if (isPinnedOrTotal(p) || !isInteractive) {
 		this.eGui = document.createElement('span');
 		this.eGui.textContent = strongText(String(p.value ?? ''));
@@ -381,12 +388,14 @@ StatusSliderRenderer.prototype.init = function (p) {
 	const setProgress = (pgr) => {
 		const pct = Math.max(0, Math.min(1, pgr));
 		fill.style.width = pct * 100 + '%';
-		knob.style.transform = `translateX(${pct * maxX()}px)`;
+		knob.style.transform = `translateX(${pct * Math.max(0, maxX())}px)`;
 		const on = pct >= 0.5;
 		label.textContent = on ? 'ACTIVE' : 'PAUSED';
 		root.setAttribute('aria-checked', String(on));
 	};
-	setProgress(isOn ? 1 : 0);
+
+	// garante posição correta depois do layout
+	requestAnimationFrame(() => setProgress(isOn ? 1 : 0));
 
 	// commit: atualiza ambos os campos, se existirem
 	const commit = (on) => {
@@ -398,7 +407,7 @@ StatusSliderRenderer.prototype.init = function (p) {
 		setProgress(on ? 1 : 0);
 		p.api.refreshCells({ rowNodes: [p.node], columns: [p.column.getId()], force: true });
 
-		// toast apenas se foi interação do usuário
+		// toast apenas se foi interação do usuário (arraste válido)
 		if (this._userInteracted && globalThis.Toastify) {
 			Toastify({
 				text: on ? 'Campanha ativada' : 'Campanha pausada',
@@ -416,39 +425,82 @@ StatusSliderRenderer.prototype.init = function (p) {
 		}
 	};
 
-	// drag (mouse + touch)
+	// ===== DRAG-ONLY (sem clique) =====
+	const MOVE_THRESHOLD = 6; // px para considerar arraste
 	let down = false,
 		startX = 0,
-		startOn = isOn;
-	const onDown = (x) => {
+		startOn = isOn,
+		dragged = false;
+
+	const onDown = (x, ev) => {
 		down = true;
-		this._dragging = true;
-		this._userInteracted = true;
+		dragged = false;
+		this._userInteracted = false; // só vira true se passar do threshold
 		startX = x;
 		startOn = root.getAttribute('aria-checked') === 'true';
+		if (ev) {
+			ev.preventDefault();
+			ev.stopPropagation();
+		}
 	};
 	const onMove = (x) => {
 		if (!down) return;
-		const p0 = startOn ? 1 : 0;
-		const pgr = p0 + (x - startX) / Math.max(1, maxX());
-		setProgress(pgr);
+		const dx = x - startX;
+		if (Math.abs(dx) > MOVE_THRESHOLD) {
+			dragged = true;
+			this._userInteracted = true;
+			const p0 = startOn ? 1 : 0;
+			const pgr = p0 + dx / Math.max(1, maxX());
+			setProgress(pgr);
+		}
 	};
-	const onUp = (x) => {
+	const onUp = (x, ev) => {
 		if (!down) return;
 		down = false;
-		const p0 = startOn ? 1 : 0;
-		const pgr = p0 + (x - startX) / Math.max(1, maxX());
-		commit(pgr >= 0.5);
+
+		if (!dragged) {
+			// clique simples -> não faz nada
+			setProgress(startOn ? 1 : 0);
+			if (ev) {
+				ev.preventDefault();
+				ev.stopPropagation();
+			}
+			return;
+		}
+
+		const pct = parseFloat(fill.style.width) / 100;
+		const finalOn = pct >= 0.5;
+
+		if (finalOn !== startOn) commit(finalOn);
+		else setProgress(startOn ? 1 : 0);
+
 		setTimeout(() => (this._dragging = false), 0);
+		if (ev) {
+			ev.preventDefault();
+			ev.stopPropagation();
+		}
 	};
 
-	root.addEventListener('mousedown', (e) => onDown(e.clientX));
+	// listeners (bloqueando click simples)
+	root.addEventListener('mousedown', (e) => onDown(e.clientX, e));
 	window.addEventListener('mousemove', (e) => onMove(e.clientX));
-	window.addEventListener('mouseup', (e) => onUp(e.clientX));
+	window.addEventListener('mouseup', (e) => onUp(e.clientX, e));
 
-	root.addEventListener('touchstart', (e) => onDown(e.touches[0].clientX), { passive: true });
+	root.addEventListener('touchstart', (e) => onDown(e.touches[0].clientX, e), { passive: false });
 	window.addEventListener('touchmove', (e) => onMove(e.touches[0].clientX), { passive: true });
-	window.addEventListener('touchend', (e) => onUp(e.changedTouches[0].clientX));
+	window.addEventListener('touchend', (e) => onUp(e.changedTouches[0].clientX, e));
+
+	root.addEventListener('click', (e) => {
+		e.preventDefault();
+		e.stopPropagation();
+	});
+	root.addEventListener('keydown', (e) => {
+		// opcional: bloqueia toggle por teclado (Space/Enter)
+		if (e.code === 'Space' || e.code === 'Enter') {
+			e.preventDefault();
+			e.stopPropagation();
+		}
+	});
 };
 
 StatusSliderRenderer.prototype.getGui = function () {
@@ -456,7 +508,6 @@ StatusSliderRenderer.prototype.getGui = function () {
 };
 
 StatusSliderRenderer.prototype.refresh = function (p) {
-	// mesmo critério de níveis
 	const cfg = p.colDef?.cellRendererParams || {};
 	const interactiveLevels = Array.isArray(cfg.interactiveLevels) ? cfg.interactiveLevels : [0];
 	const level = p?.node?.level ?? 0;
@@ -470,10 +521,14 @@ StatusSliderRenderer.prototype.refresh = function (p) {
 	const label = this.eGui.querySelector('.ag-status-label');
 	const maxX = () => this.eGui.clientWidth - this.eGui.clientHeight;
 
-	fill.style.width = (isOn ? 100 : 0) + '%';
-	knob.style.transform = `translateX(${(isOn ? 1 : 0) * Math.max(0, maxX())}px)`;
-	label.textContent = isOn ? 'ACTIVE' : 'PAUSED';
-	this.eGui.setAttribute('aria-checked', String(isOn));
+	// garante posição correta após refresh/layout
+	requestAnimationFrame(() => {
+		fill.style.width = (isOn ? 100 : 0) + '%';
+		knob.style.transform = `translateX(${(isOn ? 1 : 0) * Math.max(0, maxX())}px)`;
+		label.textContent = isOn ? 'ACTIVE' : 'PAUSED';
+		this.eGui.setAttribute('aria-checked', String(isOn));
+	});
+
 	return true;
 };
 
@@ -546,29 +601,14 @@ const columnDefs = [
 		field: 'campaign_status',
 		minWidth: 160,
 		flex: 0.8,
-
-		// lê de campaign_status OU status (filhos/netos)
-		valueGetter: (p) => {
-			const v = p.data?.campaign_status ?? p.data?.status ?? p.value;
-			return typeof v === 'string' ? v.toUpperCase() : v;
-		},
-		// quando mudar, grava em todos os campos relevantes
-		valueSetter: (p) => {
-			const next = String(p.newValue || '').toUpperCase();
-			if (p.data) {
-				if ('campaign_status' in p.data) p.data.campaign_status = next;
-				if ('status' in p.data) p.data.status = next;
-			}
-			return true;
-		},
-
 		cellRenderer: StatusSliderRenderer,
-		// 👇 habilita slider em raiz (0), filhos (1) e netos (2) + knob menor
 		cellRendererParams: {
-			interactiveLevels: [0, 1, 2],
-			smallKnob: true,
+			interactiveLevels: [0, 1, 2], // raiz + adsets + ads
+			smallKnob: true, // bolinha menor
 		},
+		suppressKeyboardEvent: () => true, // (opcional) desliga navegação por teclado nessa célula
 	},
+
 	{
 		headerName: 'Budget',
 		field: 'budget',
