@@ -29,7 +29,8 @@ const GRID_STATE_IGNORE_ON_RESTORE = [
 
 	/* ========== chaves de storage ========== */
 	const SS_KEY_STATE = GRID_STATE_KEY || 'lion.aggrid.state.v1'; // já vem do topo do arquivo
-	const LS_KEY_PRESETS = 'lion.aggrid.presets.v1'; // localStorage: “Meus presets”
+	const LS_KEY_PRESETS = 'lion.aggrid.presets.v1';
+	const LS_KEY_ACTIVE_PRESET = 'lion.aggrid.activePreset.v1';
 	const PRESET_VERSION = 1;
 
 	/* ========== helpers básicos get/set state ========== */
@@ -53,141 +54,25 @@ const GRID_STATE_IGNORE_ON_RESTORE = [
 	}
 
 	/* ========== sessionStorage (state atual) ========== */
-	function saveState() {
-		const api = ensureApi();
-		if (!api) return;
-		try {
-			const state = api.getState();
-			sessionStorage.setItem(
-				SS_KEY_STATE,
-				JSON.stringify({ v: PRESET_VERSION, savedAt: Date.now(), state })
-			);
-			showToast('State salvo', 'success');
-		} catch (e) {
-			console.warn('saveState fail', e);
-		}
-	}
-	function restoreState() {
-		const api = ensureApi();
-		if (!api) return;
-		try {
-			const raw = sessionStorage.getItem(SS_KEY_STATE);
-			if (!raw) return showToast('Nenhum state salvo', 'warning');
-			const parsed = JSON.parse(raw);
-			api.setState(parsed.state, ['pagination', 'scroll', 'rowSelection', 'focusedCell']);
-			showToast('State restaurado', 'success');
-		} catch (e) {
-			console.warn('restoreState fail', e);
-		}
-	}
+
 	function resetLayout() {
 		const api = ensureApi();
 		if (!api) return;
 		try {
 			sessionStorage.removeItem(SS_KEY_STATE);
-			api.setState({}, []); // limpa tudo
+			localStorage.removeItem(LS_KEY_ACTIVE_PRESET); // 👈 Limpa preset ativo
+
+			api.setState({}, []);
 			api.resetColumnState?.();
 			api.setFilterModel?.(null);
 			api.setSortModel?.([]);
+
+			refreshPresetUserSelect(); // 👈 Atualiza o dropdown
 			showToast('Layout Reset', 'info');
 		} catch (e) {
 			console.warn('resetLayout fail', e);
 		}
 	}
-
-	/* ========== presets built-in (ordem de colunas) ========== */
-	function applyPresetBuiltin(name) {
-		const api = ensureApi();
-		if (!api) return;
-
-		const orderMap = {
-			ops: [
-				'campaign_status',
-				'budget',
-				'bid',
-				'account_status',
-				'account_limit',
-				'profile_name',
-				'bc_name',
-				'account_name',
-				'utm_campaign',
-				'_adsets',
-				'_ads',
-				'impressions',
-				'clicks',
-				'visitors',
-				'conversions',
-				'real_conversions',
-				'cpc',
-				'cpa_fb',
-				'real_cpa',
-				'spent',
-				'fb_revenue',
-				'push_revenue',
-				'revenue',
-				'mx',
-				'profit',
-			],
-			perf: [
-				'profile_name',
-				'utm_campaign',
-				'impressions',
-				'clicks',
-				'visitors',
-				'conversions',
-				'real_conversions',
-				'cpc',
-				'cpa_fb',
-				'real_cpa',
-				'mx',
-				'revenue',
-				'profit',
-				'campaign_status',
-				'budget',
-				'bid',
-				'account_status',
-				'account_limit',
-				'_adsets',
-				'_ads',
-				'fb_revenue',
-				'push_revenue',
-			],
-			rev: [
-				'revenue',
-				'fb_revenue',
-				'push_revenue',
-				'profit',
-				'mx',
-				'spent',
-				'budget',
-				'bid',
-				'campaign_status',
-				'account_status',
-				'account_limit',
-				'profile_name',
-				'bc_name',
-				'account_name',
-				'utm_campaign',
-				'_adsets',
-				'_ads',
-				'impressions',
-				'clicks',
-				'visitors',
-				'conversions',
-				'real_conversions',
-				'cpc',
-				'cpa_fb',
-				'real_cpa',
-			],
-		};
-
-		const order = orderMap[name];
-		if (!order) return;
-		const state = order.map((colId, i) => ({ colId, order: i, hide: false }));
-		api.applyColumnState({ state, applyOrder: true });
-		showToast(`Preset ${name} aplicado`, 'success');
-	}
-
 	/* ========== “Meus presets” (localStorage) ========== */
 	function readPresets() {
 		try {
@@ -205,11 +90,24 @@ const GRID_STATE_IGNORE_ON_RESTORE = [
 	function refreshPresetUserSelect() {
 		const sel = byId('presetUserSelect');
 		if (!sel) return;
-		const current = sel.value;
+
+		// Lê o preset ativo salvo
+		const activePreset = localStorage.getItem(LS_KEY_ACTIVE_PRESET) || '';
+
+		// Limpa e reconstroi as options
 		while (sel.firstChild) sel.removeChild(sel.firstChild);
-		sel.appendChild(new Option('User Presets', ''));
+
+		// Placeholder com nome do preset ativo ou texto padrão
+		const placeholderText = activePreset ? `✓ ${activePreset}` : 'User Presets';
+		sel.appendChild(new Option(placeholderText, ''));
+
+		// Adiciona todos os presets
 		listPresetNames().forEach((name) => sel.appendChild(new Option(name, name)));
-		if ([...sel.options].some((o) => o.value === current)) sel.value = current;
+
+		// Se há preset ativo válido, seleciona ele
+		if (activePreset && [...sel.options].some((o) => o.value === activePreset)) {
+			sel.value = activePreset;
+		}
 	}
 
 	function saveAsPreset() {
@@ -237,7 +135,15 @@ const GRID_STATE_IGNORE_ON_RESTORE = [
 		const bag = readPresets();
 		const p = bag[name];
 		if (!p?.grid) return showToast('Preset not found', 'warning');
+
 		setState(p.grid, ['pagination', 'scroll', 'rowSelection', 'focusedCell']);
+
+		// 👈 Salva o preset ativo
+		localStorage.setItem(LS_KEY_ACTIVE_PRESET, name);
+
+		// Atualiza o placeholder do dropdown
+		refreshPresetUserSelect();
+
 		showToast(`Preset "${name}" applied`, 'success');
 	}
 
@@ -246,9 +152,17 @@ const GRID_STATE_IGNORE_ON_RESTORE = [
 		const name = sel?.value || '';
 		if (!name) return showToast('Pick a preset first', 'warning');
 		if (!confirm(`Delete preset "${name}"?`)) return;
+
 		const bag = readPresets();
 		delete bag[name];
 		writePresets(bag);
+
+		// 👈 Se estava ativo, limpa
+		const activePreset = localStorage.getItem(LS_KEY_ACTIVE_PRESET);
+		if (activePreset === name) {
+			localStorage.removeItem(LS_KEY_ACTIVE_PRESET);
+		}
+
 		refreshPresetUserSelect();
 		showToast(`Preset "${name}" removed`, 'info');
 	}
@@ -307,22 +221,6 @@ const GRID_STATE_IGNORE_ON_RESTORE = [
 		reader.readAsText(file, 'utf-8');
 	});
 
-	/* ========== autosize/side bar ========== */
-	function sizeToFit() {
-		const api = ensureApi();
-		if (!api) return;
-		try {
-			api.sizeColumnsToFit();
-		} catch {}
-	}
-	function autoSizeAll() {
-		const api = ensureApi();
-		if (!api) return;
-		try {
-			const all = api.getColumns()?.map((c) => c.getColId()) || [];
-			api.autoSizeColumns(all, false);
-		} catch {}
-	}
 	/* ===== Toggle: modo de ajuste de colunas ===== */
 	const LS_KEY_SIZE_MODE = 'lion.aggrid.sizeMode'; // 'auto' | 'fit'
 
@@ -378,52 +276,8 @@ const GRID_STATE_IGNORE_ON_RESTORE = [
 		});
 	})();
 
-	function openColumnsPanel() {
-		const api = ensureApi();
-		if (!api) return;
-		api.setSideBarVisible(true);
-		api.openToolPanel('columns');
-	}
-	function openFiltersPanel() {
-		const api = ensureApi();
-		if (!api) return;
-		api.setSideBarVisible(true);
-		api.openToolPanel('filters');
-	}
-
-	/* ========== export/import state “puro” (debug) ========== */
-	function exportStateJson() {
-		const s = getState();
-		if (!s) return showToast('State vazio', 'warning');
-		showKTModal({ title: 'Grid State (JSON)', content: JSON.stringify(s, null, 2) });
-	}
-	function importStateJson() {
-		const txt = prompt('Cole o JSON do state:');
-		if (!txt) return;
-		try {
-			const s = JSON.parse(txt);
-			setState(s, ['pagination', 'scroll', 'rowSelection', 'focusedCell']);
-			showToast('State importado', 'success');
-		} catch {
-			showToast('JSON inválido', 'danger');
-		}
-	}
-
 	/* ========== binds (botões/menus são opcionais) ========== */
-	byId('btnSaveState')?.addEventListener('click', saveState);
-	byId('btnRestoreState')?.addEventListener('click', restoreState);
 	byId('btnResetLayout')?.addEventListener('click', resetLayout);
-
-	byId('btnExportState')?.addEventListener('click', exportStateJson);
-	byId('btnImportState')?.addEventListener('click', importStateJson);
-
-	// built-in
-	byId('presetBuiltinSelect')?.addEventListener('change', (e) => {
-		const v = e.target.value;
-		if (!v) return;
-		applyPresetBuiltin(v);
-		e.target.value = '';
-	});
 
 	// meus presets
 	byId('presetUserSelect')?.addEventListener('change', (e) => {
@@ -436,43 +290,30 @@ const GRID_STATE_IGNORE_ON_RESTORE = [
 	byId('btnDownloadPreset')?.addEventListener('click', downloadPreset);
 	byId('btnUploadPreset')?.addEventListener('click', uploadPreset);
 
-	// utilitários
-	// byId('btnSizeToFit')?.addEventListener('click', sizeToFit);
-	// byId('btnAutoSizeAll')?.addEventListener('click', autoSizeAll);
-	byId('btnOpenColumns')?.addEventListener('click', openColumnsPanel);
-	byId('btnOpenFilters')?.addEventListener('click', openFiltersPanel);
-
 	// popula a combo de "Meus presets" se existir no HTML
 	refreshPresetUserSelect();
+	//  Auto-aplica preset ativo quando a grid estiver pronta
+	globalThis.addEventListener('lionGridReady', () => {
+		const activePreset = localStorage.getItem(LS_KEY_ACTIVE_PRESET);
+		if (activePreset) {
+			// Aplica silenciosamente (sem toast)
+			const bag = readPresets();
+			const p = bag[activePreset];
+			if (p?.grid) {
+				setState(p.grid, ['pagination', 'scroll', 'rowSelection', 'focusedCell']);
+				console.log(`[Preset] Auto-aplicado: "${activePreset}"`);
+			}
+		}
+	});
 
 	/* ========== expõe alguns helpers p/ debug no console ========== */
 	globalThis.LionGrid = Object.assign(globalThis.LionGrid || {}, {
 		getState,
 		setState,
-		saveState,
-		restoreState,
 		resetLayout,
-		applyPresetBuiltin,
 		saveAsPreset,
 		applyPresetUser,
 	});
-})();
-
-const saveStateDebounced = (() => {
-	let t = null;
-	return (api) => {
-		clearTimeout(t);
-		t = setTimeout(() => {
-			try {
-				const state = api.getState(); // estado completo
-				const payload = { savedAt: Date.now(), state };
-				sessionStorage.setItem(GRID_STATE_KEY, JSON.stringify(payload));
-				// console.debug('[GridState] saved', payload);
-			} catch (e) {
-				console.warn('[GridState] save failed:', e);
-			}
-		}, 250);
-	};
 })();
 
 function loadSavedState() {
@@ -731,26 +572,6 @@ function parseCurrencyInput(params) {
 }
 function isPinnedOrGroup(params) {
 	return params?.node?.rowPinned || params?.node?.group;
-}
-function normalizeStatus(s) {
-	const v = String(s || '').toUpperCase();
-	if (v === 'ACTIVE') return 'ACTIVE';
-	if (v === 'PAUSED') return 'PAUSED';
-	if (v === 'DISABLED') return 'DISABLED';
-	if (v === 'CLOSED') return 'CLOSED';
-	return 'PAUSED';
-}
-async function toggleCampaignStatus(params) {
-	if (isPinnedOrGroup(params)) return;
-	if (params?.node?.level !== 0) return;
-	if (params?.colDef?.field !== 'campaign_status') return;
-	const row = params.data || {};
-	const id = row.id;
-	if (!id) return;
-	const current = normalizeStatus(row.campaign_status);
-	const next = current === 'ACTIVE' ? 'PAUSED' : 'ACTIVE';
-	row.campaign_status = next;
-	params.api.refreshCells({ rowNodes: [params.node], columns: ['campaign_status'], force: true });
 }
 
 /* Profile renderer */
@@ -1328,11 +1149,6 @@ function makeGrid() {
 	const gridOptions = {
 		context: { showToast: (msg, type) => Toastify({ text: msg }).showToast() },
 
-		// Persistência de state
-		onStateUpdated(e) {
-			saveStateDebounced(e.api);
-		},
-
 		// onCellDoubleClicked: toggleCampaignStatus,
 		rowModelType: 'serverSide',
 		cacheBlockSize: 200,
@@ -1577,6 +1393,9 @@ function makeGrid() {
 					params.api.sizeColumnsToFit();
 				} catch {}
 			}, 0);
+			setTimeout(() => {
+				globalThis.dispatchEvent(new CustomEvent('lionGridReady'));
+			}, 100);
 		},
 	};
 
@@ -1595,7 +1414,7 @@ function makeGrid() {
 			sessionStorage.removeItem(GRID_STATE_KEY);
 			// limpa estado de colunas/sort/filtro: só reloader já basta; mas pode limpar manualmente
 			api.setState({}, []); // aplica state vazio
-			showToast('Layout resetado', 'info');
+			showToast('Layout Reset', 'info');
 		} catch {}
 	};
 
