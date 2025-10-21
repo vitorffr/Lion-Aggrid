@@ -13,52 +13,57 @@ const GRID_STATE_IGNORE_ON_RESTORE = [
 	'focusedCell',
 	// (se quiser manter filtro/sort atuais em vez do salvo, adicione 'filter'/'sort' aqui)
 ];
+// === Fake network & min spinner ===
+const DEV_FAKE_NETWORK_LATENCY_MS = 0; // mude p/ 600..1200 para simular rede
+const MIN_SPINNER_MS = 650; // spinner visível por pelo menos X ms
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function withMinSpinner(startMs, minMs) {
+	const elapsed = performance.now() - startMs;
+	if (elapsed < minMs) await sleep(minMs - elapsed);
+}
 
 /* ====== CSS de loading (injeção automática) ====== */
 (function ensureLoadingStyles() {
 	if (document.getElementById('lion-loading-styles')) return;
 	const css = `
-/* célula com loading */
+/* célula em loading: esconde todo conteúdo e mostra só a bolinha */
 .ag-cell.ag-cell-loading {
   position: relative;
-  opacity: .65;
   pointer-events: none;
+
+  /* some com texto cru */
+  color: transparent !important;
+  text-shadow: none !important;
+  caret-color: transparent !important;
 }
-.ag-cell.ag-cell-loading::after {
-  content: "";
-  position: absolute;
-  right: 8px;
-  top: 50%;
-  width: 14px;
-  height: 14px;
-  margin-top: -7px;
-  border-radius: 50%;
-  border: 2px solid #9ca3af;
-  border-top-color: transparent;
-  animation: lion-spin .8s linear infinite;
+
+/* esconde qualquer elemento interno (renderers, spans, etc.) */
+.ag-cell.ag-cell-loading * {
+  visibility: hidden !important;
 }
-@keyframes lion-spin {
-  to { transform: rotate(360deg); }
-}
-/* status slider ocupado */
-.ag-status-pill.is-busy {
-  opacity: .6;
-  pointer-events: none;
-  position: relative;
-}
-.ag-status-pill.is-busy::after {
-  content: "";
-  position: absolute;
-  right: 6px;
-  top: 50%;
-  width: 12px;
-  height: 12px;
-  margin-top: -6px;
-  border-radius: 50%;
-  border: 2px solid #a3e635;
-  border-top-color: transparent;
-  animation: lion-spin .8s linear infinite;
-}`;
+
+	/* SPINNER: centralizado no meio da célula, acima da capa */
+	.ag-cell.ag-cell-loading::after {
+	content: "";
+	position: absolute;
+	left: 50%;
+	top: 50%;
+	width: 14px;
+	height: 14px;
+	margin-left: -7px; /* metade da largura */
+	margin-top: -7px; /* metade da altura */
+	border-radius: 50%;
+	border: 2px solid #9ca3af;
+	border-top-color: transparent;
+	animation: lion-spin .8s linear infinite;
+	z-index: 2;
+	pointer-events: none; /* não interfere com drag/resize do grid */
+	will-change: transform; /* evita micro jitter */
+	}
+
+	@keyframes lion-spin { to { transform: rotate(360deg); } }
+`;
 	const el = document.createElement('style');
 	el.id = 'lion-loading-styles';
 	el.textContent = css;
@@ -532,8 +537,10 @@ function chipFractionBadgeRenderer(p) {
 	return host.firstElementChild;
 }
 
-/* ======= Helpers de atualização com backend ======= */
 async function updateCampaignStatusBackend(id, status) {
+	const t0 = performance.now();
+	if (DEV_FAKE_NETWORK_LATENCY_MS > 0) await sleep(DEV_FAKE_NETWORK_LATENCY_MS);
+
 	const res = await fetch(`/api/campaigns/${encodeURIComponent(id)}/status`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
@@ -542,9 +549,16 @@ async function updateCampaignStatusBackend(id, status) {
 	});
 	const data = await res.json().catch(() => ({}));
 	if (!res.ok || data?.ok === false) throw new Error(data?.error || 'Status update failed');
+
+	// garante spinner mínimo mesmo se o back for rápido
+	await withMinSpinner(t0, MIN_SPINNER_MS);
 	return data;
 }
+
 async function updateCampaignBudgetBackend(id, budgetNumber) {
+	const t0 = performance.now();
+	if (DEV_FAKE_NETWORK_LATENCY_MS > 0) await sleep(DEV_FAKE_NETWORK_LATENCY_MS);
+
 	const res = await fetch(`/api/campaigns/${encodeURIComponent(id)}/budget`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
@@ -553,10 +567,15 @@ async function updateCampaignBudgetBackend(id, budgetNumber) {
 	});
 	const data = await res.json().catch(() => ({}));
 	if (!res.ok || data?.ok === false) throw new Error(data?.error || 'Budget update failed');
+
+	await withMinSpinner(t0, MIN_SPINNER_MS);
 	return data;
 }
 
 async function updateCampaignBidBackend(id, bidNumber) {
+	const t0 = performance.now();
+	if (DEV_FAKE_NETWORK_LATENCY_MS > 0) await sleep(DEV_FAKE_NETWORK_LATENCY_MS);
+
 	const res = await fetch(`/api/campaigns/${encodeURIComponent(id)}/bid`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
@@ -565,6 +584,8 @@ async function updateCampaignBidBackend(id, bidNumber) {
 	});
 	const data = await res.json().catch(() => ({}));
 	if (!res.ok || data?.ok === false) throw new Error(data?.error || 'Bid update failed');
+
+	await withMinSpinner(t0, MIN_SPINNER_MS);
 	return data;
 }
 
@@ -770,12 +791,12 @@ function revenueCellRenderer(p) {
 }
 
 /* ============ Toggle/slider de Campaign Status (com backend + loading) ============ */
+/* ============ Toggle/slider de Campaign Status (com backend + loading) ============ */
 function StatusSliderRenderer() {}
 
 StatusSliderRenderer.prototype.init = function (p) {
 	this.p = p;
 
-	// params configuráveis na coluna
 	const cfg = p.colDef?.cellRendererParams || {};
 	const interactiveLevels = Array.isArray(cfg.interactiveLevels) ? cfg.interactiveLevels : [0];
 	const smallKnob = !!cfg.smallKnob;
@@ -783,13 +804,11 @@ StatusSliderRenderer.prototype.init = function (p) {
 	const level = p?.node?.level ?? 0;
 	const isInteractive = interactiveLevels.includes(level);
 
-	// helper p/ pegar valor normalizado
 	const getOn = () => {
 		const raw = p.data?.campaign_status ?? p.data?.status ?? p.value;
 		return String(raw || '').toUpperCase() === 'ACTIVE';
 	};
 
-	// só label quando não interativo/pinned
 	if (isPinnedOrTotal(p) || !isInteractive) {
 		this.eGui = document.createElement('span');
 		this.eGui.textContent = strongText(String(p.value ?? ''));
@@ -798,7 +817,7 @@ StatusSliderRenderer.prototype.init = function (p) {
 
 	let isOn = getOn();
 
-	// estrutura
+	// estrutura do slider
 	const root = document.createElement('div');
 	root.className = 'ag-status-pill';
 	root.setAttribute('role', 'switch');
@@ -819,8 +838,7 @@ StatusSliderRenderer.prototype.init = function (p) {
 	root.append(fill, label, knob);
 	this.eGui = root;
 
-	// helpers visuais
-	const maxX = () => root.clientWidth - root.clientHeight; // faixa útil
+	const maxX = () => root.clientWidth - root.clientHeight;
 	const setProgress = (pgr) => {
 		const pct = Math.max(0, Math.min(1, pgr));
 		fill.style.width = pct * 100 + '%';
@@ -830,20 +848,19 @@ StatusSliderRenderer.prototype.init = function (p) {
 		root.setAttribute('aria-checked', String(on));
 	};
 
-	// garante posição correta depois do layout
 	requestAnimationFrame(() => setProgress(isOn ? 1 : 0));
 
-	// controle de busy no próprio slider
+	// ====== BUSY: usa a célula como loading (igual Bid/Budget) ======
 	const setBusy = (on) => {
-		if (!this.eGui) return;
-		this.eGui.classList.toggle('is-busy', !!on);
+		const cellEl = this.eGui?.closest('.ag-cell');
+		if (cellEl) cellEl.classList.toggle('ag-cell-loading', !!on);
 	};
 
 	// commit com backend (otimista + rollback + loading)
 	const commit = async (nextOn, prevOn) => {
 		const next = nextOn ? 'ACTIVE' : 'PAUSED';
 
-		// aplica local (otimista)
+		// otimista local
 		if (p.data) {
 			if ('campaign_status' in p.data) p.data.campaign_status = next;
 			if ('status' in p.data) p.data.status = next;
@@ -852,14 +869,15 @@ StatusSliderRenderer.prototype.init = function (p) {
 		setProgress(nextOn ? 1 : 0);
 		p.api.refreshCells({ rowNodes: [p.node], columns: [p.column.getId()], force: true });
 
-		// backend
 		const id = String(p.data?.id ?? p.data?.utm_campaign ?? '');
 		if (!id) return;
 
 		setBusy(true);
 		try {
+			const t0 = performance.now();
 			await updateCampaignStatusBackend(id, next);
-			// toast apenas se foi interação do usuário (arraste válido)
+			await withMinSpinner(t0, MIN_SPINNER_MS);
+
 			if (this._userInteracted && globalThis.Toastify) {
 				Toastify({
 					text: nextOn ? 'Campanha ativada' : 'Campanha pausada',
@@ -890,8 +908,8 @@ StatusSliderRenderer.prototype.init = function (p) {
 		}
 	};
 
-	// ===== DRAG-ONLY (sem clique) =====
-	const MOVE_THRESHOLD = 6; // px para considerar arraste
+	// ===== DRAG-ONLY =====
+	const MOVE_THRESHOLD = 6;
 	let down = false,
 		startX = 0,
 		startOn = isOn,
@@ -900,7 +918,7 @@ StatusSliderRenderer.prototype.init = function (p) {
 	const onDown = (x, ev) => {
 		down = true;
 		dragged = false;
-		this._userInteracted = false; // só vira true se passar do threshold
+		this._userInteracted = false;
 		startX = x;
 		startOn = root.getAttribute('aria-checked') === 'true';
 		if (ev) {
@@ -924,7 +942,6 @@ StatusSliderRenderer.prototype.init = function (p) {
 		down = false;
 
 		if (!dragged) {
-			// clique simples -> não faz nada (mantemos drag-only)
 			setProgress(startOn ? 1 : 0);
 			if (ev) {
 				ev.preventDefault();
@@ -946,7 +963,6 @@ StatusSliderRenderer.prototype.init = function (p) {
 		}
 	};
 
-	// listeners (bloqueando click simples)
 	root.addEventListener('mousedown', (e) => onDown(e.clientX, e));
 	window.addEventListener('mousemove', (e) => onMove(e.clientX));
 	window.addEventListener('mouseup', (e) => onUp(e.clientX, e));
@@ -960,7 +976,6 @@ StatusSliderRenderer.prototype.init = function (p) {
 		e.stopPropagation();
 	});
 	root.addEventListener('keydown', (e) => {
-		// opcional: bloqueia toggle por teclado (Space/Enter)
 		if (e.code === 'Space' || e.code === 'Enter') {
 			e.preventDefault();
 			e.stopPropagation();
@@ -986,7 +1001,6 @@ StatusSliderRenderer.prototype.refresh = function (p) {
 	const label = this.eGui.querySelector('.ag-status-label');
 	const maxX = () => this.eGui.clientWidth - this.eGui.clientHeight;
 
-	// garante posição correta após refresh/layout
 	requestAnimationFrame(() => {
 		fill.style.width = (isOn ? 100 : 0) + '%';
 		knob.style.transform = `translateX(${(isOn ? 1 : 0) * Math.max(0, maxX())}px)`;

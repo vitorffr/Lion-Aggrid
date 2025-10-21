@@ -23,27 +23,43 @@
   <select id="presetUserSelect" class="kt-select min-w-[180px]" title="Meus presets">
     <option value="">User Presets</option>
   </select>
-  <button id="btnSaveAsPreset" class="kt-btn kt-btn-sm"><i class="ki-filled ki-abstract-10  text-base"></i></button>
-  <button id="btnDeletePreset" class="kt-btn kt-btn-sm"><i class="ki-filled ki-trash text-base"></i></button>
-  <button id="btnDownloadPreset" class="kt-btn kt-btn-sm">Download<i class="ki-filled ki-cloud-download text-base"></i></button>
-  <button id="btnUploadPreset" class="kt-btn kt-btn-sm">Upload<i class="ki-filled ki-cloud-add  text-base"></i></button>
+<button id="btnSaveAsPreset"   class="kt-btn kt-btn-sm" title="Add new preset">
+  <i class="ki-filled ki-abstract-10 text-base" aria-hidden="true"></i>
+  <span class="sr-only">Save preset</span>
+</button>
+
+<button id="btnDeletePreset"   class="kt-btn kt-btn-sm" title="Delete actual preset">
+  <i class="ki-filled ki-trash text-base" aria-hidden="true"></i>
+  <span class="sr-only">Delete preset</span>
+</button>
+
+<button id="btnDownloadPreset" class="kt-btn kt-btn-sm" title="Download preset in JSON format">
+  Download
+  <i class="ki-filled ki-cloud-download text-base" aria-hidden="true"></i>
+</button>
+
+<button id="btnUploadPreset"   class="kt-btn kt-btn-sm" title="Upload preset in JSON format">
+  Upload
+  <i class="ki-filled ki-cloud-add text-base" aria-hidden="true"></i>
+</button>
+
   <input id="presetFileInput" type="file" accept="application/json"
          class="hidden" aria-hidden="true" />
 
   <span class="mx-2 opacity-50 select-none">|</span>
   <!-- State (sessionStorage) -->
 
-  <button id="btnResetLayout" class="kt-btn kt-btn-sm">Reset</button>
+  <button id="btnResetLayout" class="kt-btn kt-btn-sm" title="Reset to Default">Reset</button>
 
   <span class="mx-2 opacity-50 select-none">|</span>
 
 
-  <label class="inline-flex items-center gap-2 select-none" title="Alternar modo de ajuste de colunas">
+  <label class="inline-flex items-center gap-2 select-none" title="Toggle column sizing mode">
     <input id="colSizeModeToggle" type="checkbox" class="kt-checkbox" />
   <span class="text whitespace-nowrap">Auto size</span>
   </label>
 
-        <label class="inline-flex items-center gap-2 select-none" title="Pin Columns">
+        <label class="inline-flex items-center gap-2 select-none" title="Pin/Unpin Columns">
         <input id="pinToggle" type="checkbox" class="kt-checkbox" />
         <span class="text">Pinned</span>
       </label>
