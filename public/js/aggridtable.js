@@ -14,6 +14,57 @@ const GRID_STATE_IGNORE_ON_RESTORE = [
 	// (se quiser manter filtro/sort atuais em vez do salvo, adicione 'filter'/'sort' aqui)
 ];
 
+/* ====== CSS de loading (injeção automática) ====== */
+(function ensureLoadingStyles() {
+	if (document.getElementById('lion-loading-styles')) return;
+	const css = `
+/* célula com loading */
+.ag-cell.ag-cell-loading {
+  position: relative;
+  opacity: .65;
+  pointer-events: none;
+}
+.ag-cell.ag-cell-loading::after {
+  content: "";
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  margin-top: -7px;
+  border-radius: 50%;
+  border: 2px solid #9ca3af;
+  border-top-color: transparent;
+  animation: lion-spin .8s linear infinite;
+}
+@keyframes lion-spin {
+  to { transform: rotate(360deg); }
+}
+/* status slider ocupado */
+.ag-status-pill.is-busy {
+  opacity: .6;
+  pointer-events: none;
+  position: relative;
+}
+.ag-status-pill.is-busy::after {
+  content: "";
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  margin-top: -6px;
+  border-radius: 50%;
+  border: 2px solid #a3e635;
+  border-top-color: transparent;
+  animation: lion-spin .8s linear infinite;
+}`;
+	const el = document.createElement('style');
+	el.id = 'lion-loading-styles';
+	el.textContent = css;
+	document.head.appendChild(el);
+})();
+
 /* ==== Toolbar actions (state/layout + presets built-in & custom) ==== */
 (function setupToolbar() {
 	const byId = (id) => document.getElementById(id);
@@ -541,7 +592,7 @@ async function fetchJSON(url, opts) {
 	return data;
 }
 
-/* ======= Utils de status (robustos e reaproveitáveis) ======= */
+/* ======= Utils de status e de loading ======= */
 function isStatusActiveVal(v) {
 	return String(v ?? '').toUpperCase() === 'ACTIVE';
 }
@@ -554,6 +605,15 @@ function setRowStatus(data, on) {
 		if ('campaign_status' in data) data.campaign_status = next;
 		if ('status' in data) data.status = next;
 	}
+}
+// flags por célula para spinner
+function setCellLoading(node, colId, on) {
+	if (!node?.data) return;
+	node.data.__loading = node.data.__loading || {};
+	node.data.__loading[colId] = !!on;
+}
+function isCellLoading(p, colId) {
+	return !!p?.data?.__loading?.[colId];
 }
 
 /* ============ Modal simples (KTUI-like) ============ */
@@ -709,7 +769,7 @@ function revenueCellRenderer(p) {
 	return wrap;
 }
 
-/* ============ Toggle/slider de Campaign Status (com backend) ============ */
+/* ============ Toggle/slider de Campaign Status (com backend + loading) ============ */
 function StatusSliderRenderer() {}
 
 StatusSliderRenderer.prototype.init = function (p) {
@@ -773,7 +833,13 @@ StatusSliderRenderer.prototype.init = function (p) {
 	// garante posição correta depois do layout
 	requestAnimationFrame(() => setProgress(isOn ? 1 : 0));
 
-	// commit com backend (otimista + rollback)
+	// controle de busy no próprio slider
+	const setBusy = (on) => {
+		if (!this.eGui) return;
+		this.eGui.classList.toggle('is-busy', !!on);
+	};
+
+	// commit com backend (otimista + rollback + loading)
 	const commit = async (nextOn, prevOn) => {
 		const next = nextOn ? 'ACTIVE' : 'PAUSED';
 
@@ -790,6 +856,7 @@ StatusSliderRenderer.prototype.init = function (p) {
 		const id = String(p.data?.id ?? p.data?.utm_campaign ?? '');
 		if (!id) return;
 
+		setBusy(true);
 		try {
 			await updateCampaignStatusBackend(id, next);
 			// toast apenas se foi interação do usuário (arraste válido)
@@ -818,6 +885,8 @@ StatusSliderRenderer.prototype.init = function (p) {
 			setProgress(prevOn ? 1 : 0);
 			p.api.refreshCells({ rowNodes: [p.node], columns: [p.column.getId()], force: true });
 			showToast(`Falha ao salvar status: ${e?.message || e}`, 'danger');
+		} finally {
+			setBusy(false);
 		}
 	};
 
@@ -1011,12 +1080,15 @@ const columnDefs = [
 				headerName: 'Budget',
 				field: 'budget',
 				type: 'rightAligned',
-				editable: (p) => p.node?.level === 0,
+				editable: (p) => p.node?.level === 0 && !isCellLoading(p, 'budget'),
 				cellEditor: 'agNumberCellEditor',
 				valueParser: parseCurrencyInput,
 				valueFormatter: currencyFormatter,
 				minWidth: 110,
 				flex: 0.6,
+				cellClassRules: {
+					'ag-cell-loading': (p) => isCellLoading(p, 'budget'),
+				},
 				onCellValueChanged: async (p) => {
 					try {
 						if ((p?.node?.level ?? 0) !== 0) return;
@@ -1031,12 +1103,23 @@ const columnDefs = [
 							return;
 						}
 
+						// loading ON
+						setCellLoading(p.node, 'budget', true);
+						p.api.refreshCells({ rowNodes: [p.node], columns: ['budget'] });
+
 						await updateCampaignBudgetBackend(id, n);
+
+						// valor final + refresh
+						p.node.setDataValue('budget', n);
 						p.api.refreshCells({ rowNodes: [p.node], columns: ['budget'] });
 						showToast('Budget atualizado', 'success');
 					} catch (e) {
 						p.node.setDataValue('budget', p.oldValue);
 						showToast(`Erro ao salvar Budget: ${e?.message || e}`, 'danger');
+					} finally {
+						// loading OFF
+						setCellLoading(p.node, 'budget', false);
+						p.api.refreshCells({ rowNodes: [p.node], columns: ['budget'] });
 					}
 				},
 			},
@@ -1044,12 +1127,15 @@ const columnDefs = [
 				headerName: 'Bid',
 				field: 'bid',
 				type: 'rightAligned',
-				editable: (p) => p.node?.level === 0,
+				editable: (p) => p.node?.level === 0 && !isCellLoading(p, 'bid'),
 				cellEditor: 'agNumberCellEditor',
 				valueParser: parseCurrencyInput,
 				valueFormatter: currencyFormatter,
 				minWidth: 110,
 				flex: 0.6,
+				cellClassRules: {
+					'ag-cell-loading': (p) => isCellLoading(p, 'bid'),
+				},
 				onCellValueChanged: async (p) => {
 					try {
 						if ((p?.node?.level ?? 0) !== 0) return;
@@ -1064,12 +1150,22 @@ const columnDefs = [
 							return;
 						}
 
+						// loading ON
+						setCellLoading(p.node, 'bid', true);
+						p.api.refreshCells({ rowNodes: [p.node], columns: ['bid'] });
+
 						await updateCampaignBidBackend(id, n);
+
+						p.node.setDataValue('bid', n);
 						p.api.refreshCells({ rowNodes: [p.node], columns: ['bid'] });
 						showToast('Bid atualizado', 'success');
 					} catch (e) {
 						p.node.setDataValue('bid', p.oldValue);
 						showToast(`Erro ao salvar Bid: ${e?.message || e}`, 'danger');
+					} finally {
+						// loading OFF
+						setCellLoading(p.node, 'bid', false);
+						p.api.refreshCells({ rowNodes: [p.node], columns: ['bid'] });
 					}
 				},
 			},
