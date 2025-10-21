@@ -819,38 +819,95 @@ function revenueCellRenderer(p) {
 }
 
 /* ============ Toggle/slider de Campaign Status (drag-only + menu + spinner na célula) ============ */
+/* ======= Campaign Status Renderer (otimizado) ======= */
 function StatusSliderRenderer() {}
+
+/* Menu flutuante singleton p/ todas as células */
+const LionStatusMenu = (() => {
+	let el = null,
+		onPick = null;
+
+	function ensure() {
+		if (el) return el;
+		el = document.createElement('div');
+		el.className = 'lion-status-menu';
+		el.style.position = 'absolute';
+		el.style.minWidth = '160px';
+		el.style.padding = '6px 0';
+		el.style.display = 'none';
+		document.body.appendChild(el);
+		return el;
+	}
+	function close() {
+		if (!el) return;
+		el.style.display = 'none';
+		onPick = null;
+		document.removeEventListener('mousedown', onDocClose, true);
+		window.removeEventListener('blur', close, true);
+	}
+	function onDocClose(ev) {
+		if (!el) return;
+		if (ev.target === el || el.contains(ev.target)) return;
+		close();
+	}
+	function open({ left, top, width, current, pick }) {
+		const host = ensure();
+		host.innerHTML = '';
+		onPick = pick;
+
+		['ACTIVE', 'PAUSED'].forEach((st) => {
+			const item = document.createElement('div');
+			item.className = 'lion-status-menu__item' + (current === st ? ' is-active' : '');
+			item.textContent = st;
+			item.addEventListener('mousedown', (e) => e.preventDefault());
+			item.addEventListener('click', (e) => {
+				e.preventDefault();
+				if (onPick) onPick(st);
+				close();
+			});
+			host.appendChild(item);
+		});
+
+		// centraliza sob o pill
+		const menuW = 180;
+		host.style.left = `${Math.max(8, left + (width - menuW) / 2)}px`;
+		host.style.top = `${top + 6}px`;
+		host.style.display = 'block';
+
+		setTimeout(() => {
+			document.addEventListener('mousedown', onDocClose, true);
+			window.addEventListener('blur', close, true);
+		}, 0);
+	}
+	return { open, close };
+})();
 
 StatusSliderRenderer.prototype.init = function (p) {
 	this.p = p;
 
+	// ——— configuração/flags
 	const cfg = p.colDef?.cellRendererParams || {};
-	const interactiveLevels = Array.isArray(cfg.interactiveLevels) ? cfg.interactiveLevels : [0];
+	const interactive = new Set(Array.isArray(cfg.interactiveLevels) ? cfg.interactiveLevels : [0]);
 	const smallKnob = !!cfg.smallKnob;
-
 	const level = p?.node?.level ?? 0;
-	const isInteractive = interactiveLevels.includes(level);
-
 	const colId = p.column.getColId();
+
 	const getVal = () =>
 		String(p.data?.campaign_status ?? p.data?.status ?? p.value ?? '').toUpperCase();
-	const getOn = () => getVal() === 'ACTIVE';
+	const isOnVal = () => getVal() === 'ACTIVE';
 
-	// não interativo/pinned => só texto
-	if (isPinnedOrTotal(p) || !isInteractive) {
+	// não interativo/pinned
+	if (isPinnedOrTotal(p) || !interactive.has(level)) {
 		this.eGui = document.createElement('span');
 		this.eGui.textContent = strongText(String(p.value ?? ''));
 		return;
 	}
 
-	let isOn = getOn();
-
-	// pill base
+	// ——— estrutura do pill
 	const root = document.createElement('div');
 	root.className = 'ag-status-pill';
 	root.setAttribute('role', 'switch');
 	root.setAttribute('tabindex', '0');
-	root.setAttribute('aria-checked', String(isOn));
 
 	const fill = document.createElement('div');
 	fill.className = 'ag-status-fill';
@@ -861,30 +918,41 @@ StatusSliderRenderer.prototype.init = function (p) {
 
 	const label = document.createElement('div');
 	label.className = 'ag-status-label';
-	label.textContent = isOn ? 'ACTIVE' : 'PAUSED';
 
 	root.append(fill, label, knob);
 	this.eGui = root;
 
-	// helpers visuais
-	const maxX = () => root.clientWidth - root.clientHeight;
-	const setProgress = (pgr) => {
-		const pct = Math.max(0, Math.min(1, pgr));
+	// ——— helpers de visual
+	let trackLenPx = 0; // cache por gesto
+	let rafToken = null; // throttle nos moves
+
+	const computeTrackLen = () => {
+		// largura disponível = largura do pill - altura (formato pílula)
+		return Math.max(0, root.clientWidth - root.clientHeight);
+	};
+
+	const setProgress = (pct01) => {
+		const pct = Math.max(0, Math.min(1, pct01));
 		fill.style.width = pct * 100 + '%';
-		knob.style.transform = `translateX(${pct * Math.max(0, maxX())}px)`;
+		knob.style.transform = `translateX(${pct * trackLenPx}px)`;
 		const on = pct >= 0.5;
 		label.textContent = on ? 'ACTIVE' : 'PAUSED';
 		root.setAttribute('aria-checked', String(on));
 	};
-	requestAnimationFrame(() => setProgress(isOn ? 1 : 0));
 
-	// ===== SPINNER: marca a CÉLULA como loading =====
+	// estado inicial
+	requestAnimationFrame(() => {
+		trackLenPx = computeTrackLen();
+		setProgress(isOnVal() ? 1 : 0);
+	});
+
+	// ——— spinner na célula
 	const setCellBusy = (on) => {
 		setCellLoading(p.node, colId, !!on);
-		p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
+		p.api.refreshCells({ rowNodes: [p.node], columns: [colId] }); // sem force
 	};
 
-	// commit com backend (otimista + rollback + spinner na célula)
+	// ——— commit com backend
 	const commit = async (nextOrString, prevOn) => {
 		const nextVal =
 			typeof nextOrString === 'string'
@@ -898,67 +966,72 @@ StatusSliderRenderer.prototype.init = function (p) {
 			if ('campaign_status' in p.data) p.data.campaign_status = nextVal;
 			if ('status' in p.data) p.data.status = nextVal;
 		}
-		const isOnLocal = nextVal === 'ACTIVE';
-		setProgress(isOnLocal ? 1 : 0);
-		p.api.refreshCells({ rowNodes: [p.node], columns: [colId], force: true });
+		setProgress(nextVal === 'ACTIVE' ? 1 : 0);
+		p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
 
 		const id = String(p.data?.id ?? p.data?.utm_campaign ?? '');
 		if (!id) return;
 
-		setCellBusy(true); // 👈 liga spinner da célula
+		setCellBusy(true);
 		try {
-			await updateCampaignStatusBackend(id, nextVal); // já respeita MIN_SPINNER_MS
-			// (toast opcional)
+			await updateCampaignStatusBackend(id, nextVal);
 		} catch (e) {
-			const prevVal = prevOn ? 'ACTIVE' : 'PAUSED';
+			const rollbackVal = prevOn ? 'ACTIVE' : 'PAUSED';
 			if (p.data) {
-				if ('campaign_status' in p.data) p.data.campaign_status = prevVal;
-				if ('status' in p.data) p.data.status = prevVal;
+				if ('campaign_status' in p.data) p.data.campaign_status = rollbackVal;
+				if ('status' in p.data) p.data.status = rollbackVal;
 			}
 			setProgress(prevOn ? 1 : 0);
-			p.api.refreshCells({ rowNodes: [p.node], columns: [colId], force: true });
+			p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
 			showToast(`Falha ao salvar status: ${e?.message || e}`, 'danger');
 		} finally {
-			setCellBusy(false); // 👈 desliga spinner
+			setCellBusy(false);
 		}
 	};
 
-	// ===== Drag-only + click abre dropdown =====
+	// ——— drag com listeners só durante o gesto
 	const MOVE_THRESHOLD = 6;
-	let down = false,
+	let dragging = false,
 		startX = 0,
-		startOn = isOn,
-		dragged = false;
+		startOn = false,
+		moved = false;
 
-	const onDown = (x, ev) => {
-		down = true;
-		dragged = false;
-		startX = x;
-		startOn = root.getAttribute('aria-checked') === 'true';
-		ev?.preventDefault?.();
-		ev?.stopPropagation?.();
-	};
-	const onMove = (x) => {
-		if (!down) return;
-		const dx = x - startX;
-		if (Math.abs(dx) > MOVE_THRESHOLD) {
-			dragged = true;
+	const onPointerMove = (x) => {
+		if (!dragging) return;
+		if (rafToken) return;
+		rafToken = requestAnimationFrame(() => {
+			rafToken = null;
+			const dx = x - startX;
+			if (!moved && Math.abs(dx) > MOVE_THRESHOLD) moved = true;
+			if (!moved) return;
 			const p0 = startOn ? 1 : 0;
-			const pgr = p0 + dx / Math.max(1, maxX());
+			const pgr = p0 + dx / Math.max(1, trackLenPx);
 			setProgress(pgr);
-		}
+		});
 	};
-	const onUp = (x, ev) => {
-		if (!down) return;
-		down = false;
 
-		if (!dragged) {
+	const detachWindowListeners = () => {
+		window.removeEventListener('mousemove', onMouseMove);
+		window.removeEventListener('mouseup', onMouseUp);
+		window.removeEventListener('touchmove', onTouchMove, { passive: true });
+		window.removeEventListener('touchend', onTouchEnd);
+	};
+
+	const onMouseMove = (e) => onPointerMove(e.clientX);
+	const onTouchMove = (e) => onPointerMove(e.touches[0].clientX);
+
+	const endDrag = (x, ev) => {
+		if (!dragging) return;
+		dragging = false;
+		detachWindowListeners();
+
+		if (!moved) {
+			// clique simples => abre menu
 			ev?.preventDefault?.();
 			ev?.stopPropagation?.();
 			openMenu();
 			return;
 		}
-
 		const pct = parseFloat(fill.style.width) / 100;
 		const finalOn = pct >= 0.5;
 		if (finalOn !== startOn) commit(finalOn, startOn);
@@ -968,14 +1041,29 @@ StatusSliderRenderer.prototype.init = function (p) {
 		ev?.stopPropagation?.();
 	};
 
-	root.addEventListener('mousedown', (e) => onDown(e.clientX, e));
-	window.addEventListener('mousemove', (e) => onMove(e.clientX));
-	window.addEventListener('mouseup', (e) => onUp(e.clientX, e));
+	const onMouseUp = (e) => endDrag(e.clientX, e);
+	const onTouchEnd = (e) => endDrag(e.changedTouches[0].clientX, e);
 
-	root.addEventListener('touchstart', (e) => onDown(e.touches[0].clientX, e), { passive: false });
-	window.addEventListener('touchmove', (e) => onMove(e.touches[0].clientX), { passive: true });
-	window.addEventListener('touchend', (e) => onUp(e.changedTouches[0].clientX, e));
+	const beginDrag = (x, ev) => {
+		dragging = true;
+		moved = false;
+		startX = x;
+		startOn = root.getAttribute('aria-checked') === 'true';
+		trackLenPx = computeTrackLen(); // cache por gesto
 
+		window.addEventListener('mousemove', onMouseMove);
+		window.addEventListener('mouseup', onMouseUp);
+		window.addEventListener('touchmove', onTouchMove, { passive: true });
+		window.addEventListener('touchend', onTouchEnd);
+
+		ev?.preventDefault?.();
+		ev?.stopPropagation?.();
+	};
+
+	root.addEventListener('mousedown', (e) => beginDrag(e.clientX, e));
+	root.addEventListener('touchstart', (e) => beginDrag(e.touches[0].clientX, e), { passive: false });
+
+	// bloqueia click “normal” (tratamos no endDrag)
 	root.addEventListener('click', (e) => {
 		e.preventDefault();
 		e.stopPropagation();
@@ -988,62 +1076,28 @@ StatusSliderRenderer.prototype.init = function (p) {
 		}
 	});
 
-	// ===== Dropdown ACTIVE/PAUSED =====
-	let menuEl = null;
-	const STATUSES = ['ACTIVE', 'PAUSED'];
-
-	const closeMenu = () => {
-		if (menuEl && menuEl.parentNode) menuEl.parentNode.removeChild(menuEl);
-		menuEl = null;
-		document.removeEventListener('mousedown', onDocClose, true);
-		window.removeEventListener('blur', closeMenu, true);
-	};
-	const onDocClose = (ev) => {
-		if (!menuEl) return;
-		if (ev.target === menuEl || menuEl.contains(ev.target)) return;
-		closeMenu();
-	};
-
+	// ——— menu (singleton)
 	const openMenu = () => {
-		if (isCellLoading({ data: p.node?.data }, colId)) return; // não abre se estiver carregando
-		if (menuEl) {
-			closeMenu();
-			return;
-		}
-
-		menuEl = document.createElement('div');
-		menuEl.className = 'lion-status-menu';
-
+		if (isCellLoading({ data: p.node?.data }, colId)) return;
 		const cur = getVal();
-		STATUSES.forEach((st) => {
-			const item = document.createElement('div');
-			item.className = 'lion-status-menu__item' + (cur === st ? ' is-active' : '');
-			item.textContent = st;
-			item.addEventListener('mousedown', (e) => e.preventDefault());
-			item.addEventListener('click', async (e) => {
-				e.preventDefault();
-				e.stopPropagation();
-				closeMenu();
-				const prevOnLocal = isOn;
-				if (st !== cur) await commit(st, prevOnLocal);
-			});
-			menuEl.appendChild(item);
-		});
-
-		// posiciona centralizado ao pill
 		const rect = root.getBoundingClientRect();
-		const menuW = 180;
-		menuEl.style.left = `${Math.max(8, rect.left + (rect.width - menuW) / 2)}px`;
-		menuEl.style.top = `${rect.bottom + 6}px`;
-
-		document.body.appendChild(menuEl);
-		setTimeout(() => {
-			document.addEventListener('mousedown', onDocClose, true);
-			window.addEventListener('blur', closeMenu, true);
-		}, 0);
+		LionStatusMenu.open({
+			left: rect.left,
+			top: rect.bottom,
+			width: rect.width,
+			current: cur,
+			pick: async (st) => {
+				const prevOn = cur === 'ACTIVE';
+				if (st !== cur) await commit(st, prevOn);
+			},
+		});
 	};
 
-	this._closeMenu = closeMenu;
+	this._cleanup = () => {
+		LionStatusMenu.close();
+		detachWindowListeners();
+		if (rafToken) cancelAnimationFrame(rafToken);
+	};
 };
 
 StatusSliderRenderer.prototype.getGui = function () {
@@ -1052,27 +1106,30 @@ StatusSliderRenderer.prototype.getGui = function () {
 
 StatusSliderRenderer.prototype.refresh = function (p) {
 	const cfg = p.colDef?.cellRendererParams || {};
-	const interactiveLevels = Array.isArray(cfg.interactiveLevels) ? cfg.interactiveLevels : [0];
+	const interactive = new Set(Array.isArray(cfg.interactiveLevels) ? cfg.interactiveLevels : [0]);
 	const level = p?.node?.level ?? 0;
-	if (!this.eGui || isPinnedOrTotal(p) || !interactiveLevels.includes(level)) return false;
+	if (!this.eGui || isPinnedOrTotal(p) || !interactive.has(level)) return false;
 
 	const raw = String(p.data?.campaign_status ?? p.data?.status ?? p.value ?? '').toUpperCase();
 	const isOn = raw === 'ACTIVE';
-
 	const fill = this.eGui.querySelector('.ag-status-fill');
 	const knob = this.eGui.querySelector('.ag-status-knob');
 	const label = this.eGui.querySelector('.ag-status-label');
-	const maxX = () => this.eGui.clientWidth - this.eGui.clientHeight;
 
+	const trackLenPx = Math.max(0, this.eGui.clientWidth - this.eGui.clientHeight);
 	requestAnimationFrame(() => {
 		fill.style.width = (isOn ? 100 : 0) + '%';
-		knob.style.transform = `translateX(${(isOn ? 1 : 0) * Math.max(0, maxX())}px)`;
+		knob.style.transform = `translateX(${(isOn ? 1 : 0) * trackLenPx}px)`;
 		label.textContent = isOn ? 'ACTIVE' : 'PAUSED';
 		this.eGui.setAttribute('aria-checked', String(isOn));
 	});
 
-	this._closeMenu?.();
+	LionStatusMenu.close(); // fecha menu se estava aberto para outra célula
 	return true;
+};
+
+StatusSliderRenderer.prototype.destroy = function () {
+	this._cleanup?.();
 };
 
 const columnDefs = [
