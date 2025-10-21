@@ -17,30 +17,30 @@
           AG Grid table: drill-down, filters, and totals.
         </p>
       </div>
-<div class="flex items-center gap-4">
+<div class="flex items-center gap-3">
 
   <!-- Meus presets -->
   <select id="presetUserSelect" class="kt-select min-w-[180px]" title="Meus presets">
-    <option value="">My presets…</option>
+    <option value="">User Presets</option>
   </select>
-  <button id="btnSaveAsPreset" class="kt-btn">Salvar preset</button>
-  <button id="btnDeletePreset" class="kt-btn">Apagar preset</button>
-  <button id="btnDownloadPreset" class="kt-btn">Download preset</button>
-  <button id="btnUploadPreset" class="kt-btn">Upload preset</button>
+  <button id="btnSaveAsPreset" class="kt-btn kt-btn-sm"><i class="ki-filled ki-abstract-10  text-base"></i></button>
+  <button id="btnDeletePreset" class="kt-btn kt-btn-sm"><i class="ki-filled ki-trash text-base"></i></button>
+  <button id="btnDownloadPreset" class="kt-btn kt-btn-sm">Download<i class="ki-filled ki-cloud-download text-base"></i></button>
+  <button id="btnUploadPreset" class="kt-btn kt-btn-sm">Upload<i class="ki-filled ki-cloud-add  text-base"></i></button>
   <input id="presetFileInput" type="file" accept="application/json"
          class="hidden" aria-hidden="true" />
 
   <span class="mx-2 opacity-50 select-none">|</span>
   <!-- State (sessionStorage) -->
 
-  <button id="btnResetLayout" class="kt-btn">Reset layout</button>
+  <button id="btnResetLayout" class="kt-btn kt-btn-sm">Reset</button>
 
   <span class="mx-2 opacity-50 select-none">|</span>
 
 
   <label class="inline-flex items-center gap-2 select-none" title="Alternar modo de ajuste de colunas">
     <input id="colSizeModeToggle" type="checkbox" class="kt-checkbox" />
-    <span class="text">Auto size</span>
+  <span class="text whitespace-nowrap">Auto size</span>
   </label>
 
   <label class="inline-flex items-center gap-2 select-none" title="Pin Columns">

@@ -89,7 +89,7 @@ const GRID_STATE_IGNORE_ON_RESTORE = [
 			api.resetColumnState?.();
 			api.setFilterModel?.(null);
 			api.setSortModel?.([]);
-			showToast('Layout resetado', 'info');
+			showToast('Layout Reset', 'info');
 		} catch (e) {
 			console.warn('resetLayout fail', e);
 		}
@@ -207,7 +207,7 @@ const GRID_STATE_IGNORE_ON_RESTORE = [
 		if (!sel) return;
 		const current = sel.value;
 		while (sel.firstChild) sel.removeChild(sel.firstChild);
-		sel.appendChild(new Option('My presets…', ''));
+		sel.appendChild(new Option('User Presets', ''));
 		listPresetNames().forEach((name) => sel.appendChild(new Option(name, name)));
 		if ([...sel.options].some((o) => o.value === current)) sel.value = current;
 	}
@@ -215,13 +215,13 @@ const GRID_STATE_IGNORE_ON_RESTORE = [
 	function saveAsPreset() {
 		const api = ensureApi();
 		if (!api) return;
-		const name = prompt('Nome do preset:');
+		const name = prompt('Preset name:');
 		if (!name) return;
 		let state;
 		try {
 			state = api.getState();
 		} catch {}
-		if (!state) return showToast('Não consegui capturar o state', 'danger');
+		if (!state) return showToast("Couldn't capture grid state", 'danger');
 
 		const bag = readPresets();
 		bag[name] = { v: PRESET_VERSION, name, createdAt: Date.now(), grid: state };
@@ -229,38 +229,38 @@ const GRID_STATE_IGNORE_ON_RESTORE = [
 		refreshPresetUserSelect();
 		const sel = byId('presetUserSelect');
 		if (sel) sel.value = name;
-		showToast(`Preset "${name}" salvo`, 'success');
+		showToast(`Preset "${name}" saved`, 'success');
 	}
 
 	function applyPresetUser(name) {
 		if (!name) return;
 		const bag = readPresets();
 		const p = bag[name];
-		if (!p?.grid) return showToast('Preset não encontrado', 'warning');
+		if (!p?.grid) return showToast('Preset not found', 'warning');
 		setState(p.grid, ['pagination', 'scroll', 'rowSelection', 'focusedCell']);
-		showToast(`Preset "${name}" aplicado`, 'success');
+		showToast(`Preset "${name}" applied`, 'success');
 	}
 
 	function deletePreset() {
 		const sel = byId('presetUserSelect');
 		const name = sel?.value || '';
-		if (!name) return showToast('Escolha um preset', 'warning');
-		if (!confirm(`Apagar preset "${name}"?`)) return;
+		if (!name) return showToast('Pick a preset first', 'warning');
+		if (!confirm(`Delete preset "${name}"?`)) return;
 		const bag = readPresets();
 		delete bag[name];
 		writePresets(bag);
 		refreshPresetUserSelect();
-		showToast(`Preset "${name}" removido`, 'info');
+		showToast(`Preset "${name}" removed`, 'info');
 	}
 
 	/* ========== Download/Upload de preset (arquivo .json) ========== */
 	function downloadPreset() {
 		const sel = byId('presetUserSelect');
 		const name = sel?.value || '';
-		if (!name) return showToast('Escolha um preset', 'warning');
+		if (!name) return showToast('Pick a preset first', 'warning');
 		const bag = readPresets();
 		const p = bag[name];
-		if (!p) return showToast('Preset não encontrado', 'warning');
+		if (!p) return showToast('Preset not found', 'warning');
 
 		const blob = new Blob([JSON.stringify(p, null, 2)], { type: 'application/json;charset=utf-8' });
 		const url = URL.createObjectURL(blob);
@@ -271,7 +271,7 @@ const GRID_STATE_IGNORE_ON_RESTORE = [
 		a.click();
 		a.remove();
 		URL.revokeObjectURL(url);
-		showToast(`Preset "${name}" baixado`, 'success');
+		showToast(`Preset "${name}" downloaded`, 'success');
 	}
 
 	function uploadPreset() {
@@ -287,9 +287,9 @@ const GRID_STATE_IGNORE_ON_RESTORE = [
 		reader.onload = () => {
 			try {
 				const parsed = JSON.parse(String(reader.result || '{}'));
-				if (!parsed?.grid) return showToast('Arquivo inválido', 'danger');
+				if (!parsed?.grid) return showToast('Invalid preset file', 'danger');
 				const name = prompt(
-					'Nome para salvar este preset:',
+					'Name to save this preset as:',
 					parsed.name || file.name.replace(/\.json$/i, '')
 				);
 				if (!name) return;
@@ -301,7 +301,7 @@ const GRID_STATE_IGNORE_ON_RESTORE = [
 				if (sel) sel.value = name;
 				applyPresetUser(name);
 			} catch {
-				showToast('Falha ao ler JSON', 'danger');
+				showToast('Failed to read JSON', 'danger');
 			}
 		};
 		reader.readAsText(file, 'utf-8');
@@ -368,7 +368,7 @@ const GRID_STATE_IGNORE_ON_RESTORE = [
 			const next = el.checked ? 'auto' : 'fit';
 			setSizeMode(next);
 			applySizeMode(next);
-			showToast(next === 'auto' ? 'Modo: Auto Size' : 'Modo: Size To Fit', 'info');
+			showToast(next === 'auto' ? 'Mode: Auto Size' : 'Mode: Size To Fit', 'info');
 		});
 
 		// reaplica em resize de janela
@@ -1031,235 +1031,256 @@ StatusSliderRenderer.prototype.refresh = function (p) {
 };
 
 const columnDefs = [
-	// Identificação
 	{
 		headerName: 'Profile',
+
 		field: 'profile_name',
 		valueGetter: (p) => stripHtml(p.data?.profile_name),
 		minWidth: 180,
 		flex: 1.2,
 		cellRenderer: profileCellRenderer,
-		pinned: 'left', // <- padrão ligado
+		pinned: 'left', // mantém fixo à esquerda
 		tooltipValueGetter: (p) => p.value || '',
 	},
+	// ====== Grupo 1: Identificação ======
 	{
-		headerName: 'Business Center',
-		field: 'bc_name',
-		valueGetter: (p) => stripHtml(p.data?.bc_name),
-		minWidth: 160,
-		flex: 1.0,
-		tooltipValueGetter: (p) => p.value || '',
-	},
-	{
-		headerName: 'Account',
-		field: 'account_name',
-		valueGetter: (p) => stripHtml(p.data?.account_name),
-		minWidth: 200,
-		flex: 1.3,
-		tooltipValueGetter: (p) => p.value || '',
-	},
-	{
-		headerName: 'Account Status',
-		field: 'account_status',
-		minWidth: 160,
-		flex: 0.7,
-		cellRenderer: statusPillRenderer,
-	},
-	{
-		headerName: 'Daily Limit',
-		field: 'account_limit',
-		type: 'rightAligned',
-		valueGetter: (p) => toNumberBR(p.data?.account_limit),
-		valueFormatter: currencyFormatter,
-		minWidth: 120,
-		flex: 0.8,
-	},
-
-	{
-		headerName: 'UTM',
-		field: 'utm_campaign',
-		minWidth: 160,
-		flex: 0.9,
-		tooltipValueGetter: (p) => p.value || '',
+		headerName: 'Identification',
+		groupId: 'grp-id',
+		marryChildren: true,
+		openByDefault: true,
+		children: [
+			{
+				headerName: 'Business Center',
+				field: 'bc_name',
+				valueGetter: (p) => stripHtml(p.data?.bc_name),
+				minWidth: 160,
+				flex: 1.0,
+				tooltipValueGetter: (p) => p.value || '',
+			},
+			{
+				headerName: 'Account',
+				field: 'account_name',
+				valueGetter: (p) => stripHtml(p.data?.account_name),
+				minWidth: 200,
+				flex: 1.3,
+				tooltipValueGetter: (p) => p.value || '',
+			},
+			{
+				headerName: 'UTM',
+				field: 'utm_campaign',
+				minWidth: 160,
+				flex: 0.9,
+				tooltipValueGetter: (p) => p.value || '',
+			},
+		],
 	},
 
+	// ====== Grupo 2: Operação & Setup ======
 	{
-		headerName: 'Bid',
-		field: 'bid',
-		type: 'rightAligned',
-		editable: (p) => p.node?.level === 0,
-		cellEditor: 'agNumberCellEditor',
-		valueParser: parseCurrencyInput,
-		valueFormatter: currencyFormatter,
-		minWidth: 110,
-		flex: 0.6,
-	},
-	{
-		headerName: 'Campaign Status',
-		field: 'campaign_status',
-		minWidth: 160,
-		flex: 0.8,
-		cellRenderer: StatusSliderRenderer,
-		cellRendererParams: {
-			interactiveLevels: [0, 1, 2], // raiz + adsets + ads
-			smallKnob: true, // bolinha menor
-		},
-		suppressKeyboardEvent: () => true, // (opcional) desliga navegação por teclado nessa célula
-	},
-
-	{
-		headerName: 'Budget',
-		field: 'budget',
-		type: 'rightAligned',
-		editable: (p) => p.node?.level === 0,
-		cellEditor: 'agNumberCellEditor',
-		valueParser: parseCurrencyInput,
-		valueFormatter: currencyFormatter,
-		minWidth: 110,
-		flex: 0.6,
-	},
-
-	{
-		headerName: 'Ads',
-		field: '_ads',
-		minWidth: 100,
-		maxWidth: 120,
-		tooltipValueGetter: (p) => stripHtml(p.data?.xabu_ads),
-		cellRenderer: chipFractionBadgeRenderer,
-	},
-	{
-		headerName: 'Adsets',
-		field: '_adsets',
-		minWidth: 110,
-		maxWidth: 130,
-		tooltipValueGetter: (p) => stripHtml(p.data?.xabu_adsets),
-		cellRenderer: chipFractionBadgeRenderer,
-	},
-
-	{
-		headerName: 'Impressions',
-		field: 'impressions',
-		type: 'rightAligned',
-		valueFormatter: intFormatter,
-		minWidth: 150,
-		flex: 0.7,
-	},
-	{
-		headerName: 'Clicks',
-		field: 'clicks',
-		type: 'rightAligned',
-		valueFormatter: intFormatter,
-		minWidth: 150,
-		flex: 0.6,
-	},
-	{
-		headerName: 'Visitors',
-		field: 'visitors',
-		type: 'rightAligned',
-		valueFormatter: intFormatter,
-		minWidth: 150,
-		flex: 0.6,
-	},
-	{
-		headerName: 'CPC',
-		field: 'cpc',
-		type: 'rightAligned',
-		valueGetter: (p) => toNumberBR(p.data?.cpc),
-		valueFormatter: currencyFormatter,
-		minWidth: 100,
-		flex: 0.6,
-	},
-	{
-		headerName: 'Conversions',
-		field: 'conversions',
-		type: 'rightAligned',
-		valueFormatter: intFormatter,
-		minWidth: 150,
-		flex: 0.6,
-	},
-	{
-		headerName: 'CPA FB',
-		field: 'cpa_fb',
-		type: 'rightAligned',
-		valueGetter: (p) => toNumberBR(p.data?.cpa_fb),
-		valueFormatter: currencyFormatter,
-		minWidth: 110,
-		flex: 0.6,
-	},
-	{
-		headerName: 'Real Conversions',
-		field: 'real_conversions',
-		type: 'rightAligned',
-		valueGetter: (p) => toNumberBR(p.data?.real_conversions),
-		valueFormatter: intFormatter,
-		minWidth: 150,
-		flex: 0.7,
-	},
-	{
-		headerName: 'Real CPA',
-		field: 'real_cpa',
-		type: 'rightAligned',
-		valueGetter: (p) => toNumberBR(p.data?.real_cpa),
-		valueFormatter: currencyFormatter,
-		minWidth: 110,
-		flex: 0.6,
+		headerName: 'Operation & Setup',
+		groupId: 'grp-op',
+		marryChildren: true,
+		openByDefault: true,
+		children: [
+			{
+				headerName: 'Account Status',
+				field: 'account_status',
+				minWidth: 160,
+				flex: 0.7,
+				cellRenderer: statusPillRenderer,
+			},
+			{
+				headerName: 'Daily Limit',
+				field: 'account_limit',
+				type: 'rightAligned',
+				valueGetter: (p) => toNumberBR(p.data?.account_limit),
+				valueFormatter: currencyFormatter,
+				minWidth: 120,
+				flex: 0.8,
+			},
+			{
+				headerName: 'Campaign Status',
+				field: 'campaign_status',
+				minWidth: 160,
+				flex: 0.8,
+				cellRenderer: StatusSliderRenderer,
+				cellRendererParams: {
+					interactiveLevels: [0, 1, 2],
+					smallKnob: true,
+				},
+				suppressKeyboardEvent: () => true,
+			},
+			{
+				headerName: 'Budget',
+				field: 'budget',
+				type: 'rightAligned',
+				editable: (p) => p.node?.level === 0,
+				cellEditor: 'agNumberCellEditor',
+				valueParser: parseCurrencyInput,
+				valueFormatter: currencyFormatter,
+				minWidth: 110,
+				flex: 0.6,
+			},
+			{
+				headerName: 'Bid',
+				field: 'bid',
+				type: 'rightAligned',
+				editable: (p) => p.node?.level === 0,
+				cellEditor: 'agNumberCellEditor',
+				valueParser: parseCurrencyInput,
+				valueFormatter: currencyFormatter,
+				minWidth: 110,
+				flex: 0.6,
+			},
+			{
+				headerName: 'Ads',
+				field: '_ads',
+				minWidth: 100,
+				maxWidth: 120,
+				tooltipValueGetter: (p) => stripHtml(p.data?.xabu_ads),
+				cellRenderer: chipFractionBadgeRenderer,
+			},
+			{
+				headerName: 'Adsets',
+				field: '_adsets',
+				minWidth: 110,
+				maxWidth: 130,
+				tooltipValueGetter: (p) => stripHtml(p.data?.xabu_adsets),
+				cellRenderer: chipFractionBadgeRenderer,
+			},
+		],
 	},
 
+	// ====== Grupo 3: Métricas & Receita ======
 	{
-		headerName: 'Spend',
-		field: 'spent',
-		type: 'rightAligned',
-		valueGetter: (p) => toNumberBR(p.data?.spent),
-		valueFormatter: currencyFormatter,
-		minWidth: 120,
-		flex: 0.8,
-	},
-	{
-		headerName: 'Facebook Revenue',
-		field: 'fb_revenue',
-		type: 'rightAligned',
-		valueGetter: (p) => toNumberBR(p.data?.fb_revenue),
-		valueFormatter: currencyFormatter,
-		minWidth: 180,
-		flex: 0.8,
-	},
-	{
-		headerName: 'Push Revenue',
-		field: 'push_revenue',
-		type: 'rightAligned',
-		valueGetter: (p) => toNumberBR(p.data?.push_revenue),
-		valueFormatter: currencyFormatter,
-		minWidth: 120,
-		flex: 0.8,
-	},
-
-	{
-		headerName: 'Revenue',
-		field: 'revenue',
-		valueGetter: (p) => stripHtml(p.data?.revenue),
-		minWidth: 200,
-		flex: 1.0,
-		wrapText: true,
-		autoHeight: false,
-		cellRenderer: revenueCellRenderer,
-		tooltipValueGetter: (p) => p.data?.revenue || '',
-	},
-
-	{
-		headerName: 'MX',
-		field: 'mx',
-		minWidth: 120,
-		valueGetter: (p) => stripHtml(p.data?.mx),
-		flex: 0.7,
-	},
-	{
-		headerName: 'Profit',
-		field: 'profit',
-		type: 'rightAligned',
-		valueGetter: (p) => toNumberBR(p.data?.profit),
-		valueFormatter: currencyFormatter,
-		minWidth: 120,
-		flex: 0.8,
+		headerName: 'Metrics & Revenue',
+		groupId: 'grp-metrics-rev',
+		marryChildren: true,
+		openByDefault: true,
+		children: [
+			{
+				headerName: 'Impressions',
+				field: 'impressions',
+				type: 'rightAligned',
+				valueFormatter: intFormatter,
+				minWidth: 150,
+				flex: 0.7,
+			},
+			{
+				headerName: 'Clicks',
+				field: 'clicks',
+				type: 'rightAligned',
+				valueFormatter: intFormatter,
+				minWidth: 150,
+				flex: 0.6,
+			},
+			{
+				headerName: 'Visitors',
+				field: 'visitors',
+				type: 'rightAligned',
+				valueFormatter: intFormatter,
+				minWidth: 150,
+				flex: 0.6,
+			},
+			{
+				headerName: 'CPC',
+				field: 'cpc',
+				type: 'rightAligned',
+				valueGetter: (p) => toNumberBR(p.data?.cpc),
+				valueFormatter: currencyFormatter,
+				minWidth: 100,
+				flex: 0.6,
+			},
+			{
+				headerName: 'Conversions',
+				field: 'conversions',
+				type: 'rightAligned',
+				valueFormatter: intFormatter,
+				minWidth: 150,
+				flex: 0.6,
+			},
+			{
+				headerName: 'CPA FB',
+				field: 'cpa_fb',
+				type: 'rightAligned',
+				valueGetter: (p) => toNumberBR(p.data?.cpa_fb),
+				valueFormatter: currencyFormatter,
+				minWidth: 110,
+				flex: 0.6,
+			},
+			{
+				headerName: 'Real Conversions',
+				field: 'real_conversions',
+				type: 'rightAligned',
+				valueGetter: (p) => toNumberBR(p.data?.real_conversions),
+				valueFormatter: intFormatter,
+				minWidth: 150,
+				flex: 0.7,
+			},
+			{
+				headerName: 'Real CPA',
+				field: 'real_cpa',
+				type: 'rightAligned',
+				valueGetter: (p) => toNumberBR(p.data?.real_cpa),
+				valueFormatter: currencyFormatter,
+				minWidth: 110,
+				flex: 0.6,
+			},
+			{
+				headerName: 'Spend',
+				field: 'spent',
+				type: 'rightAligned',
+				valueGetter: (p) => toNumberBR(p.data?.spent),
+				valueFormatter: currencyFormatter,
+				minWidth: 120,
+				flex: 0.8,
+			},
+			{
+				headerName: 'Facebook Revenue',
+				field: 'fb_revenue',
+				type: 'rightAligned',
+				valueGetter: (p) => toNumberBR(p.data?.fb_revenue),
+				valueFormatter: currencyFormatter,
+				minWidth: 180,
+				flex: 0.8,
+			},
+			{
+				headerName: 'Push Revenue',
+				field: 'push_revenue',
+				type: 'rightAligned',
+				valueGetter: (p) => toNumberBR(p.data?.push_revenue),
+				valueFormatter: currencyFormatter,
+				minWidth: 120,
+				flex: 0.8,
+			},
+			{
+				headerName: 'Revenue',
+				field: 'revenue',
+				valueGetter: (p) => stripHtml(p.data?.revenue),
+				minWidth: 200,
+				flex: 1.0,
+				wrapText: true,
+				autoHeight: false,
+				cellRenderer: revenueCellRenderer,
+				tooltipValueGetter: (p) => p.data?.revenue || '',
+			},
+			{
+				headerName: 'MX',
+				field: 'mx',
+				minWidth: 120,
+				valueGetter: (p) => stripHtml(p.data?.mx),
+				flex: 0.7,
+			},
+			{
+				headerName: 'Profit',
+				field: 'profit',
+				type: 'rightAligned',
+				valueGetter: (p) => toNumberBR(p.data?.profit),
+				valueFormatter: currencyFormatter,
+				minWidth: 120,
+				flex: 0.8,
+			},
+		],
 	},
 ];
 
@@ -1640,10 +1661,7 @@ function togglePinnedColsFromCheckbox(silent = false) {
 
 	// 🔇 só mostra toast quando NÃO estiver em modo silencioso
 	if (!silent) {
-		showToast(
-			checked ? 'Colunas fixadas à esquerda' : 'Colunas desfixadas',
-			checked ? 'success' : 'info'
-		);
+		showToast(checked ? 'Columns Pinned' : 'Columns Unpinned', checked ? 'success' : 'info');
 	}
 }
 
