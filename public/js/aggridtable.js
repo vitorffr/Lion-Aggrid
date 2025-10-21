@@ -179,6 +179,7 @@ function openKTModal(selector = '#lionKtModal') {
 	el.classList.remove('hidden');
 	el.removeAttribute('aria-hidden');
 }
+
 function closeKTModal(selector = '#lionKtModal') {
 	const el = document.querySelector(selector);
 	if (!el) return;
@@ -187,6 +188,7 @@ function closeKTModal(selector = '#lionKtModal') {
 	el.classList.add('hidden');
 	el.setAttribute('aria-hidden', 'true');
 }
+
 function showKTModal({ title = 'Detalhes', content = '' } = {}) {
 	ensureKtModalDom();
 	const modal = document.querySelector('#lionKtModal');
@@ -1105,7 +1107,7 @@ function getSelectionColId(api) {
 	}
 }
 
-function togglePinnedColsFromCheckbox() {
+function togglePinnedColsFromCheckbox(silent = false) {
 	const api = globalThis.LionGrid?.api;
 	if (!api) return;
 
@@ -1122,10 +1124,14 @@ function togglePinnedColsFromCheckbox() {
 	if (selectionColId) base.push({ colId: selectionColId, pinned: checked ? 'left' : null });
 
 	api.applyColumnState({ state: base, defaultState: { pinned: null } });
-	showToast(
-		checked ? 'Colunas fixadas à esquerda' : 'Colunas desfixadas',
-		checked ? 'success' : 'info'
-	);
+
+	// 🔇 só mostra toast quando NÃO estiver em modo silencioso
+	if (!silent) {
+		showToast(
+			checked ? 'Colunas fixadas à esquerda' : 'Colunas desfixadas',
+			checked ? 'success' : 'info'
+		);
+	}
 }
 
 /* ============ Page module ============ */
@@ -1134,19 +1140,16 @@ const LionPage = (() => {
 	function mount() {
 		gridRef = makeGrid();
 
-		// liga o checkbox
 		const el = document.getElementById('pinToggle');
 		if (el) {
-			// estado inicial (se colunas começam pinadas, deixe marcado)
 			if (!el.hasAttribute('data-init-bound')) {
-				el.checked = true; // seu default é pinado
-				el.addEventListener('change', togglePinnedColsFromCheckbox);
+				el.checked = true; // default pinado
+				el.addEventListener('change', () => togglePinnedColsFromCheckbox(false)); // 👈 com toast
 				el.setAttribute('data-init-bound', '1');
 			}
 		}
 
-		// aplica o estado atual do checkbox imediatamente
-		togglePinnedColsFromCheckbox();
+		togglePinnedColsFromCheckbox(true); // 👈 silencioso no load (sem toast)
 	}
 
 	if (document.readyState !== 'loading') mount();
