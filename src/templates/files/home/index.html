@@ -1,33 +1,69 @@
+<link
+  rel="stylesheet"
+  type="text/css"
+  href="https://cdn.jsdelivr.net/npm/toastify-js/src/toastify.min.css"
+/>
 
-  <link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/toastify-js/src/toastify.min.css">
-  <div id="kv-page-root" class="kt-container-fluid py-6">
-    <!-- Separador superior -->
-    <div class="border-b border-border mb-4"></div>
+<div id="kv-page-root" class="kt-container-fluid py-6">
+  <!-- Separador superior -->
+  <div class="border-b border-border mb-4"></div>
 
-    <!-- Header -->
-    <div class="flex flex-col gap-3">
-      <div class="flex items-center justify-between">
-        <div>
-          <h1 class="text-2xl font-semibold leading-tight">Lion Table</h1>
-          <p class="text-sm text-muted-foreground">AG Grid table: drill-down, filters, and totals.
-</p>
-        </div>
-<label class="flex items-center gap-2 ms-2 select-none" title="Pin Columns">
-  <input id="pinToggle" type="checkbox" class="kt-checkbox" />
-  <span class="text">Pinned</span>
-</label>
-
+  <!-- Header -->
+  <div class="flex flex-col gap-3">
+    <div class="flex items-center justify-between">
+      <div>
+        <h1 class="text-2xl font-semibold leading-tight">Lion Table</h1>
+        <p class="text-sm text-muted-foreground">
+          AG Grid table: drill-down, filters, and totals.
+        </p>
       </div>
-      <!-- Separador fino -->
-      <div class="border-b border-border"></div>
-    </div>
-<!-- Grid -->
-    <div
-      id="lionGrid"
-      class="ag-theme-quartz w-full rounded-lg border border-border mt-4 overflow-hidden"
-      style="height: 700px"
-    ></div>
-  <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/toastify-js"></script>
-    <script type="module" src="/public/js/aggridtable.js"></script>
+<div class="flex items-center gap-4">
 
+  <!-- Meus presets -->
+  <select id="presetUserSelect" class="kt-select min-w-[180px]" title="Meus presets">
+    <option value="">My presets…</option>
+  </select>
+  <button id="btnSaveAsPreset" class="kt-btn">Salvar preset</button>
+  <button id="btnDeletePreset" class="kt-btn">Apagar preset</button>
+  <button id="btnDownloadPreset" class="kt-btn">Download preset</button>
+  <button id="btnUploadPreset" class="kt-btn">Upload preset</button>
+  <input id="presetFileInput" type="file" accept="application/json"
+         class="hidden" aria-hidden="true" />
+
+  <span class="mx-2 opacity-50 select-none">|</span>
+  <!-- State (sessionStorage) -->
+
+  <button id="btnResetLayout" class="kt-btn">Reset layout</button>
+
+  <span class="mx-2 opacity-50 select-none">|</span>
+
+
+  <label class="inline-flex items-center gap-2 select-none" title="Alternar modo de ajuste de colunas">
+    <input id="colSizeModeToggle" type="checkbox" class="kt-checkbox" />
+    <span class="text">Auto size</span>
+  </label>
+
+  <label class="inline-flex items-center gap-2 select-none" title="Pin Columns">
+    <input id="pinToggle" type="checkbox" class="kt-checkbox" />
+    <span class="text">Pinned</span>
+  </label>
+</div>
+
+    </div>
+    <!-- Separador fino -->
+    <div class="border-b border-border"></div>
+  </div>
+<!-- Toolbar -->
+
+
+
+  <!-- Grid -->
+  <div
+    id="lionGrid"
+    class="ag-theme-quartz w-full rounded-lg border border-border mt-4 overflow-hidden"
+    style="height: 700px"
+  ></div>
+
+  <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/toastify-js"></script>
+  <script type="module" src="/public/js/aggridtable.js"></script>
 </div>
