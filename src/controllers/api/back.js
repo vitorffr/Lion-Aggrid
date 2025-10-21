@@ -355,50 +355,6 @@ function filterByParentAndPeriod(rows, { idKey, idValue, period }) {
 	});
 }
 
-/* ==================== /api/ssrm/ (raiz) ==================== */
-async function ssrm(req, env) {
-	try {
-		// cada uso do Request recebe seu próprio clone
-		const reqForBody = req.clone(); // para ler o body/json
-		const reqForAssets = req.clone(); // para carregar assets/dump
-
-		// lê payload (POST/GET) a partir do clone do body
-		const { url, startRow, endRow, sortModel, filterModel } = await parseRequestPayload(reqForBody);
-		const clean = new URL(url).searchParams.get('clean') === '1';
-
-		// carrega dump raiz a partir do clone para assets
-		const full = await loadDump(reqForAssets, env); // array completo
-		if (!Array.isArray(full)) {
-			throw new Error('Dump JSON inválido (esperado array).');
-		}
-
-		// limpeza opcional
-		let rows = clean ? full.map(cleanRow) : full;
-
-		// filtro e ordenação
-		rows = applyFilters(rows, filterModel);
-		rows = applySort(rows, sortModel);
-
-		// >>> Totais sobre o CONJUNTO FILTRADO (antes da paginação)
-		const totals = computeTotalsRoot(rows);
-
-		// paginação em bloco (SSRM)
-		const safeEnd = Math.min(Math.max(endRow, 0), rows.length);
-		const safeStart = Math.min(Math.max(startRow, 0), safeEnd);
-		const slice = rows.slice(safeStart, safeEnd);
-
-		// resposta sempre em JSON
-		return new Response(JSON.stringify({ rows: slice, lastRow: rows.length, totals }), {
-			headers: { 'Content-Type': 'application/json' },
-		});
-	} catch (err) {
-		return new Response(JSON.stringify({ error: String(err?.message || err) }), {
-			status: 500,
-			headers: { 'Content-Type': 'application/json' },
-		});
-	}
-}
-
 /* ==================== /api/adsets (filtra por campaign_id + period) ==================== */
 async function adsets(req, env) {
 	try {
@@ -495,9 +451,199 @@ async function ads(req, env) {
 	}
 }
 
+// routes/lionRows.js
+
+/* ... (seu código existente acima permanece igual) ... */
+
+// novoagora: overlay volátil em memória para mutações
+function getMutStore() {
+	globalThis.__LION_MUT__ = globalThis.__LION_MUT__ || { campaigns: new Map() };
+	return globalThis.__LION_MUT__;
+}
+function overlayCampaign(row) {
+	// row: um item do dump raiz (campanha)
+	const store = getMutStore();
+	const id = String(row.id ?? row.utm_campaign ?? '');
+	if (!id) return row;
+	const mut = store.campaigns.get(id);
+	if (!mut) return row;
+	return { ...row, ...mut };
+}
+function overlayCampaignArray(rows) {
+	return rows.map(overlayCampaign);
+}
+
+/* ==================== /api/campaigns/:id/status ==================== */
+// novoagora
+async function updateCampaignStatus(req, env) {
+	try {
+		const url = new URL(req.url);
+		const parts = url.pathname.split('/').filter(Boolean); // ["api","campaigns",":id","status"]
+		const id = parts[2]; // campaigns/:id/status
+		if (!id) throw new Error('Missing campaign id');
+
+		const body = await req.json().catch(() => ({}));
+		const status = String(body.status || '').toUpperCase();
+		const allow = new Set(['ACTIVE', 'PAUSED', 'DISABLED', 'CLOSED']);
+		if (!allow.has(status)) throw new Error('Invalid status');
+
+		const store = getMutStore();
+		const prev = store.campaigns.get(id) || {};
+		store.campaigns.set(id, { ...prev, campaign_status: status, status });
+
+		return new Response(JSON.stringify({ ok: true, id, status }), {
+			headers: { 'Content-Type': 'application/json' },
+		});
+	} catch (err) {
+		return new Response(JSON.stringify({ ok: false, error: String(err?.message || err) }), {
+			status: 400,
+			headers: { 'Content-Type': 'application/json' },
+		});
+	}
+}
+
+/* ==================== /api/campaigns/:id/bid ==================== */
+// novoagora
+async function updateCampaignBid(req, env) {
+	try {
+		const url = new URL(req.url);
+		const parts = url.pathname.split('/').filter(Boolean); // ["api","campaigns",":id","bid"]
+		const id = parts[2];
+		if (!id) throw new Error('Missing campaign id');
+
+		const body = await req.json().catch(() => ({}));
+		const raw = body.bid;
+		const n = Number(raw);
+		if (!Number.isFinite(n) || n < 0) throw new Error('Invalid bid');
+
+		const store = getMutStore();
+		const prev = store.campaigns.get(id) || {};
+		store.campaigns.set(id, { ...prev, bid: n });
+
+		return new Response(JSON.stringify({ ok: true, id, bid: n }), {
+			headers: { 'Content-Type': 'application/json' },
+		});
+	} catch (err) {
+		return new Response(JSON.stringify({ ok: false, error: String(err?.message || err) }), {
+			status: 400,
+			headers: { 'Content-Type': 'application/json' },
+		});
+	}
+}
+/* ==================== /api/campaigns/:id/budget ==================== */
+async function updateCampaignBudget(req, env) {
+	try {
+		const url = new URL(req.url);
+		const parts = url.pathname.split('/').filter(Boolean); // ["api","campaigns",":id","budget"]
+		const id = parts[2];
+		if (!id) throw new Error('Missing campaign id');
+
+		const body = await req.json().catch(() => ({}));
+		const raw = body.budget;
+		const n = Number(raw);
+		if (!Number.isFinite(n) || n < 0) throw new Error('Invalid budget');
+
+		const store = getMutStore();
+		const prev = store.campaigns.get(id) || {};
+		store.campaigns.set(id, { ...prev, budget: n });
+
+		return new Response(JSON.stringify({ ok: true, id, budget: n }), {
+			headers: { 'Content-Type': 'application/json' },
+		});
+	} catch (err) {
+		return new Response(JSON.stringify({ ok: false, error: String(err?.message || err) }), {
+			status: 400,
+			headers: { 'Content-Type': 'application/json' },
+		});
+	}
+}
+/* ==================== /api/dev/mock-ops ==================== */
+// novoagora: sorteia e aplica uma mutação (status ou bid)
+async function devMockOps(req, env) {
+	try {
+		const reqForAssets = req.clone();
+		const full = await loadDump(reqForAssets, env);
+		if (!Array.isArray(full) || full.length === 0) throw new Error('Dump vazio');
+
+		// escolhe uma campanha com id válido
+		const pool = full.filter((r) => r && (r.id != null || r.utm_campaign != null));
+		const pick = pool[Math.floor(Math.random() * pool.length)];
+		const id = String(pick.id ?? pick.utm_campaign);
+
+		const op = Math.random() < 0.5 ? 'status' : 'bid';
+		const store = getMutStore();
+		const prev = store.campaigns.get(id) || {};
+
+		let message;
+		if (op === 'status') {
+			const states = ['ACTIVE', 'PAUSED', 'DISABLED'];
+			const next = states[Math.floor(Math.random() * states.length)];
+			store.campaigns.set(id, { ...prev, campaign_status: next, status: next });
+			message = `Status da campanha ${id} => ${next}`;
+		} else {
+			const nextBid = Number((Math.random() * 20 + 1).toFixed(2)); // 1.00..21.00
+			store.campaigns.set(id, { ...prev, bid: nextBid });
+			message = `Bid da campanha ${id} => ${nextBid}`;
+		}
+
+		return new Response(JSON.stringify({ ok: true, id, op, message }), {
+			headers: { 'Content-Type': 'application/json' },
+		});
+	} catch (err) {
+		return new Response(JSON.stringify({ ok: false, error: String(err?.message || err) }), {
+			status: 500,
+			headers: { 'Content-Type': 'application/json' },
+		});
+	}
+}
+
+/* ==================== /api/ssrm/ (raiz) ==================== */
+async function ssrm(req, env) {
+	try {
+		const reqForBody = req.clone();
+		const reqForAssets = req.clone();
+
+		const { url, startRow, endRow, sortModel, filterModel } = await parseRequestPayload(reqForBody);
+		const clean = new URL(url).searchParams.get('clean') === '1';
+
+		const full = await loadDump(reqForAssets, env);
+		if (!Array.isArray(full)) {
+			throw new Error('Dump JSON inválido (esperado array).');
+		}
+
+		// novoagora: aplica overlay ANTES de filtrar/ordenar
+		let rows = overlayCampaignArray(clean ? full.map(cleanRow) : full);
+
+		rows = applyFilters(rows, filterModel);
+		rows = applySort(rows, sortModel);
+
+		const totals = computeTotalsRoot(rows);
+
+		const safeEnd = Math.min(Math.max(endRow, 0), rows.length);
+		const safeStart = Math.min(Math.max(startRow, 0), safeEnd);
+		const slice = rows.slice(safeStart, safeEnd);
+
+		return new Response(JSON.stringify({ rows: slice, lastRow: rows.length, totals }), {
+			headers: { 'Content-Type': 'application/json' },
+		});
+	} catch (err) {
+		return new Response(JSON.stringify({ error: String(err?.message || err) }), {
+			status: 500,
+			headers: { 'Content-Type': 'application/json' },
+		});
+	}
+}
+
+/* ... (adsets/ads mantidos como estão) ... */
+
 /* ==================== Export ==================== */
 export default {
 	ssrm, // /api/ssrm/
 	adsets, // /api/adsets
 	ads, // /api/ads
+	// novoagora: novas rotas
+	updateCampaignStatus, // /api/campaigns/:id/status (PUT)
+	updateCampaignBid,
+	updateCampaignBudget, // /api/campaigns/:id/bid    (PUT)
+	devMockOps, // /api/dev/mock-ops        (POST/GET)
 };

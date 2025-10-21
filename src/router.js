@@ -26,6 +26,11 @@ router.post('/api/auth/login/', auth);
 // IMPORTANTE: mapeie GET e POST, com e sem barra
 import backend from './controllers/api/back.js';
 
+router.put('/api/campaigns/:id/status', backend.updateCampaignStatus);
+router.put('/api/campaigns/:id/bid', backend.updateCampaignBid);
+router.put('/api/campaigns/:id/budget', backend.updateCampaignBudget);
+router.all('/api/dev/mock-ops', backend.devMockOps);
+
 router.post('/api/ssrm/', backend.ssrm);
 router.post('/api/adsets/', backend.adsets);
 router.post('/api/ads/', backend.ads);

@@ -258,7 +258,6 @@ const GRID_STATE_IGNORE_ON_RESTORE = [
 		el.checked = mode === 'auto';
 
 		// aplica imediatamente ao montar (opcional)
-		// (se preferir só aplicar em resize/onGridReady, comente a linha abaixo)
 		applySizeMode(mode);
 
 		// quando o usuário troca, aplica e salva
@@ -332,7 +331,6 @@ function applySavedStateIfAny(api) {
 	if (!saved) return false;
 	try {
 		api.setState(saved, GRID_STATE_IGNORE_ON_RESTORE);
-		// console.debug('[GridState] restored', saved);
 		return true;
 	} catch (e) {
 		console.warn('[GridState] restore failed:', e);
@@ -481,6 +479,81 @@ function chipFractionBadgeRenderer(p) {
 	const host = document.createElement('span');
 	host.innerHTML = renderBadge(label, color);
 	return host.firstElementChild;
+}
+
+/* ======= Helpers de atualização com backend ======= */
+async function updateCampaignStatusBackend(id, status) {
+	const res = await fetch(`/api/campaigns/${encodeURIComponent(id)}/status`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		credentials: 'same-origin',
+		body: JSON.stringify({ status }),
+	});
+	const data = await res.json().catch(() => ({}));
+	if (!res.ok || data?.ok === false) throw new Error(data?.error || 'Status update failed');
+	return data;
+}
+async function updateCampaignBudgetBackend(id, budgetNumber) {
+	const res = await fetch(`/api/campaigns/${encodeURIComponent(id)}/budget`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		credentials: 'same-origin',
+		body: JSON.stringify({ budget: budgetNumber }),
+	});
+	const data = await res.json().catch(() => ({}));
+	if (!res.ok || data?.ok === false) throw new Error(data?.error || 'Budget update failed');
+	return data;
+}
+
+async function updateCampaignBidBackend(id, bidNumber) {
+	const res = await fetch(`/api/campaigns/${encodeURIComponent(id)}/bid`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		credentials: 'same-origin',
+		body: JSON.stringify({ bid: bidNumber }),
+	});
+	const data = await res.json().catch(() => ({}));
+	if (!res.ok || data?.ok === false) throw new Error(data?.error || 'Bid update failed');
+	return data;
+}
+
+async function devMockOps() {
+	const res = await fetch('/api/dev/mock-ops', { method: 'POST', credentials: 'same-origin' });
+	const data = await res.json().catch(() => ({}));
+	if (!res.ok || data?.ok === false) throw new Error(data?.error || 'Mock failed');
+	return data;
+}
+
+// helper mínimo para GET/POST JSON (fetch de dados SSRM/DRILL)
+async function fetchJSON(url, opts) {
+	const res = await fetch(url, {
+		headers: { 'Content-Type': 'application/json' },
+		credentials: 'same-origin',
+		...opts,
+	});
+	let data;
+	try {
+		data = await res.json();
+	} catch {
+		data = {};
+	}
+	if (!res.ok) throw new Error(data?.error || res.statusText || 'Request failed');
+	return data;
+}
+
+/* ======= Utils de status (robustos e reaproveitáveis) ======= */
+function isStatusActiveVal(v) {
+	return String(v ?? '').toUpperCase() === 'ACTIVE';
+}
+function getRowStatusValue(p) {
+	return p?.data?.campaign_status ?? p?.data?.status ?? p?.value ?? '';
+}
+function setRowStatus(data, on) {
+	const next = on ? 'ACTIVE' : 'PAUSED';
+	if (data) {
+		if ('campaign_status' in data) data.campaign_status = next;
+		if ('status' in data) data.status = next;
+	}
 }
 
 /* ============ Modal simples (KTUI-like) ============ */
@@ -635,24 +708,8 @@ function revenueCellRenderer(p) {
 	}
 	return wrap;
 }
-// helper mínimo para GET/POST JSON
-async function fetchJSON(url, opts) {
-	const res = await fetch(url, {
-		headers: { 'Content-Type': 'application/json' },
-		credentials: 'same-origin',
-		...opts,
-	});
-	// tenta parsear JSON mesmo em erro pra extrair msg do backend
-	let data;
-	try {
-		data = await res.json();
-	} catch {
-		data = {};
-	}
-	if (!res.ok) throw new Error(data?.error || res.statusText || 'Request failed');
-	return data;
-}
 
+/* ============ Toggle/slider de Campaign Status (com backend) ============ */
 function StatusSliderRenderer() {}
 
 StatusSliderRenderer.prototype.init = function (p) {
@@ -679,7 +736,7 @@ StatusSliderRenderer.prototype.init = function (p) {
 		return;
 	}
 
-	const isOn = getOn();
+	let isOn = getOn();
 
 	// estrutura
 	const root = document.createElement('div');
@@ -716,31 +773,51 @@ StatusSliderRenderer.prototype.init = function (p) {
 	// garante posição correta depois do layout
 	requestAnimationFrame(() => setProgress(isOn ? 1 : 0));
 
-	// commit: atualiza ambos os campos, se existirem
-	const commit = (on) => {
-		const next = on ? 'ACTIVE' : 'PAUSED';
+	// commit com backend (otimista + rollback)
+	const commit = async (nextOn, prevOn) => {
+		const next = nextOn ? 'ACTIVE' : 'PAUSED';
+
+		// aplica local (otimista)
 		if (p.data) {
 			if ('campaign_status' in p.data) p.data.campaign_status = next;
 			if ('status' in p.data) p.data.status = next;
 		}
-		setProgress(on ? 1 : 0);
+		isOn = nextOn;
+		setProgress(nextOn ? 1 : 0);
 		p.api.refreshCells({ rowNodes: [p.node], columns: [p.column.getId()], force: true });
 
-		// toast apenas se foi interação do usuário (arraste válido)
-		if (this._userInteracted && globalThis.Toastify) {
-			Toastify({
-				text: on ? 'Campanha ativada' : 'Campanha pausada',
-				duration: 2200,
-				close: true,
-				gravity: 'bottom',
-				position: 'right',
-				style: {
-					background: on
-						? 'linear-gradient(90deg,#22c55e,#16a34a)'
-						: 'linear-gradient(90deg,#06b6d4,#3b82f6)',
-				},
-				stopOnFocus: true,
-			}).showToast();
+		// backend
+		const id = String(p.data?.id ?? p.data?.utm_campaign ?? '');
+		if (!id) return;
+
+		try {
+			await updateCampaignStatusBackend(id, next);
+			// toast apenas se foi interação do usuário (arraste válido)
+			if (this._userInteracted && globalThis.Toastify) {
+				Toastify({
+					text: nextOn ? 'Campanha ativada' : 'Campanha pausada',
+					duration: 2200,
+					close: true,
+					gravity: 'bottom',
+					position: 'right',
+					style: {
+						background: nextOn
+							? 'linear-gradient(90deg,#22c55e,#16a34a)'
+							: 'linear-gradient(90deg,#06b6d4,#3b82f6)',
+					},
+					stopOnFocus: true,
+				}).showToast();
+			}
+		} catch (e) {
+			// rollback
+			if (p.data) {
+				if ('campaign_status' in p.data) p.data.campaign_status = prevOn ? 'ACTIVE' : 'PAUSED';
+				if ('status' in p.data) p.data.status = prevOn ? 'ACTIVE' : 'PAUSED';
+			}
+			isOn = prevOn;
+			setProgress(prevOn ? 1 : 0);
+			p.api.refreshCells({ rowNodes: [p.node], columns: [p.column.getId()], force: true });
+			showToast(`Falha ao salvar status: ${e?.message || e}`, 'danger');
 		}
 	};
 
@@ -778,7 +855,7 @@ StatusSliderRenderer.prototype.init = function (p) {
 		down = false;
 
 		if (!dragged) {
-			// clique simples -> não faz nada
+			// clique simples -> não faz nada (mantemos drag-only)
 			setProgress(startOn ? 1 : 0);
 			if (ev) {
 				ev.preventDefault();
@@ -790,7 +867,7 @@ StatusSliderRenderer.prototype.init = function (p) {
 		const pct = parseFloat(fill.style.width) / 100;
 		const finalOn = pct >= 0.5;
 
-		if (finalOn !== startOn) commit(finalOn);
+		if (finalOn !== startOn) commit(finalOn, startOn);
 		else setProgress(startOn ? 1 : 0);
 
 		setTimeout(() => (this._dragging = false), 0);
@@ -854,13 +931,12 @@ StatusSliderRenderer.prototype.refresh = function (p) {
 const columnDefs = [
 	{
 		headerName: 'Profile',
-
 		field: 'profile_name',
 		valueGetter: (p) => stripHtml(p.data?.profile_name),
 		minWidth: 180,
 		flex: 1.2,
 		cellRenderer: profileCellRenderer,
-		pinned: 'left', // mantém fixo à esquerda
+		pinned: 'left',
 		tooltipValueGetter: (p) => p.value || '',
 	},
 	// ====== Grupo 1: Identificação ======
@@ -941,6 +1017,28 @@ const columnDefs = [
 				valueFormatter: currencyFormatter,
 				minWidth: 110,
 				flex: 0.6,
+				onCellValueChanged: async (p) => {
+					try {
+						if ((p?.node?.level ?? 0) !== 0) return;
+						const row = p?.data || {};
+						const id = String(row.id ?? row.utm_campaign ?? '');
+						if (!id) return;
+
+						const n = toNumberBR(p.newValue);
+						if (!Number.isFinite(n) || n < 0) {
+							p.node.setDataValue('budget', p.oldValue);
+							showToast('Budget inválido', 'danger');
+							return;
+						}
+
+						await updateCampaignBudgetBackend(id, n);
+						p.api.refreshCells({ rowNodes: [p.node], columns: ['budget'] });
+						showToast('Budget atualizado', 'success');
+					} catch (e) {
+						p.node.setDataValue('budget', p.oldValue);
+						showToast(`Erro ao salvar Budget: ${e?.message || e}`, 'danger');
+					}
+				},
 			},
 			{
 				headerName: 'Bid',
@@ -952,6 +1050,28 @@ const columnDefs = [
 				valueFormatter: currencyFormatter,
 				minWidth: 110,
 				flex: 0.6,
+				onCellValueChanged: async (p) => {
+					try {
+						if ((p?.node?.level ?? 0) !== 0) return;
+						const row = p?.data || {};
+						const id = String(row.id ?? row.utm_campaign ?? '');
+						if (!id) return;
+
+						const n = toNumberBR(p.newValue);
+						if (!Number.isFinite(n) || n < 0) {
+							p.node.setDataValue('bid', p.oldValue);
+							showToast('Bid inválido', 'danger');
+							return;
+						}
+
+						await updateCampaignBidBackend(id, n);
+						p.api.refreshCells({ rowNodes: [p.node], columns: ['bid'] });
+						showToast('Bid atualizado', 'success');
+					} catch (e) {
+						p.node.setDataValue('bid', p.oldValue);
+						showToast(`Erro ao salvar Bid: ${e?.message || e}`, 'danger');
+					}
+				},
 			},
 			{
 				headerName: 'Ads',
@@ -1141,15 +1261,13 @@ function makeGrid() {
 		sortable: false,
 		wrapText: true,
 		minWidth: 350,
-		pinned: 'left', // <- padrão ligado
+		pinned: 'left',
 		cellStyle: (p) => (p?.node?.level === 0 ? { fontSize: '12px', lineHeight: '1.6' } : null),
 		cellRendererParams: { suppressCount: true, innerRenderer: (p) => p.data?.__label || '' },
 	};
 
 	const gridOptions = {
 		context: { showToast: (msg, type) => Toastify({ text: msg }).showToast() },
-
-		// onCellDoubleClicked: toggleCampaignStatus,
 		rowModelType: 'serverSide',
 		cacheBlockSize: 200,
 		maxBlocksInCache: 4,
@@ -1178,8 +1296,11 @@ function makeGrid() {
 		sideBar: { toolPanels: ['columns', 'filters'], defaultToolPanel: null, position: 'right' },
 		theme: createAgTheme(),
 
+		// Obs.: o toggle de status é feito no próprio renderer (drag-only) com backend otimista.
+
 		onCellClicked(params) {
 			if (params?.node?.level > 0) return;
+
 			const isAutoGroupCol =
 				(typeof params.column?.isAutoRowGroupColumn === 'function' &&
 					params.column.isAutoRowGroupColumn()) ||
@@ -1188,6 +1309,7 @@ function makeGrid() {
 			const clickedExpanderOrCheckbox = !!params.event?.target?.closest?.(
 				'.ag-group-expanded, .ag-group-contracted, .ag-group-checkbox'
 			);
+
 			if (
 				isAutoGroupCol &&
 				!clickedExpanderOrCheckbox &&
@@ -1197,6 +1319,7 @@ function makeGrid() {
 				showKTModal({ title: 'Campaign', content: label });
 				return;
 			}
+
 			const MODAL_FIELDS = new Set([
 				'profile_name',
 				'bc_name',
@@ -1250,10 +1373,8 @@ function makeGrid() {
 		},
 
 		onGridReady(params) {
-			// 1) Restaura state salvo (ordem/visibilidade/tamanho/sort/filtro/etc.)
 			applySavedStateIfAny(params.api);
 
-			// 2) SSRM datasource
 			const dataSource = {
 				getRows: async (req) => {
 					try {
@@ -1412,8 +1533,7 @@ function makeGrid() {
 	globalThis.LionGrid.resetLayout = function () {
 		try {
 			sessionStorage.removeItem(GRID_STATE_KEY);
-			// limpa estado de colunas/sort/filtro: só reloader já basta; mas pode limpar manualmente
-			api.setState({}, []); // aplica state vazio
+			api.setState({}, []);
 			showToast('Layout Reset', 'info');
 		} catch {}
 	};
@@ -1445,7 +1565,6 @@ function showToast(msg, type = 'info') {
 }
 
 /* ============ Toggle de colunas pinadas ============ */
-// tenta descobrir o ID da coluna de seleção
 function getSelectionColId(api) {
 	try {
 		const cols = api.getColumns() || [];
@@ -1478,7 +1597,6 @@ function togglePinnedColsFromCheckbox(silent = false) {
 
 	api.applyColumnState({ state: base, defaultState: { pinned: null } });
 
-	// 🔇 só mostra toast quando NÃO estiver em modo silencioso
 	if (!silent) {
 		showToast(checked ? 'Columns Pinned' : 'Columns Unpinned', checked ? 'success' : 'info');
 	}
@@ -1494,12 +1612,24 @@ const LionPage = (() => {
 		if (el) {
 			if (!el.hasAttribute('data-init-bound')) {
 				el.checked = true; // default pinado
-				el.addEventListener('change', () => togglePinnedColsFromCheckbox(false)); // 👈 com toast
+				el.addEventListener('change', () => togglePinnedColsFromCheckbox(false));
 				el.setAttribute('data-init-bound', '1');
 			}
 		}
 
-		togglePinnedColsFromCheckbox(true); // 👈 silencioso no load (sem toast)
+		togglePinnedColsFromCheckbox(true); // silencioso no load
+
+		// opcional: botão para mock de backend
+		document.getElementById('btnMockOps')?.addEventListener('click', async () => {
+			try {
+				const r = await devMockOps();
+				showToast(r.message || 'Mock executado', 'success');
+				const api = globalThis.LionGrid?.api;
+				api?.refreshServerSide?.({ purge: false });
+			} catch (e) {
+				showToast(`Mock falhou: ${e?.message || e}`, 'danger');
+			}
+		});
 	}
 
 	if (document.readyState !== 'loading') mount();
