@@ -61,6 +61,34 @@ async function withMinSpinner(startMs, minMs) {
 	pointer-events: none; /* não interfere com drag/resize do grid */
 	will-change: transform; /* evita micro jitter */
 	}
+/* ===== Dropdown (status) ===== */
+.lion-status-menu {
+  position: absolute;
+  min-width: 160px;
+  padding: 6px 0;
+  background: #111;
+  color: #eee;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.35);
+  z-index: 99999;
+}
+.lion-status-menu__item {
+  padding: 8px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.lion-status-menu__item:hover {
+  background: rgba(255,255,255,.06);
+}
+.lion-status-menu__item.is-active::before {
+  content: "●";
+  font-size: 10px;
+  line-height: 1;
+}
 
 	@keyframes lion-spin { to { transform: rotate(360deg); } }
 `;
@@ -790,8 +818,7 @@ function revenueCellRenderer(p) {
 	return wrap;
 }
 
-/* ============ Toggle/slider de Campaign Status (com backend + loading) ============ */
-/* ============ Toggle/slider de Campaign Status (com backend + loading) ============ */
+/* ============ Toggle/slider de Campaign Status (drag-only + menu + spinner na célula) ============ */
 function StatusSliderRenderer() {}
 
 StatusSliderRenderer.prototype.init = function (p) {
@@ -804,11 +831,12 @@ StatusSliderRenderer.prototype.init = function (p) {
 	const level = p?.node?.level ?? 0;
 	const isInteractive = interactiveLevels.includes(level);
 
-	const getOn = () => {
-		const raw = p.data?.campaign_status ?? p.data?.status ?? p.value;
-		return String(raw || '').toUpperCase() === 'ACTIVE';
-	};
+	const colId = p.column.getColId();
+	const getVal = () =>
+		String(p.data?.campaign_status ?? p.data?.status ?? p.value ?? '').toUpperCase();
+	const getOn = () => getVal() === 'ACTIVE';
 
+	// não interativo/pinned => só texto
 	if (isPinnedOrTotal(p) || !isInteractive) {
 		this.eGui = document.createElement('span');
 		this.eGui.textContent = strongText(String(p.value ?? ''));
@@ -817,7 +845,7 @@ StatusSliderRenderer.prototype.init = function (p) {
 
 	let isOn = getOn();
 
-	// estrutura do slider
+	// pill base
 	const root = document.createElement('div');
 	root.className = 'ag-status-pill';
 	root.setAttribute('role', 'switch');
@@ -838,6 +866,7 @@ StatusSliderRenderer.prototype.init = function (p) {
 	root.append(fill, label, knob);
 	this.eGui = root;
 
+	// helpers visuais
 	const maxX = () => root.clientWidth - root.clientHeight;
 	const setProgress = (pgr) => {
 		const pct = Math.max(0, Math.min(1, pgr));
@@ -847,68 +876,54 @@ StatusSliderRenderer.prototype.init = function (p) {
 		label.textContent = on ? 'ACTIVE' : 'PAUSED';
 		root.setAttribute('aria-checked', String(on));
 	};
-
 	requestAnimationFrame(() => setProgress(isOn ? 1 : 0));
 
-	// ====== BUSY: usa a célula como loading (igual Bid/Budget) ======
-	const setBusy = (on) => {
-		const cellEl = this.eGui?.closest('.ag-cell');
-		if (cellEl) cellEl.classList.toggle('ag-cell-loading', !!on);
+	// ===== SPINNER: marca a CÉLULA como loading =====
+	const setCellBusy = (on) => {
+		setCellLoading(p.node, colId, !!on);
+		p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
 	};
 
-	// commit com backend (otimista + rollback + loading)
-	const commit = async (nextOn, prevOn) => {
-		const next = nextOn ? 'ACTIVE' : 'PAUSED';
+	// commit com backend (otimista + rollback + spinner na célula)
+	const commit = async (nextOrString, prevOn) => {
+		const nextVal =
+			typeof nextOrString === 'string'
+				? nextOrString.toUpperCase()
+				: nextOrString
+				? 'ACTIVE'
+				: 'PAUSED';
 
 		// otimista local
 		if (p.data) {
-			if ('campaign_status' in p.data) p.data.campaign_status = next;
-			if ('status' in p.data) p.data.status = next;
+			if ('campaign_status' in p.data) p.data.campaign_status = nextVal;
+			if ('status' in p.data) p.data.status = nextVal;
 		}
-		isOn = nextOn;
-		setProgress(nextOn ? 1 : 0);
-		p.api.refreshCells({ rowNodes: [p.node], columns: [p.column.getId()], force: true });
+		const isOnLocal = nextVal === 'ACTIVE';
+		setProgress(isOnLocal ? 1 : 0);
+		p.api.refreshCells({ rowNodes: [p.node], columns: [colId], force: true });
 
 		const id = String(p.data?.id ?? p.data?.utm_campaign ?? '');
 		if (!id) return;
 
-		setBusy(true);
+		setCellBusy(true); // 👈 liga spinner da célula
 		try {
-			const t0 = performance.now();
-			await updateCampaignStatusBackend(id, next);
-			await withMinSpinner(t0, MIN_SPINNER_MS);
-
-			if (this._userInteracted && globalThis.Toastify) {
-				Toastify({
-					text: nextOn ? 'Campanha ativada' : 'Campanha pausada',
-					duration: 2200,
-					close: true,
-					gravity: 'bottom',
-					position: 'right',
-					style: {
-						background: nextOn
-							? 'linear-gradient(90deg,#22c55e,#16a34a)'
-							: 'linear-gradient(90deg,#06b6d4,#3b82f6)',
-					},
-					stopOnFocus: true,
-				}).showToast();
-			}
+			await updateCampaignStatusBackend(id, nextVal); // já respeita MIN_SPINNER_MS
+			// (toast opcional)
 		} catch (e) {
-			// rollback
+			const prevVal = prevOn ? 'ACTIVE' : 'PAUSED';
 			if (p.data) {
-				if ('campaign_status' in p.data) p.data.campaign_status = prevOn ? 'ACTIVE' : 'PAUSED';
-				if ('status' in p.data) p.data.status = prevOn ? 'ACTIVE' : 'PAUSED';
+				if ('campaign_status' in p.data) p.data.campaign_status = prevVal;
+				if ('status' in p.data) p.data.status = prevVal;
 			}
-			isOn = prevOn;
 			setProgress(prevOn ? 1 : 0);
-			p.api.refreshCells({ rowNodes: [p.node], columns: [p.column.getId()], force: true });
+			p.api.refreshCells({ rowNodes: [p.node], columns: [colId], force: true });
 			showToast(`Falha ao salvar status: ${e?.message || e}`, 'danger');
 		} finally {
-			setBusy(false);
+			setCellBusy(false); // 👈 desliga spinner
 		}
 	};
 
-	// ===== DRAG-ONLY =====
+	// ===== Drag-only + click abre dropdown =====
 	const MOVE_THRESHOLD = 6;
 	let down = false,
 		startX = 0,
@@ -918,20 +933,16 @@ StatusSliderRenderer.prototype.init = function (p) {
 	const onDown = (x, ev) => {
 		down = true;
 		dragged = false;
-		this._userInteracted = false;
 		startX = x;
 		startOn = root.getAttribute('aria-checked') === 'true';
-		if (ev) {
-			ev.preventDefault();
-			ev.stopPropagation();
-		}
+		ev?.preventDefault?.();
+		ev?.stopPropagation?.();
 	};
 	const onMove = (x) => {
 		if (!down) return;
 		const dx = x - startX;
 		if (Math.abs(dx) > MOVE_THRESHOLD) {
 			dragged = true;
-			this._userInteracted = true;
 			const p0 = startOn ? 1 : 0;
 			const pgr = p0 + dx / Math.max(1, maxX());
 			setProgress(pgr);
@@ -942,25 +953,19 @@ StatusSliderRenderer.prototype.init = function (p) {
 		down = false;
 
 		if (!dragged) {
-			setProgress(startOn ? 1 : 0);
-			if (ev) {
-				ev.preventDefault();
-				ev.stopPropagation();
-			}
+			ev?.preventDefault?.();
+			ev?.stopPropagation?.();
+			openMenu();
 			return;
 		}
 
 		const pct = parseFloat(fill.style.width) / 100;
 		const finalOn = pct >= 0.5;
-
 		if (finalOn !== startOn) commit(finalOn, startOn);
 		else setProgress(startOn ? 1 : 0);
 
-		setTimeout(() => (this._dragging = false), 0);
-		if (ev) {
-			ev.preventDefault();
-			ev.stopPropagation();
-		}
+		ev?.preventDefault?.();
+		ev?.stopPropagation?.();
 	};
 
 	root.addEventListener('mousedown', (e) => onDown(e.clientX, e));
@@ -979,8 +984,66 @@ StatusSliderRenderer.prototype.init = function (p) {
 		if (e.code === 'Space' || e.code === 'Enter') {
 			e.preventDefault();
 			e.stopPropagation();
+			openMenu();
 		}
 	});
+
+	// ===== Dropdown ACTIVE/PAUSED =====
+	let menuEl = null;
+	const STATUSES = ['ACTIVE', 'PAUSED'];
+
+	const closeMenu = () => {
+		if (menuEl && menuEl.parentNode) menuEl.parentNode.removeChild(menuEl);
+		menuEl = null;
+		document.removeEventListener('mousedown', onDocClose, true);
+		window.removeEventListener('blur', closeMenu, true);
+	};
+	const onDocClose = (ev) => {
+		if (!menuEl) return;
+		if (ev.target === menuEl || menuEl.contains(ev.target)) return;
+		closeMenu();
+	};
+
+	const openMenu = () => {
+		if (isCellLoading({ data: p.node?.data }, colId)) return; // não abre se estiver carregando
+		if (menuEl) {
+			closeMenu();
+			return;
+		}
+
+		menuEl = document.createElement('div');
+		menuEl.className = 'lion-status-menu';
+
+		const cur = getVal();
+		STATUSES.forEach((st) => {
+			const item = document.createElement('div');
+			item.className = 'lion-status-menu__item' + (cur === st ? ' is-active' : '');
+			item.textContent = st;
+			item.addEventListener('mousedown', (e) => e.preventDefault());
+			item.addEventListener('click', async (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				closeMenu();
+				const prevOnLocal = isOn;
+				if (st !== cur) await commit(st, prevOnLocal);
+			});
+			menuEl.appendChild(item);
+		});
+
+		// posiciona centralizado ao pill
+		const rect = root.getBoundingClientRect();
+		const menuW = 180;
+		menuEl.style.left = `${Math.max(8, rect.left + (rect.width - menuW) / 2)}px`;
+		menuEl.style.top = `${rect.bottom + 6}px`;
+
+		document.body.appendChild(menuEl);
+		setTimeout(() => {
+			document.addEventListener('mousedown', onDocClose, true);
+			window.addEventListener('blur', closeMenu, true);
+		}, 0);
+	};
+
+	this._closeMenu = closeMenu;
 };
 
 StatusSliderRenderer.prototype.getGui = function () {
@@ -993,8 +1056,8 @@ StatusSliderRenderer.prototype.refresh = function (p) {
 	const level = p?.node?.level ?? 0;
 	if (!this.eGui || isPinnedOrTotal(p) || !interactiveLevels.includes(level)) return false;
 
-	const raw = p.data?.campaign_status ?? p.data?.status ?? p.value;
-	const isOn = String(raw || '').toUpperCase() === 'ACTIVE';
+	const raw = String(p.data?.campaign_status ?? p.data?.status ?? p.value ?? '').toUpperCase();
+	const isOn = raw === 'ACTIVE';
 
 	const fill = this.eGui.querySelector('.ag-status-fill');
 	const knob = this.eGui.querySelector('.ag-status-knob');
@@ -1008,6 +1071,7 @@ StatusSliderRenderer.prototype.refresh = function (p) {
 		this.eGui.setAttribute('aria-checked', String(isOn));
 	});
 
+	this._closeMenu?.();
 	return true;
 };
 
@@ -1089,7 +1153,12 @@ const columnDefs = [
 					smallKnob: true,
 				},
 				suppressKeyboardEvent: () => true,
+				// 👇 faz a célula usar a capa + spinner quando flagged
+				cellClassRules: {
+					'ag-cell-loading': (p) => isCellLoading(p, 'campaign_status'),
+				},
 			},
+
 			{
 				headerName: 'Budget',
 				field: 'budget',
