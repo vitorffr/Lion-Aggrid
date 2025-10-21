@@ -98,7 +98,7 @@ const GRID_STATE_IGNORE_ON_RESTORE = [
 		while (sel.firstChild) sel.removeChild(sel.firstChild);
 
 		// Placeholder com nome do preset ativo ou texto padrão
-		const placeholderText = activePreset ? `✓ ${activePreset}` : 'User Presets';
+		const placeholderText = 'User Presets';
 		sel.appendChild(new Option(placeholderText, ''));
 
 		// Adiciona todos os presets
