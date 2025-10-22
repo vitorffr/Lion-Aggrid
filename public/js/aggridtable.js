@@ -15,7 +15,7 @@ const GRID_STATE_IGNORE_ON_RESTORE = [
 ];
 // === Fake network & min spinner ===
 const DEV_FAKE_NETWORK_LATENCY_MS = 0; // mude p/ 600..1200 para simular rede
-const MIN_SPINNER_MS = 650; // spinner visível por pelo menos X ms
+const MIN_SPINNER_MS = 500; // spinner visível por pelo menos X ms
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function withMinSpinner(startMs, minMs) {
@@ -568,7 +568,7 @@ async function updateAdsetStatusBackend(id, status) {
 	const t0 = performance.now();
 	if (DEV_FAKE_NETWORK_LATENCY_MS > 0) await sleep(DEV_FAKE_NETWORK_LATENCY_MS);
 
-	const res = await fetch(`/api/adsets/${encodeURIComponent(id)}/status`, {
+	const res = await fetch(`/api/adsets/${encodeURIComponent(id)}/status/`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
 		credentials: 'same-origin',
@@ -585,7 +585,7 @@ async function updateCampaignStatusBackend(id, status) {
 	const t0 = performance.now();
 	if (DEV_FAKE_NETWORK_LATENCY_MS > 0) await sleep(DEV_FAKE_NETWORK_LATENCY_MS);
 
-	const res = await fetch(`/api/campaigns/${encodeURIComponent(id)}/status`, {
+	const res = await fetch(`/api/campaigns/${encodeURIComponent(id)}/status/`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
 		credentials: 'same-origin',
@@ -603,7 +603,7 @@ async function updateCampaignBudgetBackend(id, budgetNumber) {
 	const t0 = performance.now();
 	if (DEV_FAKE_NETWORK_LATENCY_MS > 0) await sleep(DEV_FAKE_NETWORK_LATENCY_MS);
 
-	const res = await fetch(`/api/campaigns/${encodeURIComponent(id)}/budget`, {
+	const res = await fetch(`/api/campaigns/${encodeURIComponent(id)}/budget/`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
 		credentials: 'same-origin',
@@ -620,7 +620,7 @@ async function updateCampaignBidBackend(id, bidNumber) {
 	const t0 = performance.now();
 	if (DEV_FAKE_NETWORK_LATENCY_MS > 0) await sleep(DEV_FAKE_NETWORK_LATENCY_MS);
 
-	const res = await fetch(`/api/campaigns/${encodeURIComponent(id)}/bid`, {
+	const res = await fetch(`/api/campaigns/${encodeURIComponent(id)}/bid/`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
 		credentials: 'same-origin',
@@ -630,13 +630,6 @@ async function updateCampaignBidBackend(id, bidNumber) {
 	if (!res.ok || data?.ok === false) throw new Error(data?.error || 'Bid update failed');
 
 	await withMinSpinner(t0, MIN_SPINNER_MS);
-	return data;
-}
-
-async function devMockOps() {
-	const res = await fetch('/api/dev/mock-ops', { method: 'POST', credentials: 'same-origin' });
-	const data = await res.json().catch(() => ({}));
-	if (!res.ok || data?.ok === false) throw new Error(data?.error || 'Mock failed');
 	return data;
 }
 
@@ -757,13 +750,17 @@ function createAgTheme() {
 /* ============ Colunas ============ */
 const defaultColDef = {
 	sortable: true,
-	filter: true,
+	filter: true, // continua habilitando o filtro
+	floatingFilter: true,
 	resizable: true,
+	cellClass: ['lion-center-cell'], // 👈 NOVO
+	// unSortIcon: true,
 	wrapHeaderText: true,
-	autoHeaderHeight: false,
+	autoHeaderHeight: true,
 	enableRowGroup: true,
 	enablePivot: true,
 	enableValue: true,
+	suppressHeaderFilterButton: true, // 👈 esconde o funil no header
 };
 function parseCurrencyInput(params) {
 	return toNumberBR(params.newValue);
@@ -772,21 +769,23 @@ function isPinnedOrGroup(params) {
 	return params?.node?.rowPinned || params?.node?.group;
 }
 
-/* Profile renderer */
 function profileCellRenderer(params) {
 	const raw = String(params?.value ?? '').trim();
 	if (!raw) return '';
 	const idx = raw.lastIndexOf(' - ');
 	const name = idx > -1 ? raw.slice(0, idx).trim() : raw;
 	const meta = idx > -1 ? raw.slice(idx + 3).trim() : '';
+
 	const wrap = document.createElement('span');
 	wrap.style.display = 'inline-flex';
-	wrap.style.alignItems = 'baseline';
-	wrap.style.gap = '8px';
-	wrap.style.whiteSpace = 'nowrap';
+	wrap.style.flexDirection = 'column'; // 👈 empilha
+	wrap.style.lineHeight = '1.2';
+
 	const nameEl = document.createElement('span');
 	nameEl.textContent = name;
+	nameEl.style.fontWeight = '500';
 	wrap.appendChild(nameEl);
+
 	if (meta) {
 		const metaEl = document.createElement('span');
 		metaEl.textContent = meta;
@@ -813,28 +812,59 @@ function revenueCellRenderer(p) {
 		span.textContent = stripHtml(raw) || '';
 		return span;
 	}
+
 	const { total, parts } = parseRevenue(raw);
 	const wrap = document.createElement('span');
 	wrap.style.display = 'inline-flex';
 	wrap.style.flexDirection = 'column';
-	wrap.style.lineHeight = '1.1';
+	wrap.style.lineHeight = '1.15';
 	wrap.style.gap = '2px';
+
+	// linha 1: total
 	const totalEl = document.createElement('span');
 	totalEl.textContent = total || '';
 	wrap.appendChild(totalEl);
+
+	// linhas 2 e 3: (A: ...) e (B: ...)
 	if (parts.length === 2) {
-		const metaText = document.createElement('span');
-		metaText.textContent = `(${REVENUE_LABELS[0] || 'A'}: ${parts[0]} | ${
-			REVENUE_LABELS[1] || 'B'
-		}: ${parts[1]})`;
-		metaText.style.fontSize = '11px';
-		metaText.style.opacity = '0.75';
-		wrap.appendChild(metaText);
+		const aEl = document.createElement('span');
+		aEl.textContent = `(${REVENUE_LABELS[0] || 'A'}: ${parts[0]})`;
+		aEl.style.fontSize = '11px';
+		aEl.style.opacity = '0.75';
+
+		const bEl = document.createElement('span');
+		bEl.textContent = `(${REVENUE_LABELS[1] || 'B'}: ${parts[1]})`;
+		bEl.style.fontSize = '11px';
+		bEl.style.opacity = '0.75';
+
+		wrap.appendChild(aEl);
+		wrap.appendChild(bEl);
 	}
+
 	return wrap;
 }
 
-/* ============ Toggle/slider de Campaign Status (drag-only + menu + spinner na célula) ============ */
+async function toggleFeature(feature, value) {
+	const res = await fetch('/api/dev/test-toggle/', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		credentials: 'same-origin',
+		body: JSON.stringify({ feature, value }),
+	});
+	const data = await res.json();
+
+	if (res.ok && data.ok) {
+		// SUCESSO
+		showToast(data.message || 'Aplicado', 'success');
+		return true;
+	}
+
+	// FALHA “negocial” (200 com ok:false) ou HTTP 4xx/5xx
+	const msg = data?.error || `Erro (${res.status})`;
+	showToast(msg, 'danger');
+	return false;
+}
+
 /* ======= Campaign Status Renderer (otimizado) ======= */
 function StatusSliderRenderer() {}
 
@@ -901,26 +931,22 @@ const LionStatusMenu = (() => {
 StatusSliderRenderer.prototype.init = function (p) {
 	this.p = p;
 
-	// ——— configuração/flags
 	const cfg = p.colDef?.cellRendererParams || {};
 	const interactive = new Set(Array.isArray(cfg.interactiveLevels) ? cfg.interactiveLevels : [0]);
 	const smallKnob = !!cfg.smallKnob;
 	const level = p?.node?.level ?? 0; // 0 = campaign, 1 = adset, 2 = ad
 	const colId = p.column.getColId();
 
-	// pega o valor atual do status (campaign_status OU status)
 	const getVal = () =>
 		String(p.data?.campaign_status ?? p.data?.status ?? p.value ?? '').toUpperCase();
 	const isOnVal = () => getVal() === 'ACTIVE';
 
-	// não interativo/pinned
 	if (isPinnedOrTotal(p) || !interactive.has(level)) {
 		this.eGui = document.createElement('span');
 		this.eGui.textContent = strongText(String(p.value ?? ''));
 		return;
 	}
 
-	// ——— estrutura do pill
 	const root = document.createElement('div');
 	root.className = 'ag-status-pill';
 	root.setAttribute('role', 'switch');
@@ -928,18 +954,14 @@ StatusSliderRenderer.prototype.init = function (p) {
 
 	const fill = document.createElement('div');
 	fill.className = 'ag-status-fill';
-
 	const knob = document.createElement('div');
 	knob.className = 'ag-status-knob';
 	if (smallKnob) knob.classList.add('ag-status-knob--sm');
-
 	const label = document.createElement('div');
 	label.className = 'ag-status-label';
-
 	root.append(fill, label, knob);
 	this.eGui = root;
 
-	// ——— helpers de visual
 	let trackLenPx = 0;
 	let rafToken = null;
 
@@ -953,35 +975,17 @@ StatusSliderRenderer.prototype.init = function (p) {
 		root.setAttribute('aria-checked', String(on));
 	};
 
-	// estado inicial
 	requestAnimationFrame(() => {
 		trackLenPx = computeTrackLen();
 		setProgress(isOnVal() ? 1 : 0);
 	});
 
-	// ——— spinner na célula
 	const setCellBusy = (on) => {
 		setCellLoading(p.node, colId, !!on);
 		p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
 	};
 
-	// ——— escolhe endpoint/id conforme nível
-	function resolveIdentity() {
-		// lvl 0 (campaign): id = data.id || data.utm_campaign
-		// lvl 1 (adset)   : id = data.id (do adset.json)
-		if (level === 0) {
-			const id = String(p.data?.id ?? p.data?.utm_campaign ?? '');
-			return { scope: 'campaign', id };
-		}
-		if (level === 1) {
-			const id = String(p.data?.id ?? '');
-			return { scope: 'adset', id };
-		}
-		return { scope: 'unknown', id: '' };
-	}
-
-	// ——— commit com backend (campanha OU adset)
-	// ——— commit com backend (decide endpoint por nível: 0=campanha, 1=adset)
+	// ==== NOVO commit: passa pela rota de teste antes de aplicar ====
 	const commit = async (nextOrString, prevOn) => {
 		const nextVal =
 			typeof nextOrString === 'string'
@@ -990,49 +994,67 @@ StatusSliderRenderer.prototype.init = function (p) {
 				? 'ACTIVE'
 				: 'PAUSED';
 
-		// otimista local
-		if (p.data) {
-			if ('campaign_status' in p.data) p.data.campaign_status = nextVal;
-			if ('status' in p.data) p.data.status = nextVal;
-		}
-		setProgress(nextVal === 'ACTIVE' ? 1 : 0);
-		p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
-
 		const id =
 			(p.node?.level === 0
 				? String(p.data?.id ?? p.data?.utm_campaign ?? '')
 				: String(p.data?.id ?? '')) || '';
 		if (!id) return;
 
+		const scope = (p.node?.level ?? 0) === 1 ? 'adset' : 'campaign';
+
 		setCellBusy(true);
 		try {
-			// nível 0 = campanha -> /api/campaigns/:id/status
-			// nível 1 = adset    -> /api/adsets/:id/status
-			if ((p.node?.level ?? 0) === 1) {
-				await updateAdsetStatusBackend(id, nextVal);
-			} else {
-				await updateCampaignStatusBackend(id, nextVal);
+			// 1) TESTE
+			const okTest = await toggleFeature('status', { scope, id, value: nextVal });
+			if (!okTest) {
+				// erro no teste => ROLLBACK VISUAL E NO DADO
+				const rollbackVal = prevOn ? 'ACTIVE' : 'PAUSED';
+				if (p.data) {
+					if ('campaign_status' in p.data) p.data.campaign_status = rollbackVal;
+					if ('status' in p.data) p.data.status = rollbackVal;
+				}
+				setProgress(prevOn ? 1 : 0);
+				p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
+				return;
 			}
-			if (this._userInteracted) {
-				const scope = (p.node?.level ?? 0) === 1 ? 'Adset' : 'Campanha';
-				const msg = nextVal === 'ACTIVE' ? `${scope} ativado` : `${scope} pausado`;
-				showToast(msg, 'success');
-			}
-		} catch (e) {
-			const rollbackVal = prevOn ? 'ACTIVE' : 'PAUSED';
+
+			// 2) aplica otimista
 			if (p.data) {
-				if ('campaign_status' in p.data) p.data.campaign_status = rollbackVal;
-				if ('status' in p.data) p.data.status = rollbackVal;
+				if ('campaign_status' in p.data) p.data.campaign_status = nextVal;
+				if ('status' in p.data) p.data.status = nextVal;
 			}
-			setProgress(prevOn ? 1 : 0);
+			setProgress(nextVal === 'ACTIVE' ? 1 : 0);
 			p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
-			showToast(`Falha ao salvar status: ${e?.message || e}`, 'danger');
+
+			// 3) backend real
+			try {
+				if ((p.node?.level ?? 0) === 1) {
+					await updateAdsetStatusBackend(id, nextVal);
+				} else {
+					await updateCampaignStatusBackend(id, nextVal);
+				}
+				if (this._userInteracted) {
+					const scopeLabel = scope === 'adset' ? 'Adset' : 'Campanha';
+					const msg = nextVal === 'ACTIVE' ? `${scopeLabel} ativado` : `${scopeLabel} pausado`;
+					showToast(msg, 'success');
+				}
+			} catch (e) {
+				// rollback se o backend real falhar
+				const rollbackVal = prevOn ? 'ACTIVE' : 'PAUSED';
+				if (p.data) {
+					if ('campaign_status' in p.data) p.data.campaign_status = rollbackVal;
+					if ('status' in p.data) p.data.status = rollbackVal;
+				}
+				setProgress(prevOn ? 1 : 0);
+				p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
+				showToast(`Falha ao salvar status: ${e?.message || e}`, 'danger');
+			}
 		} finally {
 			setCellBusy(false);
 		}
 	};
+	// ==== fim commit ====
 
-	// ——— drag listeners
 	const MOVE_THRESHOLD = 6;
 	let dragging = false,
 		startX = 0,
@@ -1106,7 +1128,6 @@ StatusSliderRenderer.prototype.init = function (p) {
 	root.addEventListener('mousedown', (e) => beginDrag(e.clientX, e));
 	root.addEventListener('touchstart', (e) => beginDrag(e.touches[0].clientX, e), { passive: false });
 
-	// bloqueia click “normal” (tratamos no endDrag)
 	root.addEventListener('click', (e) => {
 		e.preventDefault();
 		e.stopPropagation();
@@ -1119,7 +1140,6 @@ StatusSliderRenderer.prototype.init = function (p) {
 		}
 	});
 
-	// ——— menu (singleton)
 	const openMenu = () => {
 		if (isCellLoading({ data: p.node?.data }, colId)) return;
 		const cur = getVal();
@@ -1130,9 +1150,9 @@ StatusSliderRenderer.prototype.init = function (p) {
 			width: rect.width,
 			current: cur,
 			pick: async (st) => {
-				const prevOn = cur === 'ACTIVE';
-				if (st !== cur) await commit(st, prevOn);
+				if (st === cur) return;
 				this._userInteracted = true;
+				const prevOn = cur === 'ACTIVE';
 				await commit(st, prevOn);
 			},
 		});
@@ -1182,7 +1202,7 @@ const columnDefs = [
 		headerName: 'Profile',
 		field: 'profile_name',
 		valueGetter: (p) => stripHtml(p.data?.profile_name),
-		minWidth: 180,
+		minWidth: 110,
 		flex: 1.2,
 		cellRenderer: profileCellRenderer,
 		pinned: 'left',
@@ -1196,28 +1216,40 @@ const columnDefs = [
 		openByDefault: true,
 		children: [
 			{
-				headerName: 'Business Center',
+				headerName: 'BM',
 				field: 'bc_name',
 				valueGetter: (p) => stripHtml(p.data?.bc_name),
-				minWidth: 160,
+				minWidth: 100,
 				flex: 1.0,
+				autoHeight: true,
+				wrapText: true,
+				cellStyle: (p) =>
+					p?.node?.level === 0 ? { fontSize: '13px', lineHeight: '1.6' } : null,
+
 				tooltipValueGetter: (p) => p.value || '',
 			},
 			{
 				headerName: 'Account',
 				field: 'account_name',
 				valueGetter: (p) => stripHtml(p.data?.account_name),
-				minWidth: 200,
+				minWidth: 100,
+				autoHeight: true,
+
 				flex: 1.3,
+				wrapText: true,
+				cellStyle: (p) =>
+					p?.node?.level === 0 ? { fontSize: '13px', lineHeight: '1.6' } : null,
 				tooltipValueGetter: (p) => p.value || '',
 			},
-			{
-				headerName: 'UTM',
-				field: 'utm_campaign',
-				minWidth: 160,
-				flex: 0.9,
-				tooltipValueGetter: (p) => p.value || '',
-			},
+			// {
+			// 	headerName: 'UTM',
+			// 	field: 'utm_campaign',
+			// 	minWidth: 180,
+			// 	cellStyle: (p) =>
+			// 		p?.node?.level === 0 ? { fontSize: '13px', lineHeight: '1.6' } : null,
+			// 	flex: 0.9,
+			// 	tooltipValueGetter: (p) => p.value || '',
+			// },
 		],
 	},
 
@@ -1231,23 +1263,24 @@ const columnDefs = [
 			{
 				headerName: 'Account Status',
 				field: 'account_status',
-				minWidth: 160,
+				minWidth: 95,
 				flex: 0.7,
 				cellRenderer: statusPillRenderer,
 			},
 			{
 				headerName: 'Daily Limit',
 				field: 'account_limit',
-				type: 'rightAligned',
 				valueGetter: (p) => toNumberBR(p.data?.account_limit),
 				valueFormatter: currencyFormatter,
-				minWidth: 120,
+				minWidth: 80,
 				flex: 0.8,
 			},
 			{
 				headerName: 'Campaign Status',
 				field: 'campaign_status',
-				minWidth: 160,
+				cellClass: ['lion-center-cell'], // 👈 NOVO
+
+				minWidth: 105,
 				flex: 0.8,
 				cellRenderer: StatusSliderRenderer,
 				cellRendererParams: {
@@ -1264,12 +1297,11 @@ const columnDefs = [
 			{
 				headerName: 'Budget',
 				field: 'budget',
-				type: 'rightAligned',
 				editable: (p) => p.node?.level === 0 && !isCellLoading(p, 'budget'),
 				cellEditor: 'agNumberCellEditor',
 				valueParser: parseCurrencyInput,
 				valueFormatter: currencyFormatter,
-				minWidth: 110,
+				minWidth: 90,
 				flex: 0.6,
 				cellClassRules: {
 					'ag-cell-loading': (p) => isCellLoading(p, 'budget'),
@@ -1292,9 +1324,19 @@ const columnDefs = [
 						setCellLoading(p.node, 'budget', true);
 						p.api.refreshCells({ rowNodes: [p.node], columns: ['budget'] });
 
+						// 1) TESTE
+						const okTest = await toggleFeature('budget', { id, value: n });
+						if (!okTest) {
+							// falha no teste => NÃO aplica alteração
+							p.node.setDataValue('budget', p.oldValue);
+							p.api.refreshCells({ rowNodes: [p.node], columns: ['budget'] });
+							return;
+						}
+
+						// 2) backend real
 						await updateCampaignBudgetBackend(id, n);
 
-						// valor final + refresh
+						// aplica valor final + refresh
 						p.node.setDataValue('budget', n);
 						p.api.refreshCells({ rowNodes: [p.node], columns: ['budget'] });
 						showToast('Budget atualizado', 'success');
@@ -1311,12 +1353,11 @@ const columnDefs = [
 			{
 				headerName: 'Bid',
 				field: 'bid',
-				type: 'rightAligned',
 				editable: (p) => p.node?.level === 0 && !isCellLoading(p, 'bid'),
 				cellEditor: 'agNumberCellEditor',
 				valueParser: parseCurrencyInput,
 				valueFormatter: currencyFormatter,
-				minWidth: 110,
+				minWidth: 70,
 				flex: 0.6,
 				cellClassRules: {
 					'ag-cell-loading': (p) => isCellLoading(p, 'bid'),
@@ -1339,6 +1380,16 @@ const columnDefs = [
 						setCellLoading(p.node, 'bid', true);
 						p.api.refreshCells({ rowNodes: [p.node], columns: ['bid'] });
 
+						// 1) TESTE
+						const okTest = await toggleFeature('bid', { id, value: n });
+						if (!okTest) {
+							// falha no teste => NÃO aplica alteração
+							p.node.setDataValue('bid', p.oldValue);
+							p.api.refreshCells({ rowNodes: [p.node], columns: ['bid'] });
+							return;
+						}
+
+						// 2) backend real
 						await updateCampaignBidBackend(id, n);
 
 						p.node.setDataValue('bid', n);
@@ -1357,7 +1408,7 @@ const columnDefs = [
 			{
 				headerName: 'Ads',
 				field: '_ads',
-				minWidth: 100,
+				minWidth: 70,
 				maxWidth: 120,
 				tooltipValueGetter: (p) => stripHtml(p.data?.xabu_ads),
 				cellRenderer: chipFractionBadgeRenderer,
@@ -1365,7 +1416,7 @@ const columnDefs = [
 			{
 				headerName: 'Adsets',
 				field: '_adsets',
-				minWidth: 110,
+				minWidth: 84,
 				maxWidth: 130,
 				tooltipValueGetter: (p) => stripHtml(p.data?.xabu_adsets),
 				cellRenderer: chipFractionBadgeRenderer,
@@ -1381,106 +1432,98 @@ const columnDefs = [
 		openByDefault: true,
 		children: [
 			{
-				headerName: 'Impressions',
+				headerName: 'Imp',
 				field: 'impressions',
-				type: 'rightAligned',
 				valueFormatter: intFormatter,
-				minWidth: 150,
+				minWidth: 70,
 				flex: 0.7,
 			},
 			{
 				headerName: 'Clicks',
 				field: 'clicks',
-				type: 'rightAligned',
 				valueFormatter: intFormatter,
-				minWidth: 150,
+				minWidth: 80,
 				flex: 0.6,
 			},
 			{
 				headerName: 'Visitors',
 				field: 'visitors',
-				type: 'rightAligned',
 				valueFormatter: intFormatter,
-				minWidth: 150,
+				minWidth: 88,
 				flex: 0.6,
 			},
 			{
 				headerName: 'CPC',
 				field: 'cpc',
-				type: 'rightAligned',
 				valueGetter: (p) => toNumberBR(p.data?.cpc),
 				valueFormatter: currencyFormatter,
-				minWidth: 100,
+				minWidth: 70,
 				flex: 0.6,
 			},
 			{
-				headerName: 'Conversions',
+				headerName: 'Convs',
 				field: 'conversions',
-				type: 'rightAligned',
 				valueFormatter: intFormatter,
-				minWidth: 150,
+				minWidth: 80,
 				flex: 0.6,
 			},
 			{
 				headerName: 'CPA FB',
 				field: 'cpa_fb',
-				type: 'rightAligned',
 				valueGetter: (p) => toNumberBR(p.data?.cpa_fb),
 				valueFormatter: currencyFormatter,
-				minWidth: 110,
+				minWidth: 70,
 				flex: 0.6,
 			},
 			{
-				headerName: 'Real Conversions',
+				headerName: 'Real Convs',
 				field: 'real_conversions',
-				type: 'rightAligned',
 				valueGetter: (p) => toNumberBR(p.data?.real_conversions),
 				valueFormatter: intFormatter,
-				minWidth: 150,
+				minWidth: 80,
 				flex: 0.7,
 			},
 			{
 				headerName: 'Real CPA',
 				field: 'real_cpa',
-				type: 'rightAligned',
 				valueGetter: (p) => toNumberBR(p.data?.real_cpa),
 				valueFormatter: currencyFormatter,
-				minWidth: 110,
+				minWidth: 80,
 				flex: 0.6,
 			},
 			{
 				headerName: 'Spend',
 				field: 'spent',
-				type: 'rightAligned',
 				valueGetter: (p) => toNumberBR(p.data?.spent),
 				valueFormatter: currencyFormatter,
-				minWidth: 120,
+				minWidth: 85,
 				flex: 0.8,
 			},
 			{
 				headerName: 'Facebook Revenue',
 				field: 'fb_revenue',
-				type: 'rightAligned',
 				valueGetter: (p) => toNumberBR(p.data?.fb_revenue),
 				valueFormatter: currencyFormatter,
-				minWidth: 180,
+				minWidth: 100,
 				flex: 0.8,
 			},
 			{
 				headerName: 'Push Revenue',
 				field: 'push_revenue',
-				type: 'rightAligned',
+				pinned: 'right',
+
 				valueGetter: (p) => toNumberBR(p.data?.push_revenue),
 				valueFormatter: currencyFormatter,
-				minWidth: 120,
+				minWidth: 94,
 				flex: 0.8,
 			},
 			{
 				headerName: 'Revenue',
 				field: 'revenue',
 				valueGetter: (p) => stripHtml(p.data?.revenue),
-				minWidth: 200,
+				minWidth: 115,
 				flex: 1.0,
+				pinned: 'right',
 				wrapText: true,
 				autoHeight: false,
 				cellRenderer: revenueCellRenderer,
@@ -1489,17 +1532,20 @@ const columnDefs = [
 			{
 				headerName: 'MX',
 				field: 'mx',
-				minWidth: 120,
+				minWidth: 80,
+				pinned: 'right',
+
 				valueGetter: (p) => stripHtml(p.data?.mx),
 				flex: 0.7,
 			},
 			{
 				headerName: 'Profit',
 				field: 'profit',
-				type: 'rightAligned',
+				pinned: 'right',
+
 				valueGetter: (p) => toNumberBR(p.data?.profit),
 				valueFormatter: currencyFormatter,
-				minWidth: 120,
+				minWidth: 80,
 				flex: 0.8,
 			},
 		],
@@ -1541,13 +1587,17 @@ function makeGrid() {
 		headerName: 'Campaign',
 		sortable: false,
 		wrapText: true,
-		minWidth: 350,
+		autoHeight: false,
+		minWidth: 270,
 		pinned: 'left',
 		cellStyle: (p) => (p?.node?.level === 0 ? { fontSize: '12px', lineHeight: '1.6' } : null),
 		cellRendererParams: { suppressCount: true, innerRenderer: (p) => p.data?.__label || '' },
 	};
 
 	const gridOptions = {
+		floatingFiltersHeight: 35,
+		groupHeaderHeight: 35,
+		headerHeight: 62,
 		context: { showToast: (msg, type) => Toastify({ text: msg }).showToast() },
 		rowModelType: 'serverSide',
 		cacheBlockSize: 200,
@@ -1572,7 +1622,7 @@ function makeGrid() {
 			headerCheckbox: true,
 			selectionColumn: { width: 80, pinned: 'left', suppressHeaderFilterButton: true },
 		},
-		rowHeight: 42,
+		rowHeight: 60,
 		animateRows: true,
 		sideBar: { toolPanels: ['columns', 'filters'], defaultToolPanel: null, position: 'right' },
 		theme: createAgTheme(),
@@ -1899,18 +1949,6 @@ const LionPage = (() => {
 		}
 
 		togglePinnedColsFromCheckbox(true); // silencioso no load
-
-		// opcional: botão para mock de backend
-		document.getElementById('btnMockOps')?.addEventListener('click', async () => {
-			try {
-				const r = await devMockOps();
-				showToast(r.message || 'Mock executado', 'success');
-				const api = globalThis.LionGrid?.api;
-				api?.refreshServerSide?.({ purge: false });
-			} catch (e) {
-				showToast(`Mock falhou: ${e?.message || e}`, 'danger');
-			}
-		});
 	}
 
 	if (document.readyState !== 'loading') mount();

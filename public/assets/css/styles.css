@@ -1,4 +1,36 @@
 /* pill arrastável dentro da célula */
+/* empilha texto do header e ícones em coluna */
+.ag-theme-quartz .ag-header-cell:not(.ag-header-group-cell) .ag-header-cell-label {
+	display: flex;
+	flex-direction: column; /* texto em cima, ícones embaixo */
+	align-items: center; /* ou: flex-start para alinhar à esquerda */
+	gap: 2px;
+}
+
+/* remove o recuo lateral padrão dos ícones */
+.ag-theme-quartz .ag-header-cell .ag-header-icons {
+	margin-left: 0;
+}
+
+/* centraliza o texto e deixa ocupar toda a largura */
+.ag-theme-quartz .ag-header-cell .ag-header-cell-text {
+	width: 100%;
+	text-align: center; /* troque para left se preferir */
+}
+
+.ag-theme-quartz .ag-header-group-cell {
+	font-size: 12px;
+}
+.ag-theme-quartz .ag-header-cell {
+	font-size: 12px;
+}
+.ag-cell.lion-center-cell {
+	display: flex; /* garante flex no host */
+	align-items: center; /* centro vertical */
+	justify-content: center;
+	/* padding: 10px;  */
+}
+
 .ag-status-pill {
 	--h: 22px;
 	--w: 70px;

@@ -562,44 +562,6 @@ async function updateCampaignBudget(req, env) {
 	}
 }
 
-/* ==================== /api/dev/mock-ops ==================== */
-async function devMockOps(req, env) {
-	try {
-		const reqForAssets = req.clone();
-		const full = await loadDump(reqForAssets, env);
-		if (!Array.isArray(full) || full.length === 0) throw new Error('Dump vazio');
-
-		const pool = full.filter((r) => r && (r.id != null || r.utm_campaign != null));
-		const pick = pool[Math.floor(Math.random() * pool.length)];
-		const id = String(pick.id ?? pick.utm_campaign);
-
-		const op = Math.random() < 0.5 ? 'status' : 'bid';
-		const store = getMutStore();
-		const prev = store.campaigns.get(id) || {};
-
-		let message;
-		if (op === 'status') {
-			const states = ['ACTIVE', 'PAUSED', 'DISABLED'];
-			const next = states[Math.floor(Math.random() * states.length)];
-			store.campaigns.set(id, { ...prev, campaign_status: next, status: next });
-			message = `Status da campanha ${id} => ${next}`;
-		} else {
-			const nextBid = Number((Math.random() * 20 + 1).toFixed(2)); // 1.00..21.00
-			store.campaigns.set(id, { ...prev, bid: nextBid });
-			message = `Bid da campanha ${id} => ${nextBid}`;
-		}
-
-		return new Response(JSON.stringify({ ok: true, id, op, message }), {
-			headers: { 'Content-Type': 'application/json' },
-		});
-	} catch (err) {
-		return new Response(JSON.stringify({ ok: false, error: String(err?.message || err) }), {
-			status: 500,
-			headers: { 'Content-Type': 'application/json' },
-		});
-	}
-}
-
 /* ==================== /api/ssrm/ (raiz) ==================== */
 async function ssrm(req, env) {
 	try {
@@ -654,8 +616,8 @@ async function testToggle(req, env) {
 		// pequeno delay para simular latência
 		await new Promise((r) => setTimeout(r, 300 + Math.random() * 600));
 
-		// 75% de chance de sucesso
-		const success = Math.random() < 0.75;
+		// 50% de chance de sucesso
+		const success = Math.random() < 0.5;
 
 		if (!success) {
 			return new Response(
@@ -692,6 +654,5 @@ export default {
 	updateAdsetStatus, // PUT /api/adsets/:id/status   <-- NOVA
 	updateCampaignBid, // PUT /api/campaigns/:id/bid
 	updateCampaignBudget, // PUT /api/campaigns/:id/budget
-	devMockOps, // /api/dev/mock-ops
 	testToggle, // 👈 nova rota mock genérica (só sorteia ok/erro)
 };
