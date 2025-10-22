@@ -531,11 +531,29 @@ function statusPillRenderer(p) {
 		span.textContent = stripHtml(raw) || '';
 		return span;
 	}
-	const label = (strongText(raw) || stripHtml(raw) || '').toUpperCase();
-	const color = pickStatusColor(label);
-	const host = document.createElement('span');
-	host.innerHTML = renderBadge(label, color);
-	return host.firstElementChild;
+
+	const labelClean = (strongText(raw) || stripHtml(raw) || '').trim();
+	const labelUp = labelClean.toUpperCase();
+
+	// INATIVA PAGAMENTO → 2 linhas dentro da pill cinza
+	if (/^\s*INATIVA\s+PAGAMENTO\s*$/i.test(labelClean)) {
+		const el = document.createElement('span');
+		el.className = 'lion-badge--inativa-pagamento';
+		el.textContent = 'INATIVA\nPAGAMENTO';
+		return el;
+	}
+
+	// ACTIVE → botão verdinho (igual ao “botão” que você quer)
+	if (labelUp === 'ACTIVE') {
+		const el = document.createElement('span');
+		el.className = 'lion-badge--active';
+		el.textContent = 'ACTIVE';
+		return el;
+	}
+
+	// Demais status → segue seu padrão antigo
+	const color = pickStatusColor(labelUp);
+	return renderBadgeNode(labelUp, color);
 }
 
 function pickChipColorFromFraction(value) {
