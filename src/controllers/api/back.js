@@ -77,7 +77,7 @@ function applySort(rows, sortModel) {
 			let bv = b[colId];
 
 			/* ======== 1️⃣ ordem customizada para STATUS ======== */
-			if (colId === 'account_status' || colId === 'campaign_status') {
+			if (colId === 'account_status' || colId === 'campaign_status' || colId === 'status') {
 				const order = ['ACTIVE', 'PAUSED', 'DISABLED', 'CLOSED'];
 				const ai = order.indexOf(String(av).toUpperCase());
 				const bi = order.indexOf(String(bv).toUpperCase());
@@ -155,7 +155,6 @@ function applyFilters(rows, filterModel) {
 }
 
 /* ==================== Agregadores de rodapé ==================== */
-
 const sum = (a, b) => (Number.isFinite(a) ? a : 0) + (Number.isFinite(b) ? b : 0);
 const safeDiv = (num, den) => (den > 0 ? num / den : 0);
 
@@ -169,8 +168,6 @@ function hasSomeField(rows, field) {
 // Totais/rodapé para a RAIZ (campanhas)
 function computeTotalsRoot(rows) {
 	const totals = {};
-
-	// Somas
 	totals.impressions_sum = sumField(rows, 'impressions');
 	totals.clicks_sum = sumField(rows, 'clicks');
 	totals.visitors_sum = sumField(rows, 'visitors');
@@ -183,26 +180,20 @@ function computeTotalsRoot(rows) {
 	totals.profit_sum = sumField(rows, 'profit');
 	totals.budget_sum = sumField(rows, 'budget');
 
-	// Médias derivadas / ponderadas
 	totals.cpc_total = safeDiv(totals.spent_sum, totals.clicks_sum);
 	totals.cpa_fb_total = safeDiv(totals.spent_sum, totals.conversions_sum);
 	totals.real_cpa_total = safeDiv(totals.spent_sum, totals.real_conversions_sum);
 	totals.ctr_total = safeDiv(totals.clicks_sum, totals.impressions_sum);
 	totals.mx_total = safeDiv(totals.revenue_sum, totals.spent_sum);
-
 	return totals;
 }
 
 // Totais genéricos (adsets/ads). Calcula o que existir.
 function computeTotalsGeneric(rows) {
 	const totals = {};
-
-	// somas "comuns"
 	const maybeSum = (key, outKey = `${key}_sum`) => {
 		if (hasSomeField(rows, key)) totals[outKey] = sumField(rows, key);
 	};
-
-	// campos que podem existir nos mocks
 	[
 		'impressions',
 		'clicks',
@@ -216,15 +207,11 @@ function computeTotalsGeneric(rows) {
 		'push_revenue',
 		'revenue',
 	].forEach((f) => maybeSum(f));
-
-	// revenue_sum se não veio como field
 	if (totals.revenue_sum == null) {
 		const fb = totals.fb_revenue_sum ?? 0;
 		const pr = totals.push_revenue_sum ?? 0;
 		totals.revenue_sum = fb + pr;
 	}
-
-	// derivadas usuais
 	const clicks = totals.clicks_sum ?? 0;
 	const impressions = totals.impressions_sum ?? 0;
 	const conversions = totals.conversions_sum ?? 0;
@@ -233,36 +220,22 @@ function computeTotalsGeneric(rows) {
 	const revenue = totals.revenue_sum ?? 0;
 
 	totals.cpc_total = safeDiv(spent, clicks);
-	totals.cpa_total = safeDiv(spent, conversions); // "CPA" genérico, se existir no dataset
+	totals.cpa_total = safeDiv(spent, conversions);
 	totals.real_cpa_total = safeDiv(spent, realConvs);
 	totals.ctr_total = safeDiv(clicks, impressions);
 	totals.epc_total = safeDiv(revenue, clicks);
 	totals.mx_total = safeDiv(revenue, spent);
-
 	return totals;
 }
 
 /* ==================== Carregamento via ASSETS/public ==================== */
-// No wrangler.toml, configure:
-//
-// [assets]
-// binding = "ASSETS"
-// directory = "./public"
-//
-// Se o arquivo estiver em ./public/constants/clean-dump.json,
-// o path aqui é "/constants/clean-dump.json" (sem /public).
-
-// troque o seu loadAssetJSON por este
 async function loadAssetJSON(request, env, assetPath) {
-	// cache leve por arquivo (por isolate)
 	globalThis.__LION_CACHE__ = globalThis.__LION_CACHE__ || new Map();
 	const cache = globalThis.__LION_CACHE__;
 	if (cache.has(assetPath)) return cache.get(assetPath);
 
-	// precisa ser URL absoluta
 	const absolute = new URL(assetPath, 'https://assets.local');
 
-	// 1) Deploy: usar somente ASSETS
 	if (env.ASSETS && typeof env.ASSETS.fetch === 'function') {
 		const res = await env.ASSETS.fetch(new Request(absolute.href, request));
 		if (!res || !res.ok) {
@@ -276,8 +249,6 @@ async function loadAssetJSON(request, env, assetPath) {
 		return json;
 	}
 
-	// 2) Dev fallback (opcional): tentar no mesmo host SEM /public
-	// Ative somente se você realmente tem um servidor servindo estático em /constants/*
 	if (globalThis.__DEV_ALLOW_HTTP_ASSETS__) {
 		const devUrl = new URL(assetPath, request.url);
 		const res2 = await fetch(devUrl.href);
@@ -292,21 +263,16 @@ async function loadAssetJSON(request, env, assetPath) {
 		return json;
 	}
 
-	// 3) Se nada disso, erro explícito
 	throw new Error('ASSETS não configurado e DEV fallback desativado.');
 }
-
-// Loader “especial” do dump raiz (mantido por compatibilidade)
 async function loadDump(request, env) {
 	return loadAssetJSON(request, env, '/constants/clean-dump.json');
 }
 
 /* ==================== Parser do request (POST body ou GET query) ==================== */
 function parseRequestPayload(req) {
-	// Suporta POST (body JSON) e GET (querystring)
 	const url = new URL(req.url);
 
-	// Defaults
 	let startRow = 0;
 	let endRow = 200;
 	let sortModel = [];
@@ -322,12 +288,10 @@ function parseRequestPayload(req) {
 				sortModel = Array.isArray(body.sortModel) ? body.sortModel : sortModel;
 				filterModel = typeof body.filterModel === 'object' ? body.filterModel : filterModel;
 
-				// permite também passar campaign_id/adset_id/period no body
 				if (body.campaign_id) url.searchParams.set('campaign_id', body.campaign_id);
 				if (body.adset_id) url.searchParams.set('adset_id', body.adset_id);
 				if (body.period) url.searchParams.set('period', body.period);
 			} else {
-				// Query (GET) fallback
 				const sr = Number(url.searchParams.get('startRow'));
 				const er = Number(url.searchParams.get('endRow'));
 				if (Number.isFinite(sr)) startRow = sr;
@@ -355,6 +319,39 @@ function filterByParentAndPeriod(rows, { idKey, idValue, period }) {
 	});
 }
 
+/* ==================== Overlay em memória ==================== */
+// ⚠️ VOLÁTIL: por isolate. Para durabilidade real, use KV/D1.
+function getMutStore() {
+	globalThis.__LION_MUT__ = globalThis.__LION_MUT__ || { campaigns: new Map(), adsets: new Map() };
+	return globalThis.__LION_MUT__;
+}
+
+// Campaign overlay (root)
+function overlayCampaign(row) {
+	const store = getMutStore();
+	const id = String(row.id ?? row.utm_campaign ?? '');
+	if (!id) return row;
+	const mut = store.campaigns.get(id);
+	if (!mut) return row;
+	return { ...row, ...mut };
+}
+function overlayCampaignArray(rows) {
+	return rows.map(overlayCampaign);
+}
+
+// Adset overlay
+function overlayAdset(row) {
+	const store = getMutStore();
+	const id = String(row.id ?? '');
+	if (!id) return row;
+	const mut = store.adsets.get(id);
+	if (!mut) return row;
+	return { ...row, ...mut };
+}
+function overlayAdsetArray(rows) {
+	return rows.map(overlayAdset);
+}
+
 /* ==================== /api/adsets (filtra por campaign_id + period) ==================== */
 async function adsets(req, env) {
 	try {
@@ -378,13 +375,16 @@ async function adsets(req, env) {
 		// 1) parent + period
 		let rows = filterByParentAndPeriod(full, { idKey: 'idroot', idValue: campaignId, period });
 
+		// >>> aplica overlay de ADSETS ANTES de filtrar/ordenar
+		rows = overlayAdsetArray(rows);
+
 		// 2) filtros genéricos
 		rows = applyFilters(rows, filterModel);
 
 		// 3) ordena
 		rows = applySort(rows, sortModel);
 
-		// >>> Totais sobre o conjunto filtrado
+		// Totais
 		const totals = computeTotalsGeneric(rows);
 
 		// 4) SSRM slice
@@ -432,7 +432,7 @@ async function ads(req, env) {
 		// 3) ordena
 		rows = applySort(rows, sortModel);
 
-		// >>> Totais sobre o conjunto filtrado
+		// Totais
 		const totals = computeTotalsGeneric(rows);
 
 		// 4) SSRM slice
@@ -451,35 +451,13 @@ async function ads(req, env) {
 	}
 }
 
-// routes/lionRows.js
-
-/* ... (seu código existente acima permanece igual) ... */
-
-// novoagora: overlay volátil em memória para mutações
-function getMutStore() {
-	globalThis.__LION_MUT__ = globalThis.__LION_MUT__ || { campaigns: new Map() };
-	return globalThis.__LION_MUT__;
-}
-function overlayCampaign(row) {
-	// row: um item do dump raiz (campanha)
-	const store = getMutStore();
-	const id = String(row.id ?? row.utm_campaign ?? '');
-	if (!id) return row;
-	const mut = store.campaigns.get(id);
-	if (!mut) return row;
-	return { ...row, ...mut };
-}
-function overlayCampaignArray(rows) {
-	return rows.map(overlayCampaign);
-}
-
-/* ==================== /api/campaigns/:id/status ==================== */
-// novoagora
+/* ==================== Mutations (Campaigns + Adsets) ==================== */
+// campaign status (já existia)
 async function updateCampaignStatus(req, env) {
 	try {
 		const url = new URL(req.url);
 		const parts = url.pathname.split('/').filter(Boolean); // ["api","campaigns",":id","status"]
-		const id = parts[2]; // campaigns/:id/status
+		const id = parts[2];
 		if (!id) throw new Error('Missing campaign id');
 
 		const body = await req.json().catch(() => ({}));
@@ -502,18 +480,45 @@ async function updateCampaignStatus(req, env) {
 	}
 }
 
-/* ==================== /api/campaigns/:id/bid ==================== */
-// novoagora
+// ⚠️ NOVA: adset status
+async function updateAdsetStatus(req, env) {
+	try {
+		const url = new URL(req.url);
+		const parts = url.pathname.split('/').filter(Boolean); // ["api","adsets",":id","status"]
+		const id = parts[2];
+		if (!id) throw new Error('Missing adset id');
+
+		const body = await req.json().catch(() => ({}));
+		const status = String(body.status || '').toUpperCase();
+		const allow = new Set(['ACTIVE', 'PAUSED', 'DISABLED', 'CLOSED']);
+		if (!allow.has(status)) throw new Error('Invalid status');
+
+		const store = getMutStore();
+		const prev = store.adsets.get(id) || {};
+		// nos adsets o campo de status é "status"
+		store.adsets.set(id, { ...prev, status });
+
+		return new Response(JSON.stringify({ ok: true, id, status }), {
+			headers: { 'Content-Type': 'application/json' },
+		});
+	} catch (err) {
+		return new Response(JSON.stringify({ ok: false, error: String(err?.message || err) }), {
+			status: 400,
+			headers: { 'Content-Type': 'application/json' },
+		});
+	}
+}
+
+/* ==================== Bid/Budget (campanha – já existentes) ==================== */
 async function updateCampaignBid(req, env) {
 	try {
 		const url = new URL(req.url);
-		const parts = url.pathname.split('/').filter(Boolean); // ["api","campaigns",":id","bid"]
+		const parts = url.pathname.split('/').filter(Boolean);
 		const id = parts[2];
 		if (!id) throw new Error('Missing campaign id');
 
 		const body = await req.json().catch(() => ({}));
-		const raw = body.bid;
-		const n = Number(raw);
+		const n = Number(body.bid);
 		if (!Number.isFinite(n) || n < 0) throw new Error('Invalid bid');
 
 		const store = getMutStore();
@@ -530,17 +535,16 @@ async function updateCampaignBid(req, env) {
 		});
 	}
 }
-/* ==================== /api/campaigns/:id/budget ==================== */
+
 async function updateCampaignBudget(req, env) {
 	try {
 		const url = new URL(req.url);
-		const parts = url.pathname.split('/').filter(Boolean); // ["api","campaigns",":id","budget"]
+		const parts = url.pathname.split('/').filter(Boolean);
 		const id = parts[2];
 		if (!id) throw new Error('Missing campaign id');
 
 		const body = await req.json().catch(() => ({}));
-		const raw = body.budget;
-		const n = Number(raw);
+		const n = Number(body.budget);
 		if (!Number.isFinite(n) || n < 0) throw new Error('Invalid budget');
 
 		const store = getMutStore();
@@ -557,15 +561,14 @@ async function updateCampaignBudget(req, env) {
 		});
 	}
 }
+
 /* ==================== /api/dev/mock-ops ==================== */
-// novoagora: sorteia e aplica uma mutação (status ou bid)
 async function devMockOps(req, env) {
 	try {
 		const reqForAssets = req.clone();
 		const full = await loadDump(reqForAssets, env);
 		if (!Array.isArray(full) || full.length === 0) throw new Error('Dump vazio');
 
-		// escolhe uma campanha com id válido
 		const pool = full.filter((r) => r && (r.id != null || r.utm_campaign != null));
 		const pick = pool[Math.floor(Math.random() * pool.length)];
 		const id = String(pick.id ?? pick.utm_campaign);
@@ -611,7 +614,7 @@ async function ssrm(req, env) {
 			throw new Error('Dump JSON inválido (esperado array).');
 		}
 
-		// novoagora: aplica overlay ANTES de filtrar/ordenar
+		// overlay de CAMPANHAS antes de filtrar/ordenar
 		let rows = overlayCampaignArray(clean ? full.map(cleanRow) : full);
 
 		rows = applyFilters(rows, filterModel);
@@ -634,16 +637,61 @@ async function ssrm(req, env) {
 	}
 }
 
-/* ... (adsets/ads mantidos como estão) ... */
+// ==================== /api/dev/test-toggle (mock genérico de sucesso/erro) ====================
+async function testToggle(req, env) {
+	try {
+		const body = await req.json().catch(() => ({}));
+		const feature = String(body?.feature || '').trim(); // ex.: 'pin' | 'sizeMode'
+		const value = body?.value; // ex.: true | 'auto' | 'fit'
+
+		if (!feature || value === undefined) {
+			return new Response(JSON.stringify({ ok: false, error: 'Missing feature/value' }), {
+				status: 400,
+				headers: { 'Content-Type': 'application/json' },
+			});
+		}
+
+		// pequeno delay para simular latência
+		await new Promise((r) => setTimeout(r, 300 + Math.random() * 600));
+
+		// 75% de chance de sucesso
+		const success = Math.random() < 0.75;
+
+		if (!success) {
+			return new Response(
+				JSON.stringify({
+					ok: false,
+					error: `Mock: falha ao aplicar "${feature}"`,
+				}),
+				{ headers: { 'Content-Type': 'application/json' } }
+			);
+		}
+
+		return new Response(
+			JSON.stringify({
+				ok: true,
+				applied: { feature, value },
+				message: `Aplicado "${feature}" = ${JSON.stringify(value)}`,
+			}),
+			{ headers: { 'Content-Type': 'application/json' } }
+		);
+	} catch (err) {
+		return new Response(JSON.stringify({ ok: false, error: String(err?.message || err) }), {
+			status: 500,
+			headers: { 'Content-Type': 'application/json' },
+		});
+	}
+}
 
 /* ==================== Export ==================== */
 export default {
 	ssrm, // /api/ssrm/
 	adsets, // /api/adsets
 	ads, // /api/ads
-	// novoagora: novas rotas
-	updateCampaignStatus, // /api/campaigns/:id/status (PUT)
-	updateCampaignBid,
-	updateCampaignBudget, // /api/campaigns/:id/bid    (PUT)
-	devMockOps, // /api/dev/mock-ops        (POST/GET)
+	updateCampaignStatus, // PUT /api/campaigns/:id/status
+	updateAdsetStatus, // PUT /api/adsets/:id/status   <-- NOVA
+	updateCampaignBid, // PUT /api/campaigns/:id/bid
+	updateCampaignBudget, // PUT /api/campaigns/:id/budget
+	devMockOps, // /api/dev/mock-ops
+	testToggle, // 👈 nova rota mock genérica (só sorteia ok/erro)
 };

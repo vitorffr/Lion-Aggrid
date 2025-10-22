@@ -30,6 +30,7 @@ router.put('/api/campaigns/:id/status', backend.updateCampaignStatus);
 router.put('/api/campaigns/:id/bid', backend.updateCampaignBid);
 router.put('/api/campaigns/:id/budget', backend.updateCampaignBudget);
 router.all('/api/dev/mock-ops', backend.devMockOps);
+router.put('/api/adsets/:id/status', backend.updateAdsetStatus);
 
 router.post('/api/ssrm/', backend.ssrm);
 router.post('/api/adsets/', backend.adsets);

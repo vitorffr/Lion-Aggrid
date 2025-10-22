@@ -564,6 +564,22 @@ function chipFractionBadgeRenderer(p) {
 	host.innerHTML = renderBadge(label, color);
 	return host.firstElementChild;
 }
+async function updateAdsetStatusBackend(id, status) {
+	const t0 = performance.now();
+	if (DEV_FAKE_NETWORK_LATENCY_MS > 0) await sleep(DEV_FAKE_NETWORK_LATENCY_MS);
+
+	const res = await fetch(`/api/adsets/${encodeURIComponent(id)}/status`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		credentials: 'same-origin',
+		body: JSON.stringify({ status }),
+	});
+	const data = await res.json().catch(() => ({}));
+	if (!res.ok || data?.ok === false) throw new Error(data?.error || 'Adset status update failed');
+
+	await withMinSpinner(t0, MIN_SPINNER_MS);
+	return data;
+}
 
 async function updateCampaignStatusBackend(id, status) {
 	const t0 = performance.now();
@@ -889,9 +905,10 @@ StatusSliderRenderer.prototype.init = function (p) {
 	const cfg = p.colDef?.cellRendererParams || {};
 	const interactive = new Set(Array.isArray(cfg.interactiveLevels) ? cfg.interactiveLevels : [0]);
 	const smallKnob = !!cfg.smallKnob;
-	const level = p?.node?.level ?? 0;
+	const level = p?.node?.level ?? 0; // 0 = campaign, 1 = adset, 2 = ad
 	const colId = p.column.getColId();
 
+	// pega o valor atual do status (campaign_status OU status)
 	const getVal = () =>
 		String(p.data?.campaign_status ?? p.data?.status ?? p.value ?? '').toUpperCase();
 	const isOnVal = () => getVal() === 'ACTIVE';
@@ -923,14 +940,10 @@ StatusSliderRenderer.prototype.init = function (p) {
 	this.eGui = root;
 
 	// ——— helpers de visual
-	let trackLenPx = 0; // cache por gesto
-	let rafToken = null; // throttle nos moves
+	let trackLenPx = 0;
+	let rafToken = null;
 
-	const computeTrackLen = () => {
-		// largura disponível = largura do pill - altura (formato pílula)
-		return Math.max(0, root.clientWidth - root.clientHeight);
-	};
-
+	const computeTrackLen = () => Math.max(0, root.clientWidth - root.clientHeight);
 	const setProgress = (pct01) => {
 		const pct = Math.max(0, Math.min(1, pct01));
 		fill.style.width = pct * 100 + '%';
@@ -949,10 +962,26 @@ StatusSliderRenderer.prototype.init = function (p) {
 	// ——— spinner na célula
 	const setCellBusy = (on) => {
 		setCellLoading(p.node, colId, !!on);
-		p.api.refreshCells({ rowNodes: [p.node], columns: [colId] }); // sem force
+		p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
 	};
 
-	// ——— commit com backend
+	// ——— escolhe endpoint/id conforme nível
+	function resolveIdentity() {
+		// lvl 0 (campaign): id = data.id || data.utm_campaign
+		// lvl 1 (adset)   : id = data.id (do adset.json)
+		if (level === 0) {
+			const id = String(p.data?.id ?? p.data?.utm_campaign ?? '');
+			return { scope: 'campaign', id };
+		}
+		if (level === 1) {
+			const id = String(p.data?.id ?? '');
+			return { scope: 'adset', id };
+		}
+		return { scope: 'unknown', id: '' };
+	}
+
+	// ——— commit com backend (campanha OU adset)
+	// ——— commit com backend (decide endpoint por nível: 0=campanha, 1=adset)
 	const commit = async (nextOrString, prevOn) => {
 		const nextVal =
 			typeof nextOrString === 'string'
@@ -969,12 +998,26 @@ StatusSliderRenderer.prototype.init = function (p) {
 		setProgress(nextVal === 'ACTIVE' ? 1 : 0);
 		p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
 
-		const id = String(p.data?.id ?? p.data?.utm_campaign ?? '');
+		const id =
+			(p.node?.level === 0
+				? String(p.data?.id ?? p.data?.utm_campaign ?? '')
+				: String(p.data?.id ?? '')) || '';
 		if (!id) return;
 
 		setCellBusy(true);
 		try {
-			await updateCampaignStatusBackend(id, nextVal);
+			// nível 0 = campanha -> /api/campaigns/:id/status
+			// nível 1 = adset    -> /api/adsets/:id/status
+			if ((p.node?.level ?? 0) === 1) {
+				await updateAdsetStatusBackend(id, nextVal);
+			} else {
+				await updateCampaignStatusBackend(id, nextVal);
+			}
+			if (this._userInteracted) {
+				const scope = (p.node?.level ?? 0) === 1 ? 'Adset' : 'Campanha';
+				const msg = nextVal === 'ACTIVE' ? `${scope} ativado` : `${scope} pausado`;
+				showToast(msg, 'success');
+			}
 		} catch (e) {
 			const rollbackVal = prevOn ? 'ACTIVE' : 'PAUSED';
 			if (p.data) {
@@ -989,7 +1032,7 @@ StatusSliderRenderer.prototype.init = function (p) {
 		}
 	};
 
-	// ——— drag com listeners só durante o gesto
+	// ——— drag listeners
 	const MOVE_THRESHOLD = 6;
 	let dragging = false,
 		startX = 0,
@@ -997,8 +1040,7 @@ StatusSliderRenderer.prototype.init = function (p) {
 		moved = false;
 
 	const onPointerMove = (x) => {
-		if (!dragging) return;
-		if (rafToken) return;
+		if (!dragging || rafToken) return;
 		rafToken = requestAnimationFrame(() => {
 			rafToken = null;
 			const dx = x - startX;
@@ -1026,7 +1068,6 @@ StatusSliderRenderer.prototype.init = function (p) {
 		detachWindowListeners();
 
 		if (!moved) {
-			// clique simples => abre menu
 			ev?.preventDefault?.();
 			ev?.stopPropagation?.();
 			openMenu();
@@ -1045,11 +1086,13 @@ StatusSliderRenderer.prototype.init = function (p) {
 	const onTouchEnd = (e) => endDrag(e.changedTouches[0].clientX, e);
 
 	const beginDrag = (x, ev) => {
+		this._userInteracted = true;
+
 		dragging = true;
 		moved = false;
 		startX = x;
 		startOn = root.getAttribute('aria-checked') === 'true';
-		trackLenPx = computeTrackLen(); // cache por gesto
+		trackLenPx = computeTrackLen();
 
 		window.addEventListener('mousemove', onMouseMove);
 		window.addEventListener('mouseup', onMouseUp);
@@ -1089,6 +1132,8 @@ StatusSliderRenderer.prototype.init = function (p) {
 			pick: async (st) => {
 				const prevOn = cur === 'ACTIVE';
 				if (st !== cur) await commit(st, prevOn);
+				this._userInteracted = true;
+				await commit(st, prevOn);
 			},
 		});
 	};
