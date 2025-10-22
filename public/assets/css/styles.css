@@ -1,5 +1,36 @@
 /* pill arrastável dentro da célula */
 /* empilha texto do header e ícones em coluna */
+
+/* pill já existente */
+.ag-status-pill {
+	--h: 22px;
+	--w: 80px;
+	--pad: 2px;
+	/* novo: folga mínima da borda p/ o knob “encostar” */
+	--edge-gap: 1px;
+}
+
+/* knob padrão (se algum lugar renderizar sem --sm, continua igual) */
+.ag-status-knob {
+	position: relative;
+	z-index: 2;
+	width: calc(var(--h) - var(--pad) * 2);
+	height: calc(var(--h) - var(--pad) * 2);
+	border-radius: 50%;
+	background: var(--knob, #0b1220);
+	box-shadow: 0 1px 0 rgba(0, 0, 0, 0.25), inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+	transform: translateX(0);
+	transition: transform 140ms ease;
+}
+
+/* knob pequeno */
+.ag-status-knob--sm {
+	width: 12px; /* <<< mini */
+	height: 12px; /* <<< mini */
+	border-radius: 9999px;
+	box-shadow: 0 1px 0 rgba(0, 0, 0, 0.25), inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+
 /* pill específica para "INATIVA PAGAMENTO" em 2 linhas */
 .lion-badge--inativa-pagamento {
 	display: inline-block;
@@ -96,7 +127,7 @@
 
 .ag-status-pill {
 	--h: 22px;
-	--w: 70px;
+	--w: 80px;
 	--pad: 2px;
 	--bg-off: #334155; /* slate-700 */
 	--bg-on: #22c55e; /* green-500 */
@@ -133,13 +164,22 @@
 .ag-status-label {
 	position: absolute;
 	inset: 0;
-	display: grid;
-	place-items: center;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+
+	/* reserva espaço igual pros lados (metade do knob + padding da pill) */
+	padding-inline: var(--label-pad);
+
 	letter-spacing: 0.6px;
 	z-index: 1;
 	pointer-events: none;
-}
 
+	/* melhora o render da fonte e evita “meio pixel” */
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+	transform: translateZ(0); /* evita subpixel jitter */
+}
 /* foco acessível */
 .ag-status-pill:focus-visible {
 	box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.35);

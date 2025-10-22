@@ -22,22 +22,25 @@ async function withMinSpinner(startMs, minMs) {
 	const elapsed = performance.now() - startMs;
 	if (elapsed < minMs) await sleep(minMs - elapsed);
 }
+// marca por célula que o próximo setDataValue NÃO deve disparar lógica de edição
+function shouldSuppressCellChange(p, colId) {
+	const key = `__suppress_${colId}`;
+	if (p?.data?.[key]) {
+		p.data[key] = false;
+		return true;
+	}
+	return false;
+}
+function setCellSilently(p, colId, value) {
+	const key = `__suppress_${colId}`;
+	if (p?.data) p.data[key] = true;
+	p.node.setDataValue(colId, value);
+}
 
 /* ====== CSS de loading (injeção automática) ====== */
 (function ensureLoadingStyles() {
 	if (document.getElementById('lion-loading-styles')) return;
 	const css = `
-/* célula em loading: esconde todo conteúdo e mostra só a bolinha */
-.ag-cell.ag-cell-loading {
-  position: relative;
-  pointer-events: none;
-
-  /* some com texto cru */
-  color: transparent !important;
-  text-shadow: none !important;
-  caret-color: transparent !important;
-}
-
 /* esconde qualquer elemento interno (renderers, spans, etc.) */
 .ag-cell.ag-cell-loading * {
   visibility: hidden !important;
@@ -175,22 +178,23 @@ async function withMinSpinner(startMs, minMs) {
 		const sel = byId('presetUserSelect');
 		if (!sel) return;
 
-		// Lê o preset ativo salvo
 		const activePreset = localStorage.getItem(LS_KEY_ACTIVE_PRESET) || '';
 
-		// Limpa e reconstroi as options
+		// limpa e remonta
 		while (sel.firstChild) sel.removeChild(sel.firstChild);
 
-		// Placeholder com nome do preset ativo ou texto padrão
-		const placeholderText = 'User Presets';
-		sel.appendChild(new Option(placeholderText, ''));
+		// placeholder vira "Reset layout" quando não há ativo
+		const placeholderText = activePreset ? `Active: ${activePreset}` : 'Default';
+		sel.appendChild(new Option(placeholderText, '')); // value vazio = reset
 
-		// Adiciona todos os presets
+		// lista presets do usuário
 		listPresetNames().forEach((name) => sel.appendChild(new Option(name, name)));
 
-		// Se há preset ativo válido, seleciona ele
+		// seleciona o ativo ou o "Reset layout"
 		if (activePreset && [...sel.options].some((o) => o.value === activePreset)) {
 			sel.value = activePreset;
+		} else {
+			sel.value = ''; // seleciona Reset
 		}
 	}
 
@@ -365,9 +369,17 @@ async function withMinSpinner(startMs, minMs) {
 	// meus presets
 	byId('presetUserSelect')?.addEventListener('change', (e) => {
 		const v = e.target.value;
-		if (!v) return;
+		if (!v) {
+			// reset geral quando escolher "Reset layout"
+			resetLayout(); // já limpa state e filtros/sort
+			localStorage.removeItem(LS_KEY_ACTIVE_PRESET);
+			// garante que o select exiba "Reset layout" após reset
+			refreshPresetUserSelect();
+			return;
+		}
 		applyPresetUser(v);
 	});
+
 	byId('btnSaveAsPreset')?.addEventListener('click', saveAsPreset);
 	byId('btnDeletePreset')?.addEventListener('click', deletePreset);
 	byId('btnDownloadPreset')?.addEventListener('click', downloadPreset);
@@ -983,7 +995,14 @@ StatusSliderRenderer.prototype.init = function (p) {
 	let trackLenPx = 0;
 	let rafToken = null;
 
-	const computeTrackLen = () => Math.max(0, root.clientWidth - root.clientHeight);
+	const computeTrackLen = () => {
+		const pad = parseFloat(getComputedStyle(root).paddingLeft || '0'); // var(--pad)
+		const knobW = knob.clientWidth || 0;
+		// onde o knob pode ir: de pad+edgeGap até (largura - pad - edgeGap - knobW)
+		const edgeGap = parseFloat(getComputedStyle(root).getPropertyValue('--edge-gap') || '0');
+		const travel = root.clientWidth - 2 * pad - 2 * edgeGap - knobW;
+		return Math.max(0, travel);
+	};
 	const setProgress = (pct01) => {
 		const pct = Math.max(0, Math.min(1, pct01));
 		fill.style.width = pct * 100 + '%';
@@ -1326,14 +1345,23 @@ const columnDefs = [
 				},
 				onCellValueChanged: async (p) => {
 					try {
+						// 1) aborta se veio de um rollback silencioso
+						if (shouldSuppressCellChange(p, 'budget')) return;
+
 						if ((p?.node?.level ?? 0) !== 0) return;
 						const row = p?.data || {};
 						const id = String(row.id ?? row.utm_campaign ?? '');
 						if (!id) return;
 
-						const n = toNumberBR(p.newValue);
-						if (!Number.isFinite(n) || n < 0) {
-							p.node.setDataValue('budget', p.oldValue);
+						const oldN = toNumberBR(p.oldValue);
+						const newN = toNumberBR(p.newValue);
+
+						// 2) se não mudou de fato, não faz nada
+						if (Number.isFinite(oldN) && Number.isFinite(newN) && oldN === newN) return;
+
+						if (!Number.isFinite(newN) || newN < 0) {
+							// rollback silencioso (NÃO re-dispara handler)
+							setCellSilently(p, 'budget', p.oldValue);
 							showToast('Budget inválido', 'danger');
 							return;
 						}
@@ -1343,26 +1371,26 @@ const columnDefs = [
 						p.api.refreshCells({ rowNodes: [p.node], columns: ['budget'] });
 
 						// 1) TESTE
-						const okTest = await toggleFeature('budget', { id, value: n });
+						const okTest = await toggleFeature('budget', { id, value: newN });
 						if (!okTest) {
-							// falha no teste => NÃO aplica alteração
-							p.node.setDataValue('budget', p.oldValue);
+							// rollback silencioso (sem retestar)
+							setCellSilently(p, 'budget', p.oldValue);
 							p.api.refreshCells({ rowNodes: [p.node], columns: ['budget'] });
 							return;
 						}
 
 						// 2) backend real
-						await updateCampaignBudgetBackend(id, n);
+						await updateCampaignBudgetBackend(id, newN);
 
-						// aplica valor final + refresh
-						p.node.setDataValue('budget', n);
+						// aplica valor final (se já estava igual, nada muda) — sem disparar novamente
+						setCellSilently(p, 'budget', newN);
 						p.api.refreshCells({ rowNodes: [p.node], columns: ['budget'] });
 						showToast('Budget atualizado', 'success');
 					} catch (e) {
-						p.node.setDataValue('budget', p.oldValue);
+						// rollback silencioso
+						setCellSilently(p, 'budget', p.oldValue);
 						showToast(`Erro ao salvar Budget: ${e?.message || e}`, 'danger');
 					} finally {
-						// loading OFF
 						setCellLoading(p.node, 'budget', false);
 						p.api.refreshCells({ rowNodes: [p.node], columns: ['budget'] });
 					}
@@ -1382,42 +1410,42 @@ const columnDefs = [
 				},
 				onCellValueChanged: async (p) => {
 					try {
+						if (shouldSuppressCellChange(p, 'bid')) return;
+
 						if ((p?.node?.level ?? 0) !== 0) return;
 						const row = p?.data || {};
 						const id = String(row.id ?? row.utm_campaign ?? '');
 						if (!id) return;
 
-						const n = toNumberBR(p.newValue);
-						if (!Number.isFinite(n) || n < 0) {
-							p.node.setDataValue('bid', p.oldValue);
+						const oldN = toNumberBR(p.oldValue);
+						const newN = toNumberBR(p.newValue);
+						if (Number.isFinite(oldN) && Number.isFinite(newN) && oldN === newN) return;
+
+						if (!Number.isFinite(newN) || newN < 0) {
+							setCellSilently(p, 'bid', p.oldValue);
 							showToast('Bid inválido', 'danger');
 							return;
 						}
 
-						// loading ON
 						setCellLoading(p.node, 'bid', true);
 						p.api.refreshCells({ rowNodes: [p.node], columns: ['bid'] });
 
-						// 1) TESTE
-						const okTest = await toggleFeature('bid', { id, value: n });
+						const okTest = await toggleFeature('bid', { id, value: newN });
 						if (!okTest) {
-							// falha no teste => NÃO aplica alteração
-							p.node.setDataValue('bid', p.oldValue);
+							setCellSilently(p, 'bid', p.oldValue);
 							p.api.refreshCells({ rowNodes: [p.node], columns: ['bid'] });
 							return;
 						}
 
-						// 2) backend real
-						await updateCampaignBidBackend(id, n);
+						await updateCampaignBidBackend(id, newN);
 
-						p.node.setDataValue('bid', n);
+						setCellSilently(p, 'bid', newN);
 						p.api.refreshCells({ rowNodes: [p.node], columns: ['bid'] });
 						showToast('Bid atualizado', 'success');
 					} catch (e) {
-						p.node.setDataValue('bid', p.oldValue);
+						setCellSilently(p, 'bid', p.oldValue);
 						showToast(`Erro ao salvar Bid: ${e?.message || e}`, 'danger');
 					} finally {
-						// loading OFF
 						setCellLoading(p.node, 'bid', false);
 						p.api.refreshCells({ rowNodes: [p.node], columns: ['bid'] });
 					}
