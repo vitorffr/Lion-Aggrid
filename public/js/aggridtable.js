@@ -1301,7 +1301,7 @@ const columnDefs = [
 				cellEditor: 'agNumberCellEditor',
 				valueParser: parseCurrencyInput,
 				valueFormatter: currencyFormatter,
-				minWidth: 90,
+				minWidth: 100,
 				flex: 0.6,
 				cellClassRules: {
 					'ag-cell-loading': (p) => isCellLoading(p, 'budget'),
@@ -1496,7 +1496,7 @@ const columnDefs = [
 				field: 'spent',
 				valueGetter: (p) => toNumberBR(p.data?.spent),
 				valueFormatter: currencyFormatter,
-				minWidth: 85,
+				minWidth: 90,
 				flex: 0.8,
 			},
 			{
@@ -1545,7 +1545,7 @@ const columnDefs = [
 
 				valueGetter: (p) => toNumberBR(p.data?.profit),
 				valueFormatter: currencyFormatter,
-				minWidth: 80,
+				minWidth: 95,
 				flex: 0.8,
 			},
 		],

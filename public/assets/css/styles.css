@@ -1,5 +1,29 @@
 /* pill arrastável dentro da célula */
 /* empilha texto do header e ícones em coluna */
+
+/* ===== Footer (pinned bottom) destacado ===== */
+.ag-theme-quartz .ag-floating-bottom {
+	--lion-footer-bg: #141414; /* <<< MUDE A COR AQUI */
+	--lion-footer-fg: #e2e8f0;
+	box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.35); /* glow no topo do footer */
+}
+
+.ag-theme-quartz .ag-floating-bottom .ag-row,
+.ag-theme-quartz .ag-floating-bottom .ag-cell {
+	background: var(--lion-footer-bg) !important;
+	color: var(--lion-footer-fg) !important;
+}
+
+.ag-theme-quartz .ag-floating-bottom .ag-cell {
+	font-weight: 700;
+	border-top: 1px solid var(--lion-footer-border);
+}
+
+/* Não muda no hover */
+.ag-theme-quartz .ag-floating-bottom .ag-row:hover .ag-cell {
+	background: var(--lion-footer-bg) !important;
+}
+
 .ag-theme-quartz .ag-header-cell:not(.ag-header-group-cell) .ag-header-cell-label {
 	display: flex;
 	flex-direction: column; /* texto em cima, ícones embaixo */
