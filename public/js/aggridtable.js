@@ -22,6 +22,7 @@ async function withMinSpinner(startMs, minMs) {
 	const elapsed = performance.now() - startMs;
 	if (elapsed < minMs) await sleep(minMs - elapsed);
 }
+
 // marca por célula que o próximo setDataValue NÃO deve disparar lógica de edição
 function shouldSuppressCellChange(p, colId) {
 	const key = `__suppress_${colId}`;
@@ -1618,6 +1619,28 @@ function normalizeAdsetRow(r) {
 function normalizeAdRow(r) {
 	return { __nodeType: 'ad', __label: stripHtml(r.name || '(ad)'), ...r };
 }
+// Helper (coloque em qualquer lugar do arquivo, junto dos outros utils)
+async function copyToClipboard(text) {
+	try {
+		await navigator.clipboard.writeText(String(text ?? ''));
+		showToast('Copiado!', 'success');
+	} catch {
+		const ta = document.createElement('textarea');
+		ta.value = String(text ?? '');
+		ta.style.position = 'fixed';
+		ta.style.left = '-9999px';
+		document.body.appendChild(ta);
+		ta.select();
+		try {
+			document.execCommand('copy');
+			showToast('Copiado!', 'success');
+		} catch {
+			showToast('Falha ao copiar', 'danger');
+		} finally {
+			ta.remove();
+		}
+	}
+}
 
 /* ============ Grid (Tree Data + SSRM) ============ */
 function makeGrid() {
@@ -1629,6 +1652,7 @@ function makeGrid() {
 	}
 	gridDiv.classList.add('ag-theme-quartz');
 
+	// SUBSTITUA seu autoGroupColumnDef por este
 	const autoGroupColumnDef = {
 		headerName: 'Campaign',
 		sortable: false,
@@ -1636,8 +1660,53 @@ function makeGrid() {
 		autoHeight: false,
 		minWidth: 270,
 		pinned: 'left',
+		// mantém seu estilo no nível 0
 		cellStyle: (p) => (p?.node?.level === 0 ? { fontSize: '12px', lineHeight: '1.6' } : null),
-		cellRendererParams: { suppressCount: true, innerRenderer: (p) => p.data?.__label || '' },
+
+		// tooltip com Campaign — UTM
+		tooltipValueGetter: (p) => {
+			const d = p.data || {};
+			if (p?.node?.level === 0) {
+				const name = d.__label || '';
+				const utm = d.utm_campaign || '';
+				return utm ? `${name} — ${utm}` : name;
+			}
+			return d.__label || '';
+		},
+
+		// duas linhas no nível 0: Campaign (negrito) + UTM (menor)
+		cellRendererParams: {
+			suppressCount: true,
+			innerRenderer: (p) => {
+				const d = p.data || {};
+				const label = d.__label || '';
+				const utm = d.utm_campaign || '';
+
+				if (p?.node?.level === 0 && (label || utm)) {
+					const wrap = document.createElement('span');
+					wrap.style.display = 'inline-flex';
+					wrap.style.flexDirection = 'column';
+					wrap.style.lineHeight = '1.25';
+
+					const l1 = document.createElement('span');
+					l1.textContent = label;
+					l1.style.fontWeight = '600';
+					wrap.appendChild(l1);
+
+					if (utm) {
+						const l2 = document.createElement('span');
+						l2.textContent = utm;
+						l2.style.fontSize = '9px';
+						l2.style.opacity = '0.75';
+						l2.style.letterSpacing = '0.2px';
+						wrap.appendChild(l2);
+					}
+					return wrap;
+				}
+				// adset/ads: só o label
+				return label;
+			},
+		},
 	};
 
 	const gridOptions = {
@@ -1674,6 +1743,36 @@ function makeGrid() {
 		theme: createAgTheme(),
 
 		// Obs.: o toggle de status é feito no próprio renderer (drag-only) com backend otimista.
+		// Adicione isto dentro de gridOptions (mesmo nível de onGridReady, rowSelection, etc.)
+		getContextMenuItems: (params) => {
+			const d = params.node?.data || {};
+			const isCampaign = params.node?.level === 0;
+			const items = [];
+
+			// itens nativos úteis
+			items.push('cut', 'copy', 'copyWithHeaders', 'copyWithGroupHeaders', 'export', 'separator');
+
+			if (isCampaign) {
+				const label = d.__label || d.campaign_name || '';
+				const utm = d.utm_campaign || '';
+
+				if (label) {
+					items.push({
+						name: 'Copiar Campaign',
+						action: () => copyToClipboard(label),
+						icon: '<span class="ag-icon ag-icon-copy"></span>',
+					});
+				}
+				if (utm) {
+					items.push({
+						name: 'Copiar UTM',
+						action: () => copyToClipboard(utm),
+						icon: '<span class="ag-icon ag-icon-copy"></span>',
+					});
+				}
+			}
+			return items;
+		},
 
 		onCellClicked(params) {
 			if (params?.node?.level > 0) return;
