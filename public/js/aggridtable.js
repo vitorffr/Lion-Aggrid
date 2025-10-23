@@ -1811,11 +1811,20 @@ function makeGrid() {
 		autoGroupColumnDef,
 		defaultColDef,
 		rowSelection: {
-			mode: 'multiRow',
-			checkboxes: true,
-			headerCheckbox: true,
-			selectionColumn: { width: 80, pinned: 'left', suppressHeaderFilterButton: true },
+			mode: 'multiRow', // ✅ novo modelo (v34+)
+			checkboxes: {
+				enabled: true, // ✅ ativa checkboxes
+				header: true, // ✅ exibe o header checkbox
+			},
+			selectionColumn: {
+				id: 'ag-Grid-SelectionColumn', // ✅ garante o mesmo ID do preset
+				width: 36, // ✅ mesma largura do preset
+				pinned: 'left', // ✅ pinada à esquerda
+				suppressHeaderMenuButton: true,
+				suppressHeaderFilterButton: true,
+			},
 		},
+
 		rowHeight: 60,
 		animateRows: true,
 		sideBar: { toolPanels: ['columns', 'filters'], defaultToolPanel: null, position: 'right' },
@@ -2146,6 +2155,7 @@ function togglePinnedColsFromCheckbox(silent = false) {
 
 	// Colunas que ficam à ESQUERDA quando marcado
 	const leftPins = [
+		{ colId: 'ag-Grid-SelectionColumn', pinned: checked ? 'left' : null },
 		{ colId: 'ag-Grid-AutoColumn', pinned: checked ? 'left' : null },
 		{ colId: 'profile_name', pinned: checked ? 'left' : null },
 	];
