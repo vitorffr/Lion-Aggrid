@@ -837,7 +837,7 @@ const LION_CENTER_EXCLUDES = new Set(['profile_name']);
 /* ============ Colunas ============ */
 const defaultColDef = {
 	sortable: true,
-	filter: true, // continua habilitando o filtro
+	filter: 'agTextColumnFilter', // 👈 força o tipo
 	floatingFilter: true,
 	resizable: true,
 	cellClass: (p) => (LION_CENTER_EXCLUDES.has(p.column.getColId()) ? null : 'lion-center-cell'),
