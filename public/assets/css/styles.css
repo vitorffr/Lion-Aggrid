@@ -1,9 +1,12 @@
 /* pill arrastável dentro da célula */
 /* empilha texto do header e ícones em coluna */
+/* mantém root como está */
 .camp-root {
 	font-size: 12px;
 	line-height: 1.6;
 }
+
+/* child e grand com a tipografia desejada */
 .camp-child {
 	font-size: 14px;
 	line-height: 1.4;
@@ -11,6 +14,24 @@
 .camp-grand {
 	font-size: 13px;
 	line-height: 1.6;
+}
+
+/* ✅ centralização vertical SOMENTE do texto (ag-group-value) */
+.camp-child .ag-group-value,
+.camp-grand .ag-group-value {
+	display: flex; /* vira um flex container só do valor */
+	align-items: top;
+	padding: 8px; /* centra verticalmente o texto */
+	height: 100%; /* ocupa a altura inteira da célula */
+	/* nada de justify-content, pra não mexer no alinhamento horizontal */
+}
+
+/* (opcional) se quiser garantir uma única linha com reticências */
+.camp-child .ag-group-value,
+.camp-grand .ag-group-value {
+	white-space: wrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
 }
 
 /* pill já existente */
