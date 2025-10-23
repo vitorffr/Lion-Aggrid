@@ -120,38 +120,93 @@ function applySort(rows, sortModel) {
 function applyFilters(rows, filterModel) {
 	if (!filterModel || typeof filterModel !== 'object') return rows;
 
-	const checks = Object.entries(filterModel).map(([field, f]) => {
-		const ft = f.filterType || f.type || 'text';
+	const globalFilter = String(filterModel._global?.filter || '')
+		.trim()
+		.toLowerCase();
 
-		if (ft === 'text') {
-			const needle = String(f.filter ?? '').toLowerCase();
-			if (!needle) return () => true;
-			return (r) =>
-				String(r[field] ?? '')
+	const checks = Object.entries(filterModel)
+		.filter(([field]) => field !== '_global')
+		.map(([field, f]) => {
+			const ft = f.filterType || f.type || 'text';
+
+			// === includes / excludes (lista de valores)
+			if (ft === 'includes' && Array.isArray(f.values)) {
+				const set = new Set(f.values.map((v) => String(v).toLowerCase()));
+				return (r) => set.has(String(r[field] ?? '').toLowerCase());
+			}
+			if (ft === 'excludes' && Array.isArray(f.values)) {
+				const set = new Set(f.values.map((v) => String(v).toLowerCase()));
+				return (r) => !set.has(String(r[field] ?? '').toLowerCase());
+			}
+
+			// === texto padrão com todos os tipos (contains, notContains, startsWith, endsWith, equals, notEqual)
+			if (ft === 'text') {
+				const comp = String(f.type || 'contains');
+				const needle = String(f.filter ?? '').toLowerCase();
+				if (!needle) return () => true;
+				return (r) => {
+					const val = String(r[field] ?? '').toLowerCase();
+					switch (comp) {
+						case 'equals':
+							return val === needle;
+						case 'notEqual':
+							return val !== needle;
+						case 'startsWith':
+							return val.startsWith(needle);
+						case 'endsWith':
+							return val.endsWith(needle);
+						case 'notContains':
+							return !val.includes(needle);
+						case 'contains':
+						default:
+							return val.includes(needle);
+					}
+				};
+			}
+
+			// === número padrão (adiciona contains/notContains também)
+			if (ft === 'number') {
+				const comp = String(f.type || 'equals');
+				const val = Number(f.filter);
+				return (r) => {
+					const n = toNumberBR(r[field]);
+					if (n == null) return false;
+					switch (comp) {
+						case 'equals':
+							return n === val;
+						case 'notEqual':
+							return n !== val;
+						case 'greaterThan':
+							return n > val;
+						case 'lessThan':
+							return n < val;
+						case 'greaterThanOrEqual':
+							return n >= val;
+						case 'lessThanOrEqual':
+							return n <= val;
+						case 'contains':
+							return String(n).includes(String(val));
+						case 'notContains':
+							return !String(n).includes(String(val));
+						default:
+							return true;
+					}
+				};
+			}
+
+			return () => true;
+		});
+
+	return rows.filter((r) => {
+		const globalMatch =
+			!globalFilter ||
+			Object.values(r).some((v) =>
+				String(v ?? '')
 					.toLowerCase()
-					.includes(needle);
-		}
-
-		if (ft === 'number') {
-			const comp = String(f.type || 'equals');
-			const val = Number(f.filter);
-			return (r) => {
-				const n = toNumberBR(r[field]);
-				if (n == null) return false;
-				if (comp === 'equals') return n === val;
-				if (comp === 'greaterThan') return n > val;
-				if (comp === 'lessThan') return n < val;
-				if (comp === 'greaterThanOrEqual') return n >= val;
-				if (comp === 'lessThanOrEqual') return n <= val;
-				if (comp === 'notEqual') return n !== val;
-				return true;
-			};
-		}
-
-		return () => true;
+					.includes(globalFilter)
+			);
+		return globalMatch && checks.every((fn) => fn(r));
 	});
-
-	return rows.filter((r) => checks.every((fn) => fn(r)));
 }
 
 /* ==================== Agregadores de rodapé ==================== */
