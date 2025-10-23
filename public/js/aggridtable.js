@@ -5,20 +5,16 @@ const DRILL = { period: 'TODAY' };
 
 /* ========= Grid State (sessionStorage) ========= */
 const GRID_STATE_KEY = 'lion.aggrid.state.v1';
-const GRID_STATE_IGNORE_ON_RESTORE = [
-	// evitamos bagunça com SSRM
-	'pagination',
-	'scroll',
-	'rowSelection',
-	'focusedCell',
-	// (se quiser manter filtro/sort atuais em vez do salvo, adicione 'filter'/'sort' aqui)
-];
+const GRID_STATE_IGNORE_ON_RESTORE = ['pagination', 'scroll', 'rowSelection', 'focusedCell'];
 // === Fake network & min spinner ===
-const DEV_FAKE_NETWORK_LATENCY_MS = 0; // mude p/ 600..1200 para simular rede
-const MIN_SPINNER_MS = 500; // spinner visível por pelo menos X ms
+const DEV_FAKE_NETWORK_LATENCY_MS = 0;
+const MIN_SPINNER_MS = 500;
 
-// Moeda global da aplicação (pode mudar depois via setLionCurrency)
+// Moeda global da aplicação
 let LION_CURRENCY = 'BRL'; // 'BRL' | 'USD'
+
+// ===== 🔍 QUICK FILTER (global, será enviado em filterModel._global.filter) =====
+let GLOBAL_QUICK_FILTER = ''; // preenchido pelo #quickFilter
 
 // Setter para trocar em runtime
 function setLionCurrency(mode) {
@@ -26,43 +22,30 @@ function setLionCurrency(mode) {
 	if (m === 'USD' || m === 'BRL') LION_CURRENCY = m;
 	else console.warn('[Currency] modo inválido:', mode);
 }
-
-// Getter simples
 function getAppCurrency() {
 	return LION_CURRENCY;
 }
-// Aceita entrada com ponto ou vírgula e normaliza para número.
-// A moeda ativa (BRL/ USD) só afeta o *formato de saída*; o parser é tolerante.
+
+// Parser tolerante a BRL/USD
 function parseCurrencyFlexible(value, mode = getAppCurrency()) {
 	if (value == null || value === '') return null;
 	if (typeof value === 'number') return Number.isFinite(value) ? value : null;
-
 	let s = String(value).trim();
-	// mantém apenas dígitos, separadores e sinal
 	s = s.replace(/[^\d.,\-+]/g, '');
-
 	if (!s) return null;
-
-	// identifica qual separador aparece por último -> tratamos como separador decimal
 	const lastDot = s.lastIndexOf('.');
 	const lastComma = s.lastIndexOf(',');
 	const hasSep = lastDot !== -1 || lastComma !== -1;
-
 	let normalized;
-
 	if (!hasSep) {
-		// só dígitos (ou sinal) -> inteiro
 		normalized = s.replace(/[^\d\-+]/g, '');
 	} else {
 		const decSep = lastDot > lastComma ? '.' : ',';
 		const i = s.lastIndexOf(decSep);
-
 		const intPart = s.slice(0, i).replace(/[^\d\-+]/g, '');
 		const fracPart = s.slice(i + 1).replace(/[^\d]/g, '');
-
 		normalized = intPart + (fracPart ? '.' + fracPart : '');
 	}
-
 	const n = parseFloat(normalized);
 	return Number.isFinite(n) ? n : null;
 }
@@ -92,59 +75,17 @@ function setCellSilently(p, colId, value) {
 (function ensureLoadingStyles() {
 	if (document.getElementById('lion-loading-styles')) return;
 	const css = `
-/* esconde qualquer elemento interno (renderers, spans, etc.) */
-.ag-cell.ag-cell-loading * {
-  visibility: hidden !important;
+.ag-cell.ag-cell-loading * { visibility: hidden !important; }
+.ag-cell.ag-cell-loading::after {
+  content:""; position:absolute; left:50%; top:50%; width:14px; height:14px;
+  margin-left:-7px; margin-top:-7px; border-radius:50%; border:2px solid #9ca3af;
+  border-top-color:transparent; animation: lion-spin .8s linear infinite; z-index:2; pointer-events:none;
 }
-
-	/* SPINNER: centralizado no meio da célula, acima da capa */
-	.ag-cell.ag-cell-loading::after {
-	content: "";
-	position: absolute;
-	left: 50%;
-	top: 50%;
-	width: 14px;
-	height: 14px;
-	margin-left: -7px; /* metade da largura */
-	margin-top: -7px; /* metade da altura */
-	border-radius: 50%;
-	border: 2px solid #9ca3af;
-	border-top-color: transparent;
-	animation: lion-spin .8s linear infinite;
-	z-index: 2;
-	pointer-events: none; /* não interfere com drag/resize do grid */
-	will-change: transform; /* evita micro jitter */
-	}
-/* ===== Dropdown (status) ===== */
-.lion-status-menu {
-  position: absolute;
-  min-width: 160px;
-  padding: 6px 0;
-  background: #111;
-  color: #eee;
-  border: 1px solid rgba(255,255,255,.08);
-  border-radius: 8px;
-  box-shadow: 0 10px 30px rgba(0,0,0,.35);
-  z-index: 99999;
-}
-.lion-status-menu__item {
-  padding: 8px 12px;
-  font-size: 12px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.lion-status-menu__item:hover {
-  background: rgba(255,255,255,.06);
-}
-.lion-status-menu__item.is-active::before {
-  content: "●";
-  font-size: 10px;
-  line-height: 1;
-}
-
-	@keyframes lion-spin { to { transform: rotate(360deg); } }
+.lion-status-menu { position:absolute; min-width:160px; padding:6px 0; background:#111; color:#eee; border:1px solid rgba(255,255,255,.08); border-radius:8px; box-shadow:0 10px 30px rgba(0,0,0,.35); z-index:99999; }
+.lion-status-menu__item { padding:8px 12px; font-size:12px; cursor:pointer; display:flex; align-items:center; gap:8px; }
+.lion-status-menu__item:hover { background: rgba(255,255,255,.06); }
+.lion-status-menu__item.is-active::before { content:"●"; font-size:10px; line-height:1; }
+@keyframes lion-spin { to { transform: rotate(360deg); } }
 `;
 	const el = document.createElement('style');
 	el.id = 'lion-loading-styles';
@@ -155,7 +96,6 @@ function setCellSilently(p, colId, value) {
 /* ==== Toolbar actions (state/layout + presets built-in & custom) ==== */
 (function setupToolbar() {
 	const byId = (id) => document.getElementById(id);
-
 	function ensureApi() {
 		const api = globalThis.LionGrid?.api;
 		if (!api) {
@@ -164,14 +104,11 @@ function setCellSilently(p, colId, value) {
 		}
 		return api;
 	}
-
-	/* ========== chaves de storage ========== */
-	const SS_KEY_STATE = GRID_STATE_KEY || 'lion.aggrid.state.v1'; // já vem do topo do arquivo
+	const SS_KEY_STATE = GRID_STATE_KEY || 'lion.aggrid.state.v1';
 	const LS_KEY_PRESETS = 'lion.aggrid.presets.v1';
 	const LS_KEY_ACTIVE_PRESET = 'lion.aggrid.activePreset.v1';
 	const PRESET_VERSION = 1;
 
-	/* ========== helpers básicos get/set state ========== */
 	function getState() {
 		const api = ensureApi();
 		if (!api) return null;
@@ -191,27 +128,23 @@ function setCellSilently(p, colId, value) {
 		}
 	}
 
-	/* ========== sessionStorage (state atual) ========== */
-
 	function resetLayout() {
 		const api = ensureApi();
 		if (!api) return;
 		try {
 			sessionStorage.removeItem(SS_KEY_STATE);
-			localStorage.removeItem(LS_KEY_ACTIVE_PRESET); // 👈 Limpa preset ativo
-
+			localStorage.removeItem(LS_KEY_ACTIVE_PRESET);
 			api.setState({}, []);
 			api.resetColumnState?.();
 			api.setFilterModel?.(null);
 			api.setSortModel?.([]);
-
-			refreshPresetUserSelect(); // 👈 Atualiza o dropdown
+			refreshPresetUserSelect();
 			showToast('Layout Reset', 'info');
 		} catch (e) {
 			console.warn('resetLayout fail', e);
 		}
 	}
-	/* ========== “Meus presets” (localStorage) ========== */
+
 	function readPresets() {
 		try {
 			return JSON.parse(localStorage.getItem(LS_KEY_PRESETS) || '{}');
@@ -225,28 +158,18 @@ function setCellSilently(p, colId, value) {
 	function listPresetNames() {
 		return Object.keys(readPresets()).sort((a, b) => a.localeCompare(b, 'pt-BR'));
 	}
+
 	function refreshPresetUserSelect() {
 		const sel = byId('presetUserSelect');
 		if (!sel) return;
-
 		const activePreset = localStorage.getItem(LS_KEY_ACTIVE_PRESET) || '';
-
-		// limpa e remonta
 		while (sel.firstChild) sel.removeChild(sel.firstChild);
-
-		// placeholder vira "Reset layout" quando não há ativo
 		const placeholderText = activePreset ? `Active: ${activePreset}` : 'Default';
-		sel.appendChild(new Option(placeholderText, '')); // value vazio = reset
-
-		// lista presets do usuário
+		sel.appendChild(new Option(placeholderText, ''));
 		listPresetNames().forEach((name) => sel.appendChild(new Option(name, name)));
-
-		// seleciona o ativo ou o "Reset layout"
-		if (activePreset && [...sel.options].some((o) => o.value === activePreset)) {
+		if (activePreset && [...sel.options].some((o) => o.value === activePreset))
 			sel.value = activePreset;
-		} else {
-			sel.value = ''; // seleciona Reset
-		}
+		else sel.value = '';
 	}
 
 	function saveAsPreset() {
@@ -259,7 +182,6 @@ function setCellSilently(p, colId, value) {
 			state = api.getState();
 		} catch {}
 		if (!state) return showToast("Couldn't capture grid state", 'danger');
-
 		const bag = readPresets();
 		bag[name] = { v: PRESET_VERSION, name, createdAt: Date.now(), grid: state };
 		writePresets(bag);
@@ -274,15 +196,9 @@ function setCellSilently(p, colId, value) {
 		const bag = readPresets();
 		const p = bag[name];
 		if (!p?.grid) return showToast('Preset not found', 'warning');
-
 		setState(p.grid, ['pagination', 'scroll', 'rowSelection', 'focusedCell']);
-
-		// 👈 Salva o preset ativo
 		localStorage.setItem(LS_KEY_ACTIVE_PRESET, name);
-
-		// Atualiza o placeholder do dropdown
 		refreshPresetUserSelect();
-
 		showToast(`Preset "${name}" applied`, 'success');
 	}
 
@@ -291,22 +207,15 @@ function setCellSilently(p, colId, value) {
 		const name = sel?.value || '';
 		if (!name) return showToast('Pick a preset first', 'warning');
 		if (!confirm(`Delete preset "${name}"?`)) return;
-
 		const bag = readPresets();
 		delete bag[name];
 		writePresets(bag);
-
-		// 👈 Se estava ativo, limpa
 		const activePreset = localStorage.getItem(LS_KEY_ACTIVE_PRESET);
-		if (activePreset === name) {
-			localStorage.removeItem(LS_KEY_ACTIVE_PRESET);
-		}
-
+		if (activePreset === name) localStorage.removeItem(LS_KEY_ACTIVE_PRESET);
 		refreshPresetUserSelect();
 		showToast(`Preset "${name}" removed`, 'info');
 	}
 
-	/* ========== Download/Upload de preset (arquivo .json) ========== */
 	function downloadPreset() {
 		const sel = byId('presetUserSelect');
 		const name = sel?.value || '';
@@ -314,7 +223,6 @@ function setCellSilently(p, colId, value) {
 		const bag = readPresets();
 		const p = bag[name];
 		if (!p) return showToast('Preset not found', 'warning');
-
 		const blob = new Blob([JSON.stringify(p, null, 2)], { type: 'application/json;charset=utf-8' });
 		const url = URL.createObjectURL(blob);
 		const a = document.createElement('a');
@@ -328,7 +236,7 @@ function setCellSilently(p, colId, value) {
 	}
 
 	function uploadPreset() {
-		const input = byId('presetFileInput'); // precisa existir no HTML
+		const input = byId('presetFileInput');
 		if (!input) return;
 		input.value = '';
 		input.click();
@@ -362,24 +270,18 @@ function setCellSilently(p, colId, value) {
 
 	/* ===== Toggle: modo de ajuste de colunas ===== */
 	const LS_KEY_SIZE_MODE = 'lion.aggrid.sizeMode'; // 'auto' | 'fit'
-
-	// aplica o modo atual imediatamente
 	function applySizeMode(mode) {
 		const api = (globalThis.LionGrid || {}).api;
 		if (!api) return;
 		try {
 			if (mode === 'auto') {
-				// AutoSize todas as colunas, sem incluir headers
 				const all = api.getColumns()?.map((c) => c.getColId()) || [];
 				api.autoSizeColumns(all, false);
 			} else {
-				// SizeToFit distribui para caber no viewport
 				api.sizeColumnsToFit();
 			}
 		} catch {}
 	}
-
-	// lê/salva preferência
 	function getSizeMode() {
 		const v = localStorage.getItem(LS_KEY_SIZE_MODE);
 		return v === 'auto' ? 'auto' : 'fit';
@@ -388,61 +290,43 @@ function setCellSilently(p, colId, value) {
 		localStorage.setItem(LS_KEY_SIZE_MODE, mode);
 	}
 
-	// inicializa o toggle de UI (ligado = auto; desligado = fit)
 	(function initSizeModeToggle() {
 		const el = byId('colSizeModeToggle');
 		if (!el) return;
-		// estado inicial a partir de localStorage
 		const mode = getSizeMode();
 		el.checked = mode === 'auto';
-
-		// aplica imediatamente ao montar (opcional)
 		applySizeMode(mode);
-
-		// quando o usuário troca, aplica e salva
 		el.addEventListener('change', () => {
 			const next = el.checked ? 'auto' : 'fit';
 			setSizeMode(next);
 			applySizeMode(next);
 			showToast(next === 'auto' ? 'Mode: Auto Size' : 'Mode: Size To Fit', 'info');
 		});
-
-		// reaplica em resize de janela
-		window.addEventListener('resize', () => {
-			const cur = getSizeMode();
-			applySizeMode(cur);
-		});
+		window.addEventListener('resize', () => applySizeMode(getSizeMode()));
 	})();
 
 	/* ========== binds (botões/menus são opcionais) ========== */
 	byId('btnResetLayout')?.addEventListener('click', resetLayout);
-
-	// meus presets
 	byId('presetUserSelect')?.addEventListener('change', (e) => {
 		const v = e.target.value;
 		if (!v) {
-			// reset geral quando escolher "Reset layout"
-			resetLayout(); // já limpa state e filtros/sort
+			resetLayout();
 			localStorage.removeItem(LS_KEY_ACTIVE_PRESET);
-			// garante que o select exiba "Reset layout" após reset
 			refreshPresetUserSelect();
 			return;
 		}
 		applyPresetUser(v);
 	});
-
 	byId('btnSaveAsPreset')?.addEventListener('click', saveAsPreset);
 	byId('btnDeletePreset')?.addEventListener('click', deletePreset);
 	byId('btnDownloadPreset')?.addEventListener('click', downloadPreset);
 	byId('btnUploadPreset')?.addEventListener('click', uploadPreset);
 
-	// popula a combo de "Meus presets" se existir no HTML
 	refreshPresetUserSelect();
-	//  Auto-aplica preset ativo quando a grid estiver pronta
+
 	globalThis.addEventListener('lionGridReady', () => {
 		const activePreset = localStorage.getItem(LS_KEY_ACTIVE_PRESET);
 		if (activePreset) {
-			// Aplica silenciosamente (sem toast)
 			const bag = readPresets();
 			const p = bag[activePreset];
 			if (p?.grid) {
@@ -452,7 +336,6 @@ function setCellSilently(p, colId, value) {
 		}
 	});
 
-	/* ========== expõe alguns helpers p/ debug no console ========== */
 	globalThis.LionGrid = Object.assign(globalThis.LionGrid || {}, {
 		getState,
 		setState,
@@ -462,6 +345,50 @@ function setCellSilently(p, colId, value) {
 	});
 })();
 
+// ====== SSRM refresh compat ======
+function refreshSSRM(api) {
+	if (!api) return;
+	if (typeof api.refreshServerSideStore === 'function') {
+		api.refreshServerSideStore({ purge: true });
+	} else if (typeof api.purgeServerSideCache === 'function') {
+		api.purgeServerSideCache();
+	} else if (typeof api.refreshServerSide === 'function') {
+		api.refreshServerSide({ purge: true });
+	} else if (typeof api.onFilterChanged === 'function') {
+		api.onFilterChanged();
+	}
+}
+
+/* ===== 🔍 QUICK FILTER wiring ===== */
+(function setupGlobalQuickFilter() {
+	function applyGlobalFilter(val) {
+		GLOBAL_QUICK_FILTER = String(val || '');
+		const api = globalThis.LionGrid?.api;
+		if (!api) return;
+		refreshSSRM(api);
+	}
+	function init() {
+		const input = document.getElementById('quickFilter'); // id padrão do AG Grid
+		if (!input) return;
+		let t = null;
+		input.addEventListener('input', () => {
+			clearTimeout(t);
+			t = setTimeout(() => applyGlobalFilter(input.value.trim()), 250);
+		});
+		if (input.value) applyGlobalFilter(input.value.trim());
+	}
+	globalThis.addEventListener('lionGridReady', init);
+})();
+
+/* ======= Build de payload no padrão do BACK ======= */
+function buildFilterModelWithGlobal(baseFilterModel) {
+	const fm = { ...(baseFilterModel || {}) };
+	const gf = (GLOBAL_QUICK_FILTER || '').trim();
+	fm._global = Object.assign({}, fm._global, { filter: gf });
+	return fm;
+}
+
+/* ======= State ======= */
 function loadSavedState() {
 	try {
 		const raw = sessionStorage.getItem(GRID_STATE_KEY);
@@ -472,7 +399,6 @@ function loadSavedState() {
 		return null;
 	}
 }
-
 function applySavedStateIfAny(api) {
 	const saved = loadSavedState();
 	if (!saved) return false;
@@ -509,13 +435,11 @@ const stripHtml = (s) =>
 				.replace(/\s+/g, ' ')
 				.trim()
 		: s;
-
 const strongText = (s) => {
 	if (typeof s !== 'string') return s;
 	const m = s.match(/<strong[^>]*>(.*?)<\/strong>/i);
 	return stripHtml(m ? m[1] : s);
 };
-
 const toNumberBR = (s) => {
 	if (s == null) return null;
 	if (typeof s === 'number') return s;
@@ -526,37 +450,31 @@ const toNumberBR = (s) => {
 	const n = parseFloat(raw);
 	return Number.isFinite(n) ? n : null;
 };
-
 const brlFmt = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 const intFmt = new Intl.NumberFormat('pt-BR');
 
 function currencyFormatter(p) {
 	const currency = getAppCurrency();
 	const locale = currency === 'USD' ? 'en-US' : 'pt-BR';
-
 	let n = typeof p.value === 'number' ? p.value : parseCurrencyFlexible(p.value, currency);
 	if (!Number.isFinite(n)) return p.value ?? '';
-
 	return new Intl.NumberFormat(locale, { style: 'currency', currency }).format(n);
 }
-
 const intFormatter = (p) => {
 	const n = toNumberBR(p.value);
 	return n == null ? p.value ?? '' : intFmt.format(Math.round(n));
 };
 
-// fallback (hex) – independente de Tailwind
 const FALLBACK_STYLE = {
-	success: { bg: '#22c55e', fg: '#ffffff' }, // green-500
-	primary: { bg: '#3b82f6', fg: '#ffffff' }, // blue-500
-	danger: { bg: '#dc2626', fg: '#ffffff' }, // red-600
-	warning: { bg: '#eab308', fg: '#111111' }, // yellow-500
-	info: { bg: '#06b6d4', fg: '#ffffff' }, // cyan-500
-	secondary: { bg: '#334155', fg: '#ffffff' }, // gray-500
-	light: { bg: '#e5e7eb', fg: '#111111' }, // gray-200
-	dark: { bg: '#1f2937', fg: '#ffffff' }, // gray-800
+	success: { bg: '#22c55e', fg: '#ffffff' },
+	primary: { bg: '#3b82f6', fg: '#ffffff' },
+	danger: { bg: '#dc2626', fg: '#ffffff' },
+	warning: { bg: '#eab308', fg: '#111111' },
+	info: { bg: '#06b6d4', fg: '#ffffff' },
+	secondary: { bg: '#334155', fg: '#ffffff' },
+	light: { bg: '#e5e7eb', fg: '#111111' },
+	dark: { bg: '#1f2937', fg: '#ffffff' },
 };
-
 function renderBadgeNode(label, colorKey) {
 	const fb = FALLBACK_STYLE[colorKey] || FALLBACK_STYLE.secondary;
 	const span = document.createElement('span');
@@ -571,18 +489,15 @@ function renderBadgeNode(label, colorKey) {
 	span.style.color = fb.fg;
 	return span;
 }
-
 function renderBadge(label, colorKey) {
 	return renderBadgeNode(label, colorKey).outerHTML;
 }
-
 function pickStatusColor(raw) {
 	const s = String(raw || '')
 		.trim()
 		.toLowerCase();
 	return s === 'active' ? 'success' : 'secondary';
 }
-
 function isPinnedOrTotal(params) {
 	return (
 		params?.node?.rowPinned === 'bottom' ||
@@ -591,7 +506,6 @@ function isPinnedOrTotal(params) {
 		params?.node?.group === true
 	);
 }
-
 function statusPillRenderer(p) {
 	const raw = p.value ?? '';
 	if (isPinnedOrTotal(p) || !raw) {
@@ -599,27 +513,20 @@ function statusPillRenderer(p) {
 		span.textContent = stripHtml(raw) || '';
 		return span;
 	}
-
 	const labelClean = (strongText(raw) || stripHtml(raw) || '').trim();
 	const labelUp = labelClean.toUpperCase();
-
-	// INATIVA PAGAMENTO → 2 linhas dentro da pill cinza
 	if (/^\s*INATIVA\s+PAGAMENTO\s*$/i.test(labelClean)) {
 		const el = document.createElement('span');
 		el.className = 'lion-badge--inativa-pagamento';
 		el.textContent = 'INATIVA\nPAGAMENTO';
 		return el;
 	}
-
-	// ACTIVE → botão verdinho (igual ao “botão” que você quer)
 	if (labelUp === 'ACTIVE') {
 		const el = document.createElement('span');
 		el.className = 'lion-badge--active';
 		el.textContent = 'ACTIVE';
 		return el;
 	}
-
-	// Demais status → segue seu padrão antigo
 	const color = pickStatusColor(labelUp);
 	return renderBadgeNode(labelUp, color);
 }
@@ -630,15 +537,13 @@ function pickChipColorFromFraction(value) {
 	if (!m) return { label: txt || '—', color: 'secondary' };
 	const current = Number(m[1]);
 	const total = Number(m[2]);
-	if (!Number.isFinite(current) || !Number.isFinite(total) || total <= 0) {
+	if (!Number.isFinite(current) || !Number.isFinite(total) || total <= 0)
 		return { label: `${current}/${total}`, color: 'secondary' };
-	}
-	if (current <= 1) return { label: `${current}/${total}`, color: 'success' }; // 0%
+	if (current <= 1) return { label: `${current}/${total}`, color: 'success' };
 	const ratio = current / total;
-	if (ratio > 0.5) return { label: `${current}/${total}`, color: 'danger' }; // >50%
-	return { label: `${current}/${total}`, color: 'warning' }; // (0,50%]
+	if (ratio > 0.5) return { label: `${current}/${total}`, color: 'danger' };
+	return { label: `${current}/${total}`, color: 'warning' };
 }
-
 function chipFractionBadgeRenderer(p) {
 	if (isPinnedOrTotal(p) || !p.value) {
 		const span = document.createElement('span');
@@ -650,10 +555,10 @@ function chipFractionBadgeRenderer(p) {
 	host.innerHTML = renderBadge(label, color);
 	return host.firstElementChild;
 }
+
 async function updateAdsetStatusBackend(id, status) {
 	const t0 = performance.now();
 	if (DEV_FAKE_NETWORK_LATENCY_MS > 0) await sleep(DEV_FAKE_NETWORK_LATENCY_MS);
-
 	const res = await fetch(`/api/adsets/${encodeURIComponent(id)}/status/`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
@@ -662,15 +567,12 @@ async function updateAdsetStatusBackend(id, status) {
 	});
 	const data = await res.json().catch(() => ({}));
 	if (!res.ok || data?.ok === false) throw new Error(data?.error || 'Adset status update failed');
-
 	await withMinSpinner(t0, MIN_SPINNER_MS);
 	return data;
 }
-
 async function updateCampaignStatusBackend(id, status) {
 	const t0 = performance.now();
 	if (DEV_FAKE_NETWORK_LATENCY_MS > 0) await sleep(DEV_FAKE_NETWORK_LATENCY_MS);
-
 	const res = await fetch(`/api/campaigns/${encodeURIComponent(id)}/status/`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
@@ -679,16 +581,12 @@ async function updateCampaignStatusBackend(id, status) {
 	});
 	const data = await res.json().catch(() => ({}));
 	if (!res.ok || data?.ok === false) throw new Error(data?.error || 'Status update failed');
-
-	// garante spinner mínimo mesmo se o back for rápido
 	await withMinSpinner(t0, MIN_SPINNER_MS);
 	return data;
 }
-
 async function updateCampaignBudgetBackend(id, budgetNumber) {
 	const t0 = performance.now();
 	if (DEV_FAKE_NETWORK_LATENCY_MS > 0) await sleep(DEV_FAKE_NETWORK_LATENCY_MS);
-
 	const res = await fetch(`/api/campaigns/${encodeURIComponent(id)}/budget/`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
@@ -697,15 +595,12 @@ async function updateCampaignBudgetBackend(id, budgetNumber) {
 	});
 	const data = await res.json().catch(() => ({}));
 	if (!res.ok || data?.ok === false) throw new Error(data?.error || 'Budget update failed');
-
 	await withMinSpinner(t0, MIN_SPINNER_MS);
 	return data;
 }
-
 async function updateCampaignBidBackend(id, bidNumber) {
 	const t0 = performance.now();
 	if (DEV_FAKE_NETWORK_LATENCY_MS > 0) await sleep(DEV_FAKE_NETWORK_LATENCY_MS);
-
 	const res = await fetch(`/api/campaigns/${encodeURIComponent(id)}/bid/`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
@@ -714,12 +609,11 @@ async function updateCampaignBidBackend(id, bidNumber) {
 	});
 	const data = await res.json().catch(() => ({}));
 	if (!res.ok || data?.ok === false) throw new Error(data?.error || 'Bid update failed');
-
 	await withMinSpinner(t0, MIN_SPINNER_MS);
 	return data;
 }
 
-// helper mínimo para GET/POST JSON (fetch de dados SSRM/DRILL)
+// GET/POST JSON
 async function fetchJSON(url, opts) {
 	const res = await fetch(url, {
 		headers: { 'Content-Type': 'application/json' },
@@ -750,7 +644,6 @@ function setRowStatus(data, on) {
 		if ('status' in data) data.status = next;
 	}
 }
-// flags por célula para spinner
 function setCellLoading(node, colId, on) {
 	if (!node?.data) return;
 	node.data.__loading = node.data.__loading || {};
@@ -784,7 +677,6 @@ function ensureKtModalDom() {
 		if (e.target.id === 'lionKtModal') closeKTModal('#lionKtModal');
 	});
 }
-
 function openKTModal(selector = '#lionKtModal') {
 	const el = document.querySelector(selector);
 	if (!el) return;
@@ -793,7 +685,6 @@ function openKTModal(selector = '#lionKtModal') {
 	el.classList.remove('hidden');
 	el.removeAttribute('aria-hidden');
 }
-
 function closeKTModal(selector = '#lionKtModal') {
 	const el = document.querySelector(selector);
 	if (!el) return;
@@ -802,7 +693,6 @@ function closeKTModal(selector = '#lionKtModal') {
 	el.classList.add('hidden');
 	el.setAttribute('aria-hidden', 'true');
 }
-
 function showKTModal({ title = 'Detalhes', content = '' } = {}) {
 	ensureKtModalDom();
 	const modal = document.querySelector('#lionKtModal');
@@ -837,22 +727,20 @@ const LION_CENTER_EXCLUDES = new Set(['profile_name']);
 /* ============ Colunas ============ */
 const defaultColDef = {
 	sortable: true,
-	filter: 'agTextColumnFilter', // 👈 força o tipo
+	filter: 'agTextColumnFilter',
 	floatingFilter: true,
 	resizable: true,
 	cellClass: (p) => (LION_CENTER_EXCLUDES.has(p.column.getColId()) ? null : 'lion-center-cell'),
-	// unSortIcon: true,
 	wrapHeaderText: true,
 	autoHeaderHeight: true,
 	enableRowGroup: true,
 	enablePivot: true,
 	enableValue: true,
-	suppressHeaderFilterButton: true, // 👈 esconde o funil no header
+	suppressHeaderFilterButton: true,
 };
 function parseCurrencyInput(params) {
 	return parseCurrencyFlexible(params.newValue, getAppCurrency());
 }
-
 function isPinnedOrGroup(params) {
 	return params?.node?.rowPinned || params?.node?.group;
 }
@@ -863,17 +751,14 @@ function profileCellRenderer(params) {
 	const idx = raw.lastIndexOf(' - ');
 	const name = idx > -1 ? raw.slice(0, idx).trim() : raw;
 	const meta = idx > -1 ? raw.slice(idx + 3).trim() : '';
-
 	const wrap = document.createElement('span');
 	wrap.style.display = 'inline-flex';
-	wrap.style.flexDirection = 'column'; // 👈 empilha
+	wrap.style.flexDirection = 'column';
 	wrap.style.lineHeight = '1.2';
-
 	const nameEl = document.createElement('span');
 	nameEl.textContent = name;
 	nameEl.style.fontWeight = '500';
 	wrap.appendChild(nameEl);
-
 	if (meta) {
 		const metaEl = document.createElement('span');
 		metaEl.textContent = meta;
@@ -900,35 +785,27 @@ function revenueCellRenderer(p) {
 		span.textContent = stripHtml(raw) || '';
 		return span;
 	}
-
 	const { total, parts } = parseRevenue(raw);
 	const wrap = document.createElement('span');
 	wrap.style.display = 'inline-flex';
 	wrap.style.flexDirection = 'column';
 	wrap.style.lineHeight = '1.15';
 	wrap.style.gap = '2px';
-
-	// linha 1: total
 	const totalEl = document.createElement('span');
 	totalEl.textContent = total || '';
 	wrap.appendChild(totalEl);
-
-	// linhas 2 e 3: (A: ...) e (B: ...)
 	if (parts.length === 2) {
 		const aEl = document.createElement('span');
 		aEl.textContent = `(${REVENUE_LABELS[0] || 'A'}: ${parts[0]})`;
 		aEl.style.fontSize = '11px';
 		aEl.style.opacity = '0.75';
-
 		const bEl = document.createElement('span');
 		bEl.textContent = `(${REVENUE_LABELS[1] || 'B'}: ${parts[1]})`;
 		bEl.style.fontSize = '11px';
 		bEl.style.opacity = '0.75';
-
 		wrap.appendChild(aEl);
 		wrap.appendChild(bEl);
 	}
-
 	return wrap;
 }
 
@@ -940,14 +817,10 @@ async function toggleFeature(feature, value) {
 		body: JSON.stringify({ feature, value }),
 	});
 	const data = await res.json();
-
 	if (res.ok && data.ok) {
-		// SUCESSO
 		showToast(data.message || 'Aplicado', 'success');
 		return true;
 	}
-
-	// FALHA “negocial” (200 com ok:false) ou HTTP 4xx/5xx
 	const msg = data?.error || `Erro (${res.status})`;
 	showToast(msg, 'danger');
 	return false;
@@ -955,19 +828,13 @@ async function toggleFeature(feature, value) {
 
 /* ======= Campaign Status Renderer (otimizado) ======= */
 function StatusSliderRenderer() {}
-
-/* Menu flutuante singleton p/ todas as células */
 const LionStatusMenu = (() => {
 	let el = null,
 		onPick = null;
-
 	function ensure() {
 		if (el) return el;
 		el = document.createElement('div');
 		el.className = 'lion-status-menu';
-		el.style.position = 'absolute';
-		el.style.minWidth = '160px';
-		el.style.padding = '6px 0';
 		el.style.display = 'none';
 		document.body.appendChild(el);
 		return el;
@@ -988,7 +855,6 @@ const LionStatusMenu = (() => {
 		const host = ensure();
 		host.innerHTML = '';
 		onPick = pick;
-
 		['ACTIVE', 'PAUSED'].forEach((st) => {
 			const item = document.createElement('div');
 			item.className = 'lion-status-menu__item' + (current === st ? ' is-active' : '');
@@ -1001,13 +867,10 @@ const LionStatusMenu = (() => {
 			});
 			host.appendChild(item);
 		});
-
-		// centraliza sob o pill
 		const menuW = 180;
 		host.style.left = `${Math.max(8, left + (width - menuW) / 2)}px`;
 		host.style.top = `${top + 6}px`;
 		host.style.display = 'block';
-
 		setTimeout(() => {
 			document.addEventListener('mousedown', onDocClose, true);
 			window.addEventListener('blur', close, true);
@@ -1018,11 +881,10 @@ const LionStatusMenu = (() => {
 
 StatusSliderRenderer.prototype.init = function (p) {
 	this.p = p;
-
 	const cfg = p.colDef?.cellRendererParams || {};
 	const interactive = new Set(Array.isArray(cfg.interactiveLevels) ? cfg.interactiveLevels : [0]);
 	const smallKnob = !!cfg.smallKnob;
-	const level = p?.node?.level ?? 0; // 0 = campaign, 1 = adset, 2 = ad
+	const level = p?.node?.level ?? 0;
 	const colId = p.column.getColId();
 
 	const getVal = () =>
@@ -1052,11 +914,9 @@ StatusSliderRenderer.prototype.init = function (p) {
 
 	let trackLenPx = 0;
 	let rafToken = null;
-
 	const computeTrackLen = () => {
-		const pad = parseFloat(getComputedStyle(root).paddingLeft || '0'); // var(--pad)
+		const pad = parseFloat(getComputedStyle(root).paddingLeft || '0');
 		const knobW = knob.clientWidth || 0;
-		// onde o knob pode ir: de pad+edgeGap até (largura - pad - edgeGap - knobW)
 		const edgeGap = parseFloat(getComputedStyle(root).getPropertyValue('--edge-gap') || '0');
 		const travel = root.clientWidth - 2 * pad - 2 * edgeGap - knobW;
 		return Math.max(0, travel);
@@ -1080,7 +940,6 @@ StatusSliderRenderer.prototype.init = function (p) {
 		p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
 	};
 
-	// ==== NOVO commit: passa pela rota de teste antes de aplicar ====
 	const commit = async (nextOrString, prevOn) => {
 		const nextVal =
 			typeof nextOrString === 'string'
@@ -1088,21 +947,17 @@ StatusSliderRenderer.prototype.init = function (p) {
 				: nextOrString
 				? 'ACTIVE'
 				: 'PAUSED';
-
 		const id =
 			(p.node?.level === 0
 				? String(p.data?.id ?? p.data?.utm_campaign ?? '')
 				: String(p.data?.id ?? '')) || '';
 		if (!id) return;
-
 		const scope = (p.node?.level ?? 0) === 1 ? 'adset' : 'campaign';
 
 		setCellBusy(true);
 		try {
-			// 1) TESTE
 			const okTest = await toggleFeature('status', { scope, id, value: nextVal });
 			if (!okTest) {
-				// erro no teste => ROLLBACK VISUAL E NO DADO
 				const rollbackVal = prevOn ? 'ACTIVE' : 'PAUSED';
 				if (p.data) {
 					if ('campaign_status' in p.data) p.data.campaign_status = rollbackVal;
@@ -1112,8 +967,6 @@ StatusSliderRenderer.prototype.init = function (p) {
 				p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
 				return;
 			}
-
-			// 2) aplica otimista
 			if (p.data) {
 				if ('campaign_status' in p.data) p.data.campaign_status = nextVal;
 				if ('status' in p.data) p.data.status = nextVal;
@@ -1121,20 +974,15 @@ StatusSliderRenderer.prototype.init = function (p) {
 			setProgress(nextVal === 'ACTIVE' ? 1 : 0);
 			p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
 
-			// 3) backend real
 			try {
-				if ((p.node?.level ?? 0) === 1) {
-					await updateAdsetStatusBackend(id, nextVal);
-				} else {
-					await updateCampaignStatusBackend(id, nextVal);
-				}
+				if ((p.node?.level ?? 0) === 1) await updateAdsetStatusBackend(id, nextVal);
+				else await updateCampaignStatusBackend(id, nextVal);
 				if (this._userInteracted) {
 					const scopeLabel = scope === 'adset' ? 'Adset' : 'Campanha';
 					const msg = nextVal === 'ACTIVE' ? `${scopeLabel} ativado` : `${scopeLabel} pausado`;
 					showToast(msg, 'success');
 				}
 			} catch (e) {
-				// rollback se o backend real falhar
 				const rollbackVal = prevOn ? 'ACTIVE' : 'PAUSED';
 				if (p.data) {
 					if ('campaign_status' in p.data) p.data.campaign_status = rollbackVal;
@@ -1148,7 +996,6 @@ StatusSliderRenderer.prototype.init = function (p) {
 			setCellBusy(false);
 		}
 	};
-	// ==== fim commit ====
 
 	const MOVE_THRESHOLD = 6;
 	let dragging = false,
@@ -1168,14 +1015,12 @@ StatusSliderRenderer.prototype.init = function (p) {
 			setProgress(pgr);
 		});
 	};
-
 	const detachWindowListeners = () => {
 		window.removeEventListener('mousemove', onMouseMove);
 		window.removeEventListener('mouseup', onMouseUp);
 		window.removeEventListener('touchmove', onTouchMove, { passive: true });
 		window.removeEventListener('touchend', onTouchEnd);
 	};
-
 	const onMouseMove = (e) => onPointerMove(e.clientX);
 	const onTouchMove = (e) => onPointerMove(e.touches[0].clientX);
 
@@ -1183,7 +1028,6 @@ StatusSliderRenderer.prototype.init = function (p) {
 		if (!dragging) return;
 		dragging = false;
 		detachWindowListeners();
-
 		if (!moved) {
 			ev?.preventDefault?.();
 			ev?.stopPropagation?.();
@@ -1194,32 +1038,26 @@ StatusSliderRenderer.prototype.init = function (p) {
 		const finalOn = pct >= 0.5;
 		if (finalOn !== startOn) commit(finalOn, startOn);
 		else setProgress(startOn ? 1 : 0);
-
 		ev?.preventDefault?.();
 		ev?.stopPropagation?.();
 	};
-
 	const onMouseUp = (e) => endDrag(e.clientX, e);
 	const onTouchEnd = (e) => endDrag(e.changedTouches[0].clientX, e);
 
 	const beginDrag = (x, ev) => {
 		this._userInteracted = true;
-
 		dragging = true;
 		moved = false;
 		startX = x;
 		startOn = root.getAttribute('aria-checked') === 'true';
 		trackLenPx = computeTrackLen();
-
 		window.addEventListener('mousemove', onMouseMove);
 		window.addEventListener('mouseup', onMouseUp);
 		window.addEventListener('touchmove', onTouchMove, { passive: true });
 		window.addEventListener('touchend', onTouchEnd);
-
 		ev?.preventDefault?.();
 		ev?.stopPropagation?.();
 	};
-
 	root.addEventListener('mousedown', (e) => beginDrag(e.clientX, e));
 	root.addEventListener('touchstart', (e) => beginDrag(e.touches[0].clientX, e), { passive: false });
 
@@ -1259,11 +1097,9 @@ StatusSliderRenderer.prototype.init = function (p) {
 		if (rafToken) cancelAnimationFrame(rafToken);
 	};
 };
-
 StatusSliderRenderer.prototype.getGui = function () {
 	return this.eGui;
 };
-
 StatusSliderRenderer.prototype.refresh = function (p) {
 	const cfg = p.colDef?.cellRendererParams || {};
 	const interactive = new Set(Array.isArray(cfg.interactiveLevels) ? cfg.interactiveLevels : [0]);
@@ -1284,28 +1120,22 @@ StatusSliderRenderer.prototype.refresh = function (p) {
 
 	requestAnimationFrame(() => {
 		fill.style.width = (isOn ? 100 : 0) + '%';
-		// nudge e snap iguais ao init
 		const onNudge = parseFloat(cs.getPropertyValue('--knob-on-nudge') || '0') || 0;
 		const offNudge = parseFloat(cs.getPropertyValue('--knob-off-nudge') || '0') || 0;
 		const nudgePx = isOn ? onNudge : offNudge;
-
-		const EPS = 0.001;
 		let x = (isOn ? 1 : 0) * trackLenPx;
-		if (isOn && 1 > 1 - EPS) x = trackLenPx; // só p/ simetria; já é 1
 		knob.style.transform = `translateX(${x + nudgePx}px)`;
-
 		label.textContent = isOn ? 'ACTIVE' : 'PAUSED';
 		this.eGui.setAttribute('aria-checked', String(isOn));
 	});
-
-	LionStatusMenu.close(); // fecha menu se estava aberto para outra célula
+	LionStatusMenu.close();
 	return true;
 };
-
 StatusSliderRenderer.prototype.destroy = function () {
 	this._cleanup?.();
 };
 
+/* ======= ColumnDefs ======= */
 const columnDefs = [
 	{
 		headerName: 'Profile',
@@ -1317,7 +1147,6 @@ const columnDefs = [
 		pinned: 'left',
 		tooltipValueGetter: (p) => p.value || '',
 	},
-	// ====== Grupo 1: Identificação ======
 	{
 		headerName: 'Identification',
 		groupId: 'grp-id',
@@ -1334,7 +1163,6 @@ const columnDefs = [
 				wrapText: true,
 				cellStyle: (p) =>
 					p?.node?.level === 0 ? { fontSize: '13px', lineHeight: '1.6' } : null,
-
 				tooltipValueGetter: (p) => p.value || '',
 			},
 			{
@@ -1343,26 +1171,14 @@ const columnDefs = [
 				valueGetter: (p) => stripHtml(p.data?.account_name),
 				minWidth: 100,
 				autoHeight: true,
-
 				flex: 1.3,
 				wrapText: true,
 				cellStyle: (p) =>
 					p?.node?.level === 0 ? { fontSize: '13px', lineHeight: '1.6' } : null,
 				tooltipValueGetter: (p) => p.value || '',
 			},
-			// {
-			// 	headerName: 'UTM',
-			// 	field: 'utm_campaign',
-			// 	minWidth: 180,
-			// 	cellStyle: (p) =>
-			// 		p?.node?.level === 0 ? { fontSize: '13px', lineHeight: '1.6' } : null,
-			// 	flex: 0.9,
-			// 	tooltipValueGetter: (p) => p.value || '',
-			// },
 		],
 	},
-
-	// ====== Grupo 2: Operação & Setup ======
 	{
 		headerName: 'Operation & Setup',
 		groupId: 'grp-op',
@@ -1387,22 +1203,14 @@ const columnDefs = [
 			{
 				headerName: 'Campaign Status',
 				field: 'campaign_status',
-				cellClass: ['lion-center-cell'], // 👈 NOVO
-
+				cellClass: ['lion-center-cell'],
 				minWidth: 105,
 				flex: 0.8,
 				cellRenderer: StatusSliderRenderer,
-				cellRendererParams: {
-					interactiveLevels: [0, 1, 2],
-					smallKnob: true,
-				},
+				cellRendererParams: { interactiveLevels: [0, 1, 2], smallKnob: true },
 				suppressKeyboardEvent: () => true,
-				// 👇 faz a célula usar a capa + spinner quando flagged
-				cellClassRules: {
-					'ag-cell-loading': (p) => isCellLoading(p, 'campaign_status'),
-				},
+				cellClassRules: { 'ag-cell-loading': (p) => isCellLoading(p, 'campaign_status') },
 			},
-
 			{
 				headerName: 'Budget',
 				field: 'budget',
@@ -1412,55 +1220,36 @@ const columnDefs = [
 				valueFormatter: currencyFormatter,
 				minWidth: 100,
 				flex: 0.6,
-				cellClassRules: {
-					'ag-cell-loading': (p) => isCellLoading(p, 'budget'),
-				},
+				cellClassRules: { 'ag-cell-loading': (p) => isCellLoading(p, 'budget') },
 				onCellValueChanged: async (p) => {
 					try {
-						// 1) aborta se veio de um rollback silencioso
 						if (shouldSuppressCellChange(p, 'budget')) return;
-
 						if ((p?.node?.level ?? 0) !== 0) return;
 						const row = p?.data || {};
 						const id = String(row.id ?? row.utm_campaign ?? '');
 						if (!id) return;
-
 						const currency = getAppCurrency();
 						const oldN = parseCurrencyFlexible(p.oldValue, currency);
 						const newN = parseCurrencyFlexible(p.newValue, currency);
-
-						// 2) se não mudou de fato, não faz nada
 						if (Number.isFinite(oldN) && Number.isFinite(newN) && oldN === newN) return;
-
 						if (!Number.isFinite(newN) || newN < 0) {
-							// rollback silencioso (NÃO re-dispara handler)
 							setCellSilently(p, 'budget', p.oldValue);
 							showToast('Budget inválido', 'danger');
 							return;
 						}
-
-						// loading ON
 						setCellLoading(p.node, 'budget', true);
 						p.api.refreshCells({ rowNodes: [p.node], columns: ['budget'] });
-
-						// 1) TESTE
 						const okTest = await toggleFeature('budget', { id, value: newN });
 						if (!okTest) {
-							// rollback silencioso (sem retestar)
 							setCellSilently(p, 'budget', p.oldValue);
 							p.api.refreshCells({ rowNodes: [p.node], columns: ['budget'] });
 							return;
 						}
-
-						// 2) backend real
 						await updateCampaignBudgetBackend(id, newN);
-
-						// aplica valor final (se já estava igual, nada muda) — sem disparar novamente
 						setCellSilently(p, 'budget', newN);
 						p.api.refreshCells({ rowNodes: [p.node], columns: ['budget'] });
 						showToast('Budget atualizado', 'success');
 					} catch (e) {
-						// rollback silencioso
 						setCellSilently(p, 'budget', p.oldValue);
 						showToast(`Erro ao salvar Budget: ${e?.message || e}`, 'danger');
 					} finally {
@@ -1478,42 +1267,32 @@ const columnDefs = [
 				valueFormatter: currencyFormatter,
 				minWidth: 70,
 				flex: 0.6,
-				cellClassRules: {
-					'ag-cell-loading': (p) => isCellLoading(p, 'bid'),
-				},
+				cellClassRules: { 'ag-cell-loading': (p) => isCellLoading(p, 'bid') },
 				onCellValueChanged: async (p) => {
 					try {
 						if (shouldSuppressCellChange(p, 'bid')) return;
-
 						if ((p?.node?.level ?? 0) !== 0) return;
 						const row = p?.data || {};
 						const id = String(row.id ?? row.utm_campaign ?? '');
 						if (!id) return;
-
 						const currency = getAppCurrency();
 						const oldN = parseCurrencyFlexible(p.oldValue, currency);
 						const newN = parseCurrencyFlexible(p.newValue, currency);
-
 						if (Number.isFinite(oldN) && Number.isFinite(newN) && oldN === newN) return;
-
 						if (!Number.isFinite(newN) || newN < 0) {
 							setCellSilently(p, 'bid', p.oldValue);
 							showToast('Bid inválido', 'danger');
 							return;
 						}
-
 						setCellLoading(p.node, 'bid', true);
 						p.api.refreshCells({ rowNodes: [p.node], columns: ['bid'] });
-
 						const okTest = await toggleFeature('bid', { id, value: newN });
 						if (!okTest) {
 							setCellSilently(p, 'bid', p.oldValue);
 							p.api.refreshCells({ rowNodes: [p.node], columns: ['bid'] });
 							return;
 						}
-
 						await updateCampaignBidBackend(id, newN);
-
 						setCellSilently(p, 'bid', newN);
 						p.api.refreshCells({ rowNodes: [p.node], columns: ['bid'] });
 						showToast('Bid atualizado', 'success');
@@ -1544,8 +1323,6 @@ const columnDefs = [
 			},
 		],
 	},
-
-	// ====== Grupo 3: Métricas & Receita ======
 	{
 		headerName: 'Metrics & Revenue',
 		groupId: 'grp-metrics-rev',
@@ -1632,7 +1409,6 @@ const columnDefs = [
 				headerName: 'Push Revenue',
 				field: 'push_revenue',
 				pinned: 'right',
-
 				valueGetter: (p) => toNumberBR(p.data?.push_revenue),
 				valueFormatter: currencyFormatter,
 				minWidth: 94,
@@ -1655,7 +1431,6 @@ const columnDefs = [
 				field: 'mx',
 				minWidth: 80,
 				pinned: 'right',
-
 				valueGetter: (p) => stripHtml(p.data?.mx),
 				flex: 0.7,
 			},
@@ -1663,7 +1438,6 @@ const columnDefs = [
 				headerName: 'Profit',
 				field: 'profit',
 				pinned: 'right',
-
 				valueGetter: (p) => toNumberBR(p.data?.profit),
 				valueFormatter: currencyFormatter,
 				minWidth: 95,
@@ -1693,7 +1467,7 @@ function normalizeAdsetRow(r) {
 function normalizeAdRow(r) {
 	return { __nodeType: 'ad', __label: stripHtml(r.name || '(ad)'), ...r };
 }
-// Helper (coloque em qualquer lugar do arquivo, junto dos outros utils)
+
 async function copyToClipboard(text) {
 	try {
 		await navigator.clipboard.writeText(String(text ?? ''));
@@ -1726,22 +1500,15 @@ function makeGrid() {
 	}
 	gridDiv.classList.add('ag-theme-quartz');
 
-	// SUBSTITUA seu autoGroupColumnDef por este
 	const autoGroupColumnDef = {
 		headerName: 'Campaign',
 		sortable: false,
-		// cellClass: (p) => (p?.node?.level === 0 ? 'lion-center-cell' : null), // ✅ só root
 		wrapText: true,
 		autoHeight: false,
 		minWidth: 270,
 		pinned: 'left',
 		cellClass: (p) => ['camp-root', 'camp-child', 'camp-grand'][Math.min(p?.node?.level ?? 0, 2)],
-
 		cellRendererParams: { suppressCount: true },
-		// mantém seu estilo no nível 0
-		// cellStyle: (p) => (p?.node?.level === 0 ? { fontSize: '12px', lineHeight: '1.6' } : null),
-
-		// tooltip com Campaign — UTM
 		tooltipValueGetter: (p) => {
 			const d = p.data || {};
 			if (p?.node?.level === 0) {
@@ -1751,26 +1518,21 @@ function makeGrid() {
 			}
 			return d.__label || '';
 		},
-
-		// duas linhas no nível 0: Campaign (negrito) + UTM (menor)
 		cellRendererParams: {
 			suppressCount: true,
 			innerRenderer: (p) => {
 				const d = p.data || {};
 				const label = d.__label || '';
 				const utm = d.utm_campaign || '';
-
 				if (p?.node?.level === 0 && (label || utm)) {
 					const wrap = document.createElement('span');
 					wrap.style.display = 'inline-flex';
 					wrap.style.flexDirection = 'column';
 					wrap.style.lineHeight = '1.25';
-
 					const l1 = document.createElement('span');
 					l1.textContent = label;
 					l1.style.fontWeight = '600';
 					wrap.appendChild(l1);
-
 					if (utm) {
 						const l2 = document.createElement('span');
 						l2.textContent = utm;
@@ -1781,7 +1543,6 @@ function makeGrid() {
 					}
 					return wrap;
 				}
-				// adset/ads: só o label
 				return label;
 			},
 		},
@@ -1811,15 +1572,12 @@ function makeGrid() {
 		autoGroupColumnDef,
 		defaultColDef,
 		rowSelection: {
-			mode: 'multiRow', // ✅ novo modelo (v34+)
-			checkboxes: {
-				enabled: true, // ✅ ativa checkboxes
-				header: true, // ✅ exibe o header checkbox
-			},
+			mode: 'multiRow',
+			checkboxes: { enabled: true, header: true },
 			selectionColumn: {
-				id: 'ag-Grid-SelectionColumn', // ✅ garante o mesmo ID do preset
-				width: 36, // ✅ mesma largura do preset
-				pinned: 'left', // ✅ pinada à esquerda
+				id: 'ag-Grid-SelectionColumn',
+				width: 36,
+				pinned: 'left',
 				suppressHeaderMenuButton: true,
 				suppressHeaderFilterButton: true,
 			},
@@ -1830,41 +1588,32 @@ function makeGrid() {
 		sideBar: { toolPanels: ['columns', 'filters'], defaultToolPanel: null, position: 'right' },
 		theme: createAgTheme(),
 
-		// Obs.: o toggle de status é feito no próprio renderer (drag-only) com backend otimista.
-		// Adicione isto dentro de gridOptions (mesmo nível de onGridReady, rowSelection, etc.)
 		getContextMenuItems: (params) => {
 			const d = params.node?.data || {};
 			const isCampaign = params.node?.level === 0;
 			const items = [];
-
-			// itens nativos úteis
 			items.push('cut', 'copy', 'copyWithHeaders', 'copyWithGroupHeaders', 'export', 'separator');
-
 			if (isCampaign) {
 				const label = d.__label || d.campaign_name || '';
 				const utm = d.utm_campaign || '';
-
-				if (label) {
+				if (label)
 					items.push({
 						name: 'Copiar Campaign',
 						action: () => copyToClipboard(label),
 						icon: '<span class="ag-icon ag-icon-copy"></span>',
 					});
-				}
-				if (utm) {
+				if (utm)
 					items.push({
 						name: 'Copiar UTM',
 						action: () => copyToClipboard(utm),
 						icon: '<span class="ag-icon ag-icon-copy"></span>',
 					});
-				}
 			}
 			return items;
 		},
 
 		onCellClicked(params) {
 			if (params?.node?.level > 0) return;
-
 			const isAutoGroupCol =
 				(typeof params.column?.isAutoRowGroupColumn === 'function' &&
 					params.column.isAutoRowGroupColumn()) ||
@@ -1873,7 +1622,6 @@ function makeGrid() {
 			const clickedExpanderOrCheckbox = !!params.event?.target?.closest?.(
 				'.ag-group-expanded, .ag-group-contracted, .ag-group-checkbox'
 			);
-
 			if (
 				isAutoGroupCol &&
 				!clickedExpanderOrCheckbox &&
@@ -1883,7 +1631,6 @@ function makeGrid() {
 				showKTModal({ title: 'Campaign', content: label });
 				return;
 			}
-
 			const MODAL_FIELDS = new Set([
 				'profile_name',
 				'bc_name',
@@ -1897,7 +1644,6 @@ function makeGrid() {
 			]);
 			const field = params.colDef?.field;
 			if (!field || !MODAL_FIELDS.has(field)) return;
-
 			const vfmt = params.valueFormatted;
 			let display;
 			if (vfmt != null && vfmt !== '') display = String(vfmt);
@@ -1950,20 +1696,30 @@ function makeGrid() {
 							filterModel,
 						} = req.request;
 
-						// Nível 0 => campanhas
+						// monta filterModel com _global.filter (quick filter)
+						const filterModelWithGlobal = buildFilterModelWithGlobal(filterModel);
+
+						// Nível 0 => campanhas (SSRM)
 						if (groupKeys.length === 0) {
+							// POST principal
 							let res = await fetch(ENDPOINTS.SSRM, {
 								method: 'POST',
 								headers: { 'Content-Type': 'application/json' },
-								body: JSON.stringify({ startRow, endRow, sortModel, filterModel }),
 								credentials: 'same-origin',
+								body: JSON.stringify({
+									startRow,
+									endRow,
+									sortModel: sortModel || [],
+									filterModel: filterModelWithGlobal, // 👈 formato que o back espera
+								}),
 							});
+							// Fallback GET
 							if (!res.ok) {
 								const qs = new URLSearchParams({
 									startRow: String(startRow),
 									endRow: String(endRow),
 									sortModel: JSON.stringify(sortModel || []),
-									filterModel: JSON.stringify(filterModel || {}),
+									filterModel: JSON.stringify(filterModelWithGlobal || {}), // 👈 inclui _global
 								});
 								res = await fetch(`${ENDPOINTS.SSRM}&${qs.toString()}`, {
 									credentials: 'same-origin',
@@ -2029,7 +1785,7 @@ function makeGrid() {
 							return;
 						}
 
-						// Nível 1 => adsets
+						// Nível 1 => adsets (DRILL)
 						if (groupKeys.length === 1) {
 							const campaignId = groupKeys[0];
 							const qs = new URLSearchParams({
@@ -2037,6 +1793,7 @@ function makeGrid() {
 								period: DRILL.period,
 								startRow: String(startRow),
 								endRow: String(endRow),
+								filterModel: JSON.stringify(filterModelWithGlobal || {}), // 👈 inclui _global.filter
 							});
 							const data = await fetchJSON(`${DRILL_ENDPOINTS.ADSETS}?${qs.toString()}`);
 							const rows = (data.rows || []).map(normalizeAdsetRow);
@@ -2044,7 +1801,7 @@ function makeGrid() {
 							return;
 						}
 
-						// Nível 2 => ads
+						// Nível 2 => ads (DRILL)
 						if (groupKeys.length === 2) {
 							const adsetId = groupKeys[1];
 							const qs = new URLSearchParams({
@@ -2052,6 +1809,7 @@ function makeGrid() {
 								period: DRILL.period,
 								startRow: String(startRow),
 								endRow: String(endRow),
+								filterModel: JSON.stringify(filterModelWithGlobal || {}), // 👈 inclui _global.filter
 							});
 							const data = await fetchJSON(`${DRILL_ENDPOINTS.ADS}?${qs.toString()}`);
 							const rows = (data.rows || []).map(normalizeAdRow);
@@ -2091,7 +1849,6 @@ function makeGrid() {
 
 	const api = gridOptions.api || apiOrInstance;
 
-	// expõe a API pra outras funções (toggle / reset state se quiser)
 	globalThis.LionGrid = globalThis.LionGrid || {};
 	globalThis.LionGrid.api = api;
 	globalThis.LionGrid.resetLayout = function () {
@@ -2142,43 +1899,28 @@ function getSelectionColId(api) {
 		return null;
 	}
 }
-
 function togglePinnedColsFromCheckbox(silent = false) {
 	const api = globalThis.LionGrid?.api;
 	if (!api) return;
-
 	const el = document.getElementById('pinToggle');
 	if (!el) return;
 	const checked = !!el.checked;
-
 	const selectionColId = getSelectionColId(api);
-
-	// Colunas que ficam à ESQUERDA quando marcado
 	const leftPins = [
 		{ colId: 'ag-Grid-SelectionColumn', pinned: checked ? 'left' : null },
 		{ colId: 'ag-Grid-AutoColumn', pinned: checked ? 'left' : null },
 		{ colId: 'profile_name', pinned: checked ? 'left' : null },
 	];
-	if (selectionColId) {
-		leftPins.push({ colId: selectionColId, pinned: checked ? 'left' : null });
-	}
-
-	// Colunas que ficam à DIREITA quando marcado
+	if (selectionColId) leftPins.push({ colId: selectionColId, pinned: checked ? 'left' : null });
 	const rightPins = [
 		{ colId: 'push_revenue', pinned: checked ? 'right' : null },
 		{ colId: 'revenue', pinned: checked ? 'right' : null },
 		{ colId: 'mx', pinned: checked ? 'right' : null },
 		{ colId: 'profit', pinned: checked ? 'right' : null },
 	];
-
-	api.applyColumnState({
-		state: [...leftPins, ...rightPins],
-		defaultState: { pinned: null },
-	});
-
-	if (!silent) {
+	api.applyColumnState({ state: [...leftPins, ...rightPins], defaultState: { pinned: null } });
+	if (!silent)
 		showToast(checked ? 'Columns Pinned' : 'Columns Unpinned', checked ? 'success' : 'info');
-	}
 }
 
 /* ============ Page module ============ */
@@ -2186,22 +1928,16 @@ const LionPage = (() => {
 	let gridRef = null;
 	function mount() {
 		gridRef = makeGrid();
-
 		const el = document.getElementById('pinToggle');
-		if (el) {
-			if (!el.hasAttribute('data-init-bound')) {
-				el.checked = true; // default pinado
-				el.addEventListener('change', () => togglePinnedColsFromCheckbox(false));
-				el.setAttribute('data-init-bound', '1');
-			}
+		if (el && !el.hasAttribute('data-init-bound')) {
+			el.checked = true;
+			el.addEventListener('change', () => togglePinnedColsFromCheckbox(false));
+			el.setAttribute('data-init-bound', '1');
 		}
-
 		togglePinnedColsFromCheckbox(true); // silencioso no load
 	}
-
 	if (document.readyState !== 'loading') mount();
 	else document.addEventListener('DOMContentLoaded', mount);
-
 	return { mount };
 })();
 globalThis.LionGrid = globalThis.LionGrid || {};
