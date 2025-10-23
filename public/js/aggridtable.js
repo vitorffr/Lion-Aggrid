@@ -164,7 +164,7 @@ function setCellSilently(p, colId, value) {
 		if (!sel) return;
 		const activePreset = localStorage.getItem(LS_KEY_ACTIVE_PRESET) || '';
 		while (sel.firstChild) sel.removeChild(sel.firstChild);
-		const placeholderText = activePreset ? `Active: ${activePreset}` : 'Default';
+		const placeholderText = 'Default';
 		sel.appendChild(new Option(placeholderText, ''));
 		listPresetNames().forEach((name) => sel.appendChild(new Option(name, name)));
 		if (activePreset && [...sel.options].some((o) => o.value === activePreset))
@@ -359,17 +359,30 @@ function refreshSSRM(api) {
 	}
 }
 
-/* ===== 🔍 QUICK FILTER wiring ===== */
 (function setupGlobalQuickFilter() {
+	function focusQuickFilter() {
+		const input = document.getElementById('quickFilter');
+		if (!input) return;
+		input.focus();
+		input.select?.();
+	}
+
 	function applyGlobalFilter(val) {
 		GLOBAL_QUICK_FILTER = String(val || '');
 		const api = globalThis.LionGrid?.api;
 		if (!api) return;
 		refreshSSRM(api);
 	}
+
 	function init() {
 		const input = document.getElementById('quickFilter'); // id padrão do AG Grid
 		if (!input) return;
+
+		// atalho de acessibilidade opcional (vira Alt+Shift+K em vários browsers)
+		try {
+			input.setAttribute('accesskey', 'k');
+		} catch {}
+
 		let t = null;
 		input.addEventListener('input', () => {
 			clearTimeout(t);
@@ -377,6 +390,34 @@ function refreshSSRM(api) {
 		});
 		if (input.value) applyGlobalFilter(input.value.trim());
 	}
+
+	// Global hotkeys: Meta+K (quando o navegador permitir) e Ctrl+K sempre
+	window.addEventListener(
+		'keydown',
+		(e) => {
+			const tag = e.target && e.target.tagName ? e.target.tagName.toLowerCase() : '';
+			const editable =
+				tag === 'input' || tag === 'textarea' || (e.target && e.target.isContentEditable);
+			// não roubar o atalho se já estiver digitando em algum campo
+			if (editable) return;
+
+			const key = String(e.key || '').toLowerCase();
+			// 1) Fallback consistente: Ctrl+K
+			if (e.ctrlKey && !e.shiftKey && !e.altKey && key === 'k') {
+				e.preventDefault();
+				focusQuickFilter();
+				return;
+			}
+			// 2) Tentativa: Meta+K (Cmd no macOS, Win no Windows) — pode não disparar no Windows por ser atalho do sistema
+			if (e.metaKey && !e.shiftKey && !e.altKey && key === 'k') {
+				e.preventDefault();
+				focusQuickFilter();
+				return;
+			}
+		},
+		{ capture: true }
+	);
+
 	globalThis.addEventListener('lionGridReady', init);
 })();
 
