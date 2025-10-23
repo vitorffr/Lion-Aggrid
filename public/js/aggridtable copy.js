@@ -17,60 +17,68 @@ const GRID_STATE_IGNORE_ON_RESTORE = [
 const DEV_FAKE_NETWORK_LATENCY_MS = 0; // mude p/ 600..1200 para simular rede
 const MIN_SPINNER_MS = 500; // spinner visível por pelo menos X ms
 
-// Moeda global da aplicação (pode mudar depois via setLionCurrency)
-let LION_CURRENCY = 'BRL'; // 'BRL' | 'USD'
-
-// Setter para trocar em runtime
-function setLionCurrency(mode) {
-	const m = String(mode || '').toUpperCase();
-	if (m === 'USD' || m === 'BRL') LION_CURRENCY = m;
-	else console.warn('[Currency] modo inválido:', mode);
-}
-
-// Getter simples
-function getAppCurrency() {
-	return LION_CURRENCY;
-}
-// Aceita entrada com ponto ou vírgula e normaliza para número.
-// A moeda ativa (BRL/ USD) só afeta o *formato de saída*; o parser é tolerante.
-function parseCurrencyFlexible(value, mode = getAppCurrency()) {
-	if (value == null || value === '') return null;
-	if (typeof value === 'number') return Number.isFinite(value) ? value : null;
-
-	let s = String(value).trim();
-	// mantém apenas dígitos, separadores e sinal
-	s = s.replace(/[^\d.,\-+]/g, '');
-
-	if (!s) return null;
-
-	// identifica qual separador aparece por último -> tratamos como separador decimal
-	const lastDot = s.lastIndexOf('.');
-	const lastComma = s.lastIndexOf(',');
-	const hasSep = lastDot !== -1 || lastComma !== -1;
-
-	let normalized;
-
-	if (!hasSep) {
-		// só dígitos (ou sinal) -> inteiro
-		normalized = s.replace(/[^\d\-+]/g, '');
-	} else {
-		const decSep = lastDot > lastComma ? '.' : ',';
-		const i = s.lastIndexOf(decSep);
-
-		const intPart = s.slice(0, i).replace(/[^\d\-+]/g, '');
-		const fracPart = s.slice(i + 1).replace(/[^\d]/g, '');
-
-		normalized = intPart + (fracPart ? '.' + fracPart : '');
-	}
-
-	const n = parseFloat(normalized);
-	return Number.isFinite(n) ? n : null;
-}
-
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function withMinSpinner(startMs, minMs) {
 	const elapsed = performance.now() - startMs;
 	if (elapsed < minMs) await sleep(minMs - elapsed);
+}
+// Tenta inferir a moeda a partir do dado da linha e/ou do próprio valor digitado
+function detectCurrencyFromValue(val) {
+	const s = String(val ?? '').trim();
+	if (/R\$\s*/i.test(s)) return 'BRL';
+	// "$" sozinho: trate como USD (evita confundir com R$)
+	if (/\$\s*/.test(s) && !/R\$\s*/i.test(s)) return 'USD';
+	// Heurística por separadores: vírgula como decimal => BRL
+	// Ex: "1.234,56" ou "12,3"
+	if (/,/.test(s) && /\d,\d{1,2}$/.test(s)) return 'BRL';
+	// Ponto como decimal => USD (ex: "1234.56")
+	if (/\.\d{1,2}$/.test(s) && !/,/.test(s)) return 'USD';
+	return null;
+}
+
+// Detecta moeda da linha/célula ou cai no fallback BRL
+function getRowCurrency(p) {
+	const fromRow =
+		(p?.data?.currency ||
+			p?.data?.account_currency ||
+			p?.data?.acc_currency ||
+			p?.data?.moeda ||
+			p?.data?.cur) ??
+		null;
+
+	const rowCur = typeof fromRow === 'string' ? fromRow.trim().toUpperCase() : null;
+
+	// tenta inferir pela célula atual (valor formatado ou bruto)
+	const cellVal = p && 'newValue' in p ? p.newValue : p && 'value' in p ? p.value : null;
+
+	const inferred = detectCurrencyFromValue(cellVal);
+
+	// prioridade: dado explícito da linha > inferência pelo valor > BRL
+	return rowCur === 'USD' || rowCur === 'BRL' ? rowCur : inferred || 'BRL';
+}
+
+// Converte string -> number respeitando a moeda
+function parseCurrencyByLocale(value, currency = 'BRL') {
+	if (value == null || value === '') return null;
+	if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+
+	let s = String(value).trim();
+
+	// remove símbolos e espaços
+	// Obs: preserva ponto e vírgula (vamos tratar abaixo)
+	s = s.replace(/[^\d.,\-+]/g, '');
+
+	if (currency === 'USD') {
+		// USD: vírgula = milhar, ponto = decimal
+		s = s.replace(/,/g, ''); // tira milhares
+		const n = parseFloat(s);
+		return Number.isFinite(n) ? n : null;
+	}
+
+	// BRL (default): ponto = milhar, vírgula = decimal
+	s = s.replace(/\./g, '').replace(/,/g, '.');
+	const n = parseFloat(s);
+	return Number.isFinite(n) ? n : null;
 }
 
 // marca por célula que o próximo setDataValue NÃO deve disparar lógica de edição
@@ -531,10 +539,11 @@ const brlFmt = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BR
 const intFmt = new Intl.NumberFormat('pt-BR');
 
 function currencyFormatter(p) {
-	const currency = getAppCurrency();
+	const currency = getRowCurrency(p);
 	const locale = currency === 'USD' ? 'en-US' : 'pt-BR';
 
-	let n = typeof p.value === 'number' ? p.value : parseCurrencyFlexible(p.value, currency);
+	// se já é número, beleza; senão tenta parsear
+	let n = typeof p.value === 'number' ? p.value : parseCurrencyByLocale(p.value, currency);
 	if (!Number.isFinite(n)) return p.value ?? '';
 
 	return new Intl.NumberFormat(locale, { style: 'currency', currency }).format(n);
@@ -832,7 +841,6 @@ function createAgTheme() {
 		spacing: 6,
 	});
 }
-const LION_CENTER_EXCLUDES = new Set(['profile_name']);
 
 /* ============ Colunas ============ */
 const defaultColDef = {
@@ -840,7 +848,7 @@ const defaultColDef = {
 	filter: true, // continua habilitando o filtro
 	floatingFilter: true,
 	resizable: true,
-	cellClass: (p) => (LION_CENTER_EXCLUDES.has(p.column.getColId()) ? null : 'lion-center-cell'),
+	cellClass: ['lion-center-cell'], // 👈 NOVO
 	// unSortIcon: true,
 	wrapHeaderText: true,
 	autoHeaderHeight: true,
@@ -850,7 +858,8 @@ const defaultColDef = {
 	suppressHeaderFilterButton: true, // 👈 esconde o funil no header
 };
 function parseCurrencyInput(params) {
-	return parseCurrencyFlexible(params.newValue, getAppCurrency());
+	const currency = getRowCurrency(params);
+	return parseCurrencyByLocale(params.newValue, currency);
 }
 
 function isPinnedOrGroup(params) {
@@ -1275,25 +1284,11 @@ StatusSliderRenderer.prototype.refresh = function (p) {
 	const fill = this.eGui.querySelector('.ag-status-fill');
 	const knob = this.eGui.querySelector('.ag-status-knob');
 	const label = this.eGui.querySelector('.ag-status-label');
-	const cs = getComputedStyle(this.eGui);
-	const pad = parseFloat(cs.paddingLeft || '0');
-	const edgeGap = parseFloat(cs.getPropertyValue('--edge-gap') || '0');
-	const rectW = this.eGui.getBoundingClientRect().width;
-	const kRectW = this.eGui.querySelector('.ag-status-knob').getBoundingClientRect().width || 0;
-	const trackLenPx = Math.max(0, rectW - 2 * pad - 2 * edgeGap - kRectW);
 
+	const trackLenPx = Math.max(0, this.eGui.clientWidth - this.eGui.clientHeight);
 	requestAnimationFrame(() => {
 		fill.style.width = (isOn ? 100 : 0) + '%';
-		// nudge e snap iguais ao init
-		const onNudge = parseFloat(cs.getPropertyValue('--knob-on-nudge') || '0') || 0;
-		const offNudge = parseFloat(cs.getPropertyValue('--knob-off-nudge') || '0') || 0;
-		const nudgePx = isOn ? onNudge : offNudge;
-
-		const EPS = 0.001;
-		let x = (isOn ? 1 : 0) * trackLenPx;
-		if (isOn && 1 > 1 - EPS) x = trackLenPx; // só p/ simetria; já é 1
-		knob.style.transform = `translateX(${x + nudgePx}px)`;
-
+		knob.style.transform = `translateX(${(isOn ? 1 : 0) * trackLenPx}px)`;
 		label.textContent = isOn ? 'ACTIVE' : 'PAUSED';
 		this.eGui.setAttribute('aria-checked', String(isOn));
 	});
@@ -1425,9 +1420,9 @@ const columnDefs = [
 						const id = String(row.id ?? row.utm_campaign ?? '');
 						if (!id) return;
 
-						const currency = getAppCurrency();
-						const oldN = parseCurrencyFlexible(p.oldValue, currency);
-						const newN = parseCurrencyFlexible(p.newValue, currency);
+						const currency = getRowCurrency(p);
+						const oldN = parseCurrencyByLocale(p.oldValue, currency);
+						const newN = parseCurrencyByLocale(p.newValue, currency);
 
 						// 2) se não mudou de fato, não faz nada
 						if (Number.isFinite(oldN) && Number.isFinite(newN) && oldN === newN) return;
@@ -1490,9 +1485,9 @@ const columnDefs = [
 						const id = String(row.id ?? row.utm_campaign ?? '');
 						if (!id) return;
 
-						const currency = getAppCurrency();
-						const oldN = parseCurrencyFlexible(p.oldValue, currency);
-						const newN = parseCurrencyFlexible(p.newValue, currency);
+						const currency = getRowCurrency(p);
+						const oldN = parseCurrencyByLocale(p.oldValue, currency);
+						const newN = parseCurrencyByLocale(p.newValue, currency);
 
 						if (Number.isFinite(oldN) && Number.isFinite(newN) && oldN === newN) return;
 
@@ -1730,16 +1725,12 @@ function makeGrid() {
 	const autoGroupColumnDef = {
 		headerName: 'Campaign',
 		sortable: false,
-		// cellClass: (p) => (p?.node?.level === 0 ? 'lion-center-cell' : null), // ✅ só root
 		wrapText: true,
 		autoHeight: false,
 		minWidth: 270,
 		pinned: 'left',
-		cellClass: (p) => ['camp-root', 'camp-child', 'camp-grand'][Math.min(p?.node?.level ?? 0, 2)],
-
-		cellRendererParams: { suppressCount: true },
 		// mantém seu estilo no nível 0
-		// cellStyle: (p) => (p?.node?.level === 0 ? { fontSize: '12px', lineHeight: '1.6' } : null),
+		cellStyle: (p) => (p?.node?.level === 0 ? { fontSize: '12px', lineHeight: '1.6' } : null),
 
 		// tooltip com Campaign — UTM
 		tooltipValueGetter: (p) => {
@@ -1796,7 +1787,6 @@ function makeGrid() {
 		cacheBlockSize: 200,
 		maxBlocksInCache: 4,
 		treeData: true,
-
 		isServerSideGroup: (data) => data?.__nodeType === 'campaign' || data?.__nodeType === 'adset',
 		getServerSideGroupKey: (data) => data?.__groupKey ?? '',
 		getRowId: (p) => {
@@ -2144,27 +2134,13 @@ function togglePinnedColsFromCheckbox(silent = false) {
 
 	const selectionColId = getSelectionColId(api);
 
-	// Colunas que ficam à ESQUERDA quando marcado
-	const leftPins = [
+	const base = [
 		{ colId: 'ag-Grid-AutoColumn', pinned: checked ? 'left' : null },
 		{ colId: 'profile_name', pinned: checked ? 'left' : null },
 	];
-	if (selectionColId) {
-		leftPins.push({ colId: selectionColId, pinned: checked ? 'left' : null });
-	}
+	if (selectionColId) base.push({ colId: selectionColId, pinned: checked ? 'left' : null });
 
-	// Colunas que ficam à DIREITA quando marcado
-	const rightPins = [
-		{ colId: 'push_revenue', pinned: checked ? 'right' : null },
-		{ colId: 'revenue', pinned: checked ? 'right' : null },
-		{ colId: 'mx', pinned: checked ? 'right' : null },
-		{ colId: 'profit', pinned: checked ? 'right' : null },
-	];
-
-	api.applyColumnState({
-		state: [...leftPins, ...rightPins],
-		defaultState: { pinned: null },
-	});
+	api.applyColumnState({ state: base, defaultState: { pinned: null } });
 
 	if (!silent) {
 		showToast(checked ? 'Columns Pinned' : 'Columns Unpinned', checked ? 'success' : 'info');

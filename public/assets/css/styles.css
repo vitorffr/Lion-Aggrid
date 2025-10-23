@@ -1,5 +1,17 @@
 /* pill arrastável dentro da célula */
 /* empilha texto do header e ícones em coluna */
+.camp-root {
+	font-size: 12px;
+	line-height: 1.6;
+}
+.camp-child {
+	font-size: 14px;
+	line-height: 1.4;
+}
+.camp-grand {
+	font-size: 13px;
+	line-height: 1.6;
+}
 
 /* pill já existente */
 .ag-status-pill {
@@ -7,7 +19,7 @@
 	--w: 80px;
 	--pad: 2px;
 	/* novo: folga mínima da borda p/ o knob “encostar” */
-	--edge-gap: 1px;
+	--edge-gap: 0px;
 }
 
 /* knob padrão (se algum lugar renderizar sem --sm, continua igual) */
@@ -123,6 +135,21 @@
 	align-items: center; /* centro vertical */
 	justify-content: center;
 	/* padding: 10px;  */
+}
+/* vars globais (default = sem nudge) */
+:root {
+	--paused-nudge-x: 2px; /* + direita / - esquerda */
+	--paused-nudge-y: 0px; /* + baixo / - cima    */
+}
+
+/* aplica o nudge SOMENTE quando estiver PAUSED (aria-checked="false") */
+.ag-status-pill[aria-checked='false'] .ag-status-label {
+	transform: translateX(var(--paused-nudge-x)) translateY(var(--paused-nudge-y)) translateZ(0);
+}
+
+/* mantém ACTIVE como estava (sem nudge) */
+.ag-status-pill[aria-checked='true'] .ag-status-label {
+	transform: translateZ(0);
 }
 
 .ag-status-pill {

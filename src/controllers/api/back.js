@@ -617,7 +617,7 @@ async function testToggle(req, env) {
 		await new Promise((r) => setTimeout(r, 300 + Math.random() * 600));
 
 		// 50% de chance de sucesso
-		const success = Math.random() < 0.5;
+		const success = Math.random() < 1; //bypass para teste
 
 		if (!success) {
 			return new Response(
