@@ -139,6 +139,8 @@ function setCellSilently(p, colId, value) {
 			api.setFilterModel?.(null);
 			api.setSortModel?.([]);
 			refreshPresetUserSelect();
+			togglePinnedColsFromCheckbox(true);
+
 			showToast('Layout Reset', 'info');
 		} catch (e) {
 			console.warn('resetLayout fail', e);
@@ -596,6 +598,21 @@ function chipFractionBadgeRenderer(p) {
 	host.innerHTML = renderBadge(label, color);
 	return host.firstElementChild;
 }
+// coloque junto com os outros "update*Backend"
+async function updateAdStatusBackend(id, status) {
+	const t0 = performance.now();
+	if (DEV_FAKE_NETWORK_LATENCY_MS > 0) await sleep(DEV_FAKE_NETWORK_LATENCY_MS);
+	const res = await fetch(`/api/ads/${encodeURIComponent(id)}/status/`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		credentials: 'same-origin',
+		body: JSON.stringify({ status }),
+	});
+	const data = await res.json().catch(() => ({}));
+	if (!res.ok || data?.ok === false) throw new Error(data?.error || 'Ad status update failed');
+	await withMinSpinner(t0, MIN_SPINNER_MS);
+	return data;
+}
 
 async function updateAdsetStatusBackend(id, status) {
 	const t0 = performance.now();
@@ -988,12 +1005,18 @@ StatusSliderRenderer.prototype.init = function (p) {
 				: nextOrString
 				? 'ACTIVE'
 				: 'PAUSED';
+
+		const level = p.node?.level ?? 0;
 		const id =
-			(p.node?.level === 0
+			level === 0
 				? String(p.data?.id ?? p.data?.utm_campaign ?? '')
-				: String(p.data?.id ?? '')) || '';
+				: String(p.data?.id ?? '') || '';
+
 		if (!id) return;
-		const scope = (p.node?.level ?? 0) === 1 ? 'adset' : 'campaign';
+
+		// agora cobre os 3 níveis
+		const scope = level === 2 ? 'ad' : level === 1 ? 'adset' : 'campaign';
+		const colId = p.column.getColId();
 
 		setCellBusy(true);
 		try {
@@ -1008,6 +1031,8 @@ StatusSliderRenderer.prototype.init = function (p) {
 				p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
 				return;
 			}
+
+			// otimista no grid
 			if (p.data) {
 				if ('campaign_status' in p.data) p.data.campaign_status = nextVal;
 				if ('status' in p.data) p.data.status = nextVal;
@@ -1016,10 +1041,15 @@ StatusSliderRenderer.prototype.init = function (p) {
 			p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
 
 			try {
-				if ((p.node?.level ?? 0) === 1) await updateAdsetStatusBackend(id, nextVal);
-				else await updateCampaignStatusBackend(id, nextVal);
+				if (scope === 'ad') {
+					await updateAdStatusBackend(id, nextVal);
+				} else if (scope === 'adset') {
+					await updateAdsetStatusBackend(id, nextVal);
+				} else {
+					await updateCampaignStatusBackend(id, nextVal);
+				}
 				if (this._userInteracted) {
-					const scopeLabel = scope === 'adset' ? 'Adset' : 'Campanha';
+					const scopeLabel = scope === 'ad' ? 'Ad' : scope === 'adset' ? 'Adset' : 'Campanha';
 					const msg = nextVal === 'ACTIVE' ? `${scopeLabel} ativado` : `${scopeLabel} pausado`;
 					showToast(msg, 'success');
 				}

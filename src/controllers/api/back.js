@@ -79,9 +79,11 @@ function applySort(rows, sortModel) {
 			/* ======== 1️⃣ ordem customizada para STATUS ======== */
 			if (colId === 'account_status' || colId === 'campaign_status' || colId === 'status') {
 				const order = ['ACTIVE', 'PAUSED', 'DISABLED', 'CLOSED'];
-				const ai = order.indexOf(String(av).toUpperCase());
-				const bi = order.indexOf(String(bv).toUpperCase());
-				const cmp = (ai - bi) * dir;
+				const ai = order.indexOf(String(av ?? '').toUpperCase());
+				const bi = order.indexOf(String(bv ?? '').toUpperCase());
+				const aIdx = ai === -1 ? Number.POSITIVE_INFINITY : ai;
+				const bIdx = bi === -1 ? Number.POSITIVE_INFINITY : bi;
+				const cmp = (aIdx - bIdx) * dir;
 				if (cmp !== 0) return cmp;
 				continue;
 			}
@@ -139,7 +141,7 @@ function applyFilters(rows, filterModel) {
 				return (r) => !set.has(String(r[field] ?? '').toLowerCase());
 			}
 
-			// === texto padrão com todos os tipos (contains, notContains, startsWith, endsWith, equals, notEqual)
+			// === texto padrão com todos os tipos
 			if (ft === 'text') {
 				const comp = String(f.type || 'contains');
 				const needle = String(f.filter ?? '').toLowerCase();
@@ -377,7 +379,11 @@ function filterByParentAndPeriod(rows, { idKey, idValue, period }) {
 /* ==================== Overlay em memória ==================== */
 // ⚠️ VOLÁTIL: por isolate. Para durabilidade real, use KV/D1.
 function getMutStore() {
-	globalThis.__LION_MUT__ = globalThis.__LION_MUT__ || { campaigns: new Map(), adsets: new Map() };
+	globalThis.__LION_MUT__ = globalThis.__LION_MUT__ || {
+		campaigns: new Map(),
+		adsets: new Map(),
+		ads: new Map(),
+	};
 	return globalThis.__LION_MUT__;
 }
 
@@ -394,19 +400,36 @@ function overlayCampaignArray(rows) {
 	return rows.map(overlayCampaign);
 }
 
-// Adset overlay
+// Adset overlay (espelha campaign_status a partir de status)
 function overlayAdset(row) {
 	const store = getMutStore();
 	const id = String(row.id ?? '');
-	if (!id) return row;
-	const mut = store.adsets.get(id);
-	if (!mut) return row;
-	return { ...row, ...mut };
+	const base = { ...row };
+	if (id) Object.assign(base, store.adsets.get(id) || {});
+	const statusVal = String(base.campaign_status ?? base.status ?? '').toUpperCase();
+	return statusVal ? { ...base, campaign_status: statusVal } : base;
 }
 function overlayAdsetArray(rows) {
 	return rows.map(overlayAdset);
 }
 
+// Ad overlay (espelha campaign_status a partir de status)
+// Ad overlay
+// Ad overlay (espelha campaign_status a partir de status)
+function overlayAd(row) {
+	const store = getMutStore();
+	const id = String(row.id ?? '');
+	const base = { ...row };
+	if (id) Object.assign(base, store.ads.get(id) || {});
+	const statusVal = String(base.campaign_status ?? base.status ?? '').toUpperCase();
+	return statusVal ? { ...base, campaign_status: statusVal } : base;
+}
+
+function overlayAdArray(rows) {
+	return rows.map(overlayAd);
+}
+
+/* ==================== /api/adsets (filtra por campaign_id + period) ==================== */
 async function adsets(req, env) {
 	try {
 		const reqForBody = req.clone();
@@ -430,22 +453,20 @@ async function adsets(req, env) {
 		// 1) parent + period
 		let rows = filterByParentAndPeriod(full, { idKey: 'idroot', idValue: campaignId, period });
 
-		// overlay antes de filtrar/ordenar
+		// 2) overlay adset
 		rows = overlayAdsetArray(rows);
 
-		// campo virtual (compat com colId "campaign" da auto group column)
+		// 3) campo virtual para a auto-group "Campaign" (nome do adset)
 		rows = rows.map((r) => ({ ...r, campaign: stripHtml(r.name || '') }));
 
-		// 2) filtros genéricos
+		// 4) filtros e sort
 		rows = applyFilters(rows, filterModel);
-
-		// 3) ordena
 		rows = applySort(rows, sortModel);
 
 		// Totais
 		const totals = computeTotalsGeneric(rows);
 
-		// 4) SSRM slice
+		// 5) SSRM slice
 		const safeEnd = Math.min(Math.max(endRow, 0), rows.length);
 		const safeStart = Math.min(Math.max(startRow, 0), safeEnd);
 		const slice = rows.slice(safeStart, safeEnd);
@@ -461,6 +482,7 @@ async function adsets(req, env) {
 	}
 }
 
+/* ==================== /api/ads (filtra por adset_id + period) ==================== */
 async function ads(req, env) {
 	try {
 		const reqForBody = req.clone();
@@ -484,6 +506,9 @@ async function ads(req, env) {
 		// 1) parent + period
 		let rows = filterByParentAndPeriod(full, { idKey: 'idchild', idValue: adsetId, period });
 
+		// 👇 overlay em memória ANTES de filtrar/ordenar
+		rows = overlayAdArray(rows);
+
 		// campo virtual (compat com colId "campaign" da auto group column)
 		rows = rows.map((r) => ({ ...r, campaign: stripHtml(r.name || '') }));
 
@@ -512,7 +537,8 @@ async function ads(req, env) {
 	}
 }
 
-/* ==================== Mutations (Campaigns + Adsets) ==================== */
+/* ==================== Mutations (Campaigns + Adsets + Ads) ==================== */
+// campaign status
 async function updateCampaignStatus(req, env) {
 	try {
 		const url = new URL(req.url);
@@ -540,7 +566,7 @@ async function updateCampaignStatus(req, env) {
 	}
 }
 
-// ⚠️ NOVA: adset status
+// adset status (espelha em campaign_status)
 async function updateAdsetStatus(req, env) {
 	try {
 		const url = new URL(req.url);
@@ -555,8 +581,37 @@ async function updateAdsetStatus(req, env) {
 
 		const store = getMutStore();
 		const prev = store.adsets.get(id) || {};
-		// nos adsets o campo de status é "status"
-		store.adsets.set(id, { ...prev, status });
+		store.adsets.set(id, { ...prev, status, campaign_status: status });
+
+		return new Response(JSON.stringify({ ok: true, id, status }), {
+			headers: { 'Content-Type': 'application/json' },
+		});
+	} catch (err) {
+		return new Response(JSON.stringify({ ok: false, error: String(err?.message || err) }), {
+			status: 400,
+			headers: { 'Content-Type': 'application/json' },
+		});
+	}
+}
+
+// ads status (novo) — espelha em campaign_status
+
+async function updateAdStatus(req, env) {
+	try {
+		const url = new URL(req.url);
+		const parts = url.pathname.split('/').filter(Boolean); // ["api","ads",":id","status"]
+		const id = parts[2];
+		if (!id) throw new Error('Missing ad id');
+
+		const body = await req.json().catch(() => ({}));
+		const status = String(body.status || '').toUpperCase();
+		const allow = new Set(['ACTIVE', 'PAUSED', 'DISABLED', 'CLOSED']);
+		if (!allow.has(status)) throw new Error('Invalid status');
+
+		const store = getMutStore();
+		const prev = store.ads.get(id) || {};
+		// 👇 salva status e o espelho em campaign_status (usado pela coluna do toggle)
+		store.ads.set(id, { ...prev, status, campaign_status: status });
 
 		return new Response(JSON.stringify({ ok: true, id, status }), {
 			headers: { 'Content-Type': 'application/json' },
@@ -622,6 +677,7 @@ async function updateCampaignBudget(req, env) {
 	}
 }
 
+/* ==================== /api/ssrm/ (raiz) ==================== */
 async function ssrm(req, env) {
 	try {
 		const reqForBody = req.clone();
@@ -668,6 +724,7 @@ async function ssrm(req, env) {
 	}
 }
 
+/* ==================== Normalização de filterModel (auto-group -> campaign) ==================== */
 function normalizeFilterKeys(filterModel) {
 	if (!filterModel || typeof filterModel !== 'object') return filterModel || {};
 	const fm = { ...filterModel };
@@ -696,8 +753,8 @@ async function testToggle(req, env) {
 		// pequeno delay para simular latência
 		await new Promise((r) => setTimeout(r, 300 + Math.random() * 600));
 
-		// 50% de chance de sucesso
-		const success = Math.random() < 0.75; //bypass para teste
+		// mock de sucesso
+		const success = Math.random() < 0.75;
 
 		if (!success) {
 			return new Response(
@@ -727,12 +784,13 @@ async function testToggle(req, env) {
 
 /* ==================== Export ==================== */
 export default {
-	ssrm, // /api/ssrm/
-	adsets, // /api/adsets
-	ads, // /api/ads
-	updateCampaignStatus, // PUT /api/campaigns/:id/status
-	updateAdsetStatus, // PUT /api/adsets/:id/status
-	updateCampaignBid, // PUT /api/campaigns/:id/bid
-	updateCampaignBudget, // PUT /api/campaigns/:id/budget
-	testToggle, // 👈 nova rota mock genérica (só sorteia ok/erro)
+	ssrm,
+	adsets,
+	ads,
+	updateCampaignStatus,
+	updateAdsetStatus,
+	updateAdStatus, // 👈 novo
+	updateCampaignBid,
+	updateCampaignBudget,
+	testToggle,
 };
