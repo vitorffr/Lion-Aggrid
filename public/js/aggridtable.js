@@ -1543,13 +1543,15 @@ function makeGrid() {
 
 	const autoGroupColumnDef = {
 		headerName: 'Campaign',
+		colId: 'campaign', // 👈 importante: bate com o back
+		filter: 'agTextColumnFilter', // 👈 habilita filtro de coluna
+		floatingFilter: true,
 		sortable: false,
 		wrapText: true,
 		autoHeight: false,
 		minWidth: 270,
 		pinned: 'left',
 		cellClass: (p) => ['camp-root', 'camp-child', 'camp-grand'][Math.min(p?.node?.level ?? 0, 2)],
-		cellRendererParams: { suppressCount: true },
 		tooltipValueGetter: (p) => {
 			const d = p.data || {};
 			if (p?.node?.level === 0) {
@@ -1586,6 +1588,13 @@ function makeGrid() {
 				}
 				return label;
 			},
+		},
+		// valor usado pelo filtro do autoGroup (campo virtual)
+		valueGetter: (p) => {
+			const d = p.data || {};
+			const name = d.__label || '';
+			const utm = d.utm_campaign || '';
+			return (name + ' ' + utm).trim();
 		},
 	};
 
@@ -1659,7 +1668,8 @@ function makeGrid() {
 				(typeof params.column?.isAutoRowGroupColumn === 'function' &&
 					params.column.isAutoRowGroupColumn()) ||
 				params.colDef?.colId === 'ag-Grid-AutoColumn' ||
-				!!params.colDef?.showRowGroup;
+				!!params.colDef?.showRowGroup ||
+				params?.column?.getColId?.() === 'campaign';
 			const clickedExpanderOrCheckbox = !!params.event?.target?.closest?.(
 				'.ag-group-expanded, .ag-group-contracted, .ag-group-checkbox'
 			);
@@ -1707,7 +1717,12 @@ function makeGrid() {
 					].includes(field)
 				) {
 					const n = toNumberBR(val);
-					display = n == null ? '' : brlFmt.format(n);
+					const currency = getAppCurrency();
+					const locale = currency === 'USD' ? 'en-US' : 'pt-BR';
+					display =
+						n == null
+							? ''
+							: new Intl.NumberFormat(locale, { style: 'currency', currency }).format(n);
 				} else if (
 					['impressions', 'clicks', 'visitors', 'conversions', 'real_conversions'].includes(
 						field
@@ -1788,6 +1803,12 @@ function makeGrid() {
 								mx: totals.mx_total ?? 0,
 								ctr: totals.ctr_total ?? 0,
 							};
+
+							// format totals com a moeda ativa
+							const currency = getAppCurrency();
+							const locale = currency === 'USD' ? 'en-US' : 'pt-BR';
+							const nfCur = new Intl.NumberFormat(locale, { style: 'currency', currency });
+
 							for (const k of [
 								'spent',
 								'fb_revenue',
@@ -1800,7 +1821,7 @@ function makeGrid() {
 								'real_cpa',
 								'mx',
 							])
-								pinnedTotal[k] = brlFmt.format(Number(pinnedTotal[k]) || 0);
+								pinnedTotal[k] = nfCur.format(Number(pinnedTotal[k]) || 0);
 							for (const k of [
 								'impressions',
 								'clicks',
@@ -1834,6 +1855,7 @@ function makeGrid() {
 								period: DRILL.period,
 								startRow: String(startRow),
 								endRow: String(endRow),
+								sortModel: JSON.stringify(sortModel || []), // 👈 envia sort para o back
 								filterModel: JSON.stringify(filterModelWithGlobal || {}), // 👈 inclui _global.filter
 							});
 							const data = await fetchJSON(`${DRILL_ENDPOINTS.ADSETS}?${qs.toString()}`);
@@ -1850,6 +1872,7 @@ function makeGrid() {
 								period: DRILL.period,
 								startRow: String(startRow),
 								endRow: String(endRow),
+								sortModel: JSON.stringify(sortModel || []), // 👈 envia sort para o back
 								filterModel: JSON.stringify(filterModelWithGlobal || {}), // 👈 inclui _global.filter
 							});
 							const data = await fetchJSON(`${DRILL_ENDPOINTS.ADS}?${qs.toString()}`);

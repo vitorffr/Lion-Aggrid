@@ -407,13 +407,13 @@ function overlayAdsetArray(rows) {
 	return rows.map(overlayAdset);
 }
 
-/* ==================== /api/adsets (filtra por campaign_id + period) ==================== */
 async function adsets(req, env) {
 	try {
 		const reqForBody = req.clone();
 		const reqForAssets = req.clone();
 
-		const { startRow, endRow, sortModel, filterModel, url } = await parseRequestPayload(reqForBody);
+		let { startRow, endRow, sortModel, filterModel, url } = await parseRequestPayload(reqForBody);
+		filterModel = normalizeFilterKeys(filterModel);
 		const u = new URL(url);
 		const campaignId = u.searchParams.get('campaign_id') || (filterModel?.campaign_id?.filter ?? '');
 		const period = (
@@ -430,8 +430,11 @@ async function adsets(req, env) {
 		// 1) parent + period
 		let rows = filterByParentAndPeriod(full, { idKey: 'idroot', idValue: campaignId, period });
 
-		// >>> aplica overlay de ADSETS ANTES de filtrar/ordenar
+		// overlay antes de filtrar/ordenar
 		rows = overlayAdsetArray(rows);
+
+		// campo virtual (compat com colId "campaign" da auto group column)
+		rows = rows.map((r) => ({ ...r, campaign: stripHtml(r.name || '') }));
 
 		// 2) filtros genéricos
 		rows = applyFilters(rows, filterModel);
@@ -458,13 +461,13 @@ async function adsets(req, env) {
 	}
 }
 
-/* ==================== /api/ads (filtra por adset_id + period) ==================== */
 async function ads(req, env) {
 	try {
 		const reqForBody = req.clone();
 		const reqForAssets = req.clone();
 
-		const { startRow, endRow, sortModel, filterModel, url } = await parseRequestPayload(reqForBody);
+		let { startRow, endRow, sortModel, filterModel, url } = await parseRequestPayload(reqForBody);
+		filterModel = normalizeFilterKeys(filterModel);
 		const u = new URL(url);
 		const adsetId = u.searchParams.get('adset_id') || (filterModel?.adset_id?.filter ?? '');
 		const period = (
@@ -480,6 +483,9 @@ async function ads(req, env) {
 
 		// 1) parent + period
 		let rows = filterByParentAndPeriod(full, { idKey: 'idchild', idValue: adsetId, period });
+
+		// campo virtual (compat com colId "campaign" da auto group column)
+		rows = rows.map((r) => ({ ...r, campaign: stripHtml(r.name || '') }));
 
 		// 2) filtros genéricos
 		rows = applyFilters(rows, filterModel);
@@ -507,7 +513,6 @@ async function ads(req, env) {
 }
 
 /* ==================== Mutations (Campaigns + Adsets) ==================== */
-// campaign status (já existia)
 async function updateCampaignStatus(req, env) {
 	try {
 		const url = new URL(req.url);
@@ -617,13 +622,13 @@ async function updateCampaignBudget(req, env) {
 	}
 }
 
-/* ==================== /api/ssrm/ (raiz) ==================== */
 async function ssrm(req, env) {
 	try {
 		const reqForBody = req.clone();
 		const reqForAssets = req.clone();
 
-		const { url, startRow, endRow, sortModel, filterModel } = await parseRequestPayload(reqForBody);
+		let { url, startRow, endRow, sortModel, filterModel } = await parseRequestPayload(reqForBody);
+		filterModel = normalizeFilterKeys(filterModel);
 		const clean = new URL(url).searchParams.get('clean') === '1';
 
 		const full = await loadDump(reqForAssets, env);
@@ -634,11 +639,20 @@ async function ssrm(req, env) {
 		// overlay de CAMPANHAS antes de filtrar/ordenar
 		let rows = overlayCampaignArray(clean ? full.map(cleanRow) : full);
 
+		// campo virtual usado pelo filtro da coluna "Campaign"
+		rows = rows.map((r) => ({
+			...r,
+			campaign: `${stripHtml(r.campaign_name || '')} ${String(r.utm_campaign || '')}`.trim(),
+		}));
+
+		// filtros e sort
 		rows = applyFilters(rows, filterModel);
 		rows = applySort(rows, sortModel);
 
+		// totais
 		const totals = computeTotalsRoot(rows);
 
+		// slice SSRM
 		const safeEnd = Math.min(Math.max(endRow, 0), rows.length);
 		const safeStart = Math.min(Math.max(startRow, 0), safeEnd);
 		const slice = rows.slice(safeStart, safeEnd);
@@ -652,6 +666,17 @@ async function ssrm(req, env) {
 			headers: { 'Content-Type': 'application/json' },
 		});
 	}
+}
+
+function normalizeFilterKeys(filterModel) {
+	if (!filterModel || typeof filterModel !== 'object') return filterModel || {};
+	const fm = { ...filterModel };
+	// quando a auto group column usa o id padrão do AG Grid
+	if (fm['ag-Grid-AutoColumn'] && !fm['campaign']) {
+		fm['campaign'] = fm['ag-Grid-AutoColumn'];
+		delete fm['ag-Grid-AutoColumn'];
+	}
+	return fm;
 }
 
 // ==================== /api/dev/test-toggle (mock genérico de sucesso/erro) ====================
@@ -672,7 +697,7 @@ async function testToggle(req, env) {
 		await new Promise((r) => setTimeout(r, 300 + Math.random() * 600));
 
 		// 50% de chance de sucesso
-		const success = Math.random() < 1; //bypass para teste
+		const success = Math.random() < 0.75; //bypass para teste
 
 		if (!success) {
 			return new Response(
@@ -706,7 +731,7 @@ export default {
 	adsets, // /api/adsets
 	ads, // /api/ads
 	updateCampaignStatus, // PUT /api/campaigns/:id/status
-	updateAdsetStatus, // PUT /api/adsets/:id/status   <-- NOVA
+	updateAdsetStatus, // PUT /api/adsets/:id/status
 	updateCampaignBid, // PUT /api/campaigns/:id/bid
 	updateCampaignBudget, // PUT /api/campaigns/:id/budget
 	testToggle, // 👈 nova rota mock genérica (só sorteia ok/erro)
