@@ -1,5 +1,17 @@
 /* pill arrastável dentro da célula */
 /* empilha texto do header e ícones em coluna */
+/* === estilo do dropdown igual ao input padrão do header === */
+.lion-ff-select--inputlike {
+	background: #0c0c0d;
+	color: #e5e7eb;
+	border-radius: 4px;
+}
+
+/* (reusa o mesmo estilo já adicionado para o CampaignStatus) */
+.ag-header-cell[col-id='account_status'] .ag-floating-filter-button,
+.ag-header-cell[col-id='account_status'] .ag-header-icon.ag-header-icon-filter {
+	display: none !important; /* opcional: esconder funil nessa coluna também */
+}
 
 /* some só o botão do floating filter nessa coluna */
 .ag-header-cell[col-id='campaign_status'] .ag-floating-filter-button {

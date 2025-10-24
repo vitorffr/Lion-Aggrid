@@ -988,6 +988,160 @@ function parseCurrencyInput(params) {
 function isPinnedOrGroup(params) {
 	return params?.node?.rowPinned || params?.node?.group;
 }
+// === Floating Filter: Campaign Status (ESTILO "input padrão" + FUNCIONAMENTO por TEXTO) ===
+function CampaignStatusFloatingFilter() {}
+CampaignStatusFloatingFilter.prototype.init = function (params) {
+	this.params = params;
+
+	const wrap = document.createElement('div');
+	wrap.style.display = 'flex';
+	wrap.style.alignItems = 'center';
+	wrap.style.height = '100%';
+	wrap.style.padding = '0 6px';
+
+	const sel = document.createElement('select');
+	// 🔹 estilo igual ao "input padrão"
+	sel.className = 'ag-input-field-input ag-text-field-input lion-ff-select--inputlike';
+	sel.style.width = '100%';
+	sel.style.height = '28px';
+	sel.style.fontSize = '12px';
+	sel.style.padding = '2px 8px';
+	sel.style.boxSizing = 'border-box';
+
+	// opções
+	[
+		['', '— All —'],
+		['ACTIVE', 'ACTIVE'],
+		['PAUSED', 'PAUSED'],
+	].forEach(([v, t]) => {
+		const o = document.createElement('option');
+		o.value = v;
+		o.textContent = t;
+		sel.appendChild(o);
+	});
+
+	// aplica modelo atual (TEXT filter)
+	const applyFromModel = (model) => {
+		if (!model) {
+			sel.value = '';
+			return;
+		}
+		const v = String(model.filter ?? '').toUpperCase();
+		sel.value = v === 'ACTIVE' || v === 'PAUSED' ? v : '';
+	};
+	applyFromModel(params.parentModel);
+
+	// muda SEMPRE via TEXT equals (o que já "funciona" no seu grid)
+	const applyTextEquals = (val) => {
+		params.parentFilterInstance((parent) => {
+			if (!val) {
+				parent.setModel(null);
+			} else {
+				parent.setModel({
+					filterType: 'text',
+					type: 'equals',
+					filter: val,
+				});
+			}
+			if (typeof parent.onBtApply === 'function') parent.onBtApply();
+			params.api.onFilterChanged();
+		});
+	};
+
+	sel.addEventListener('change', () => {
+		const v = sel.value ? String(sel.value).toUpperCase() : '';
+		applyTextEquals(v);
+	});
+
+	wrap.appendChild(sel);
+	this.eGui = wrap;
+	this.sel = sel;
+};
+CampaignStatusFloatingFilter.prototype.getGui = function () {
+	return this.eGui;
+};
+CampaignStatusFloatingFilter.prototype.onParentModelChanged = function (parentModel) {
+	if (!this.sel) return;
+	if (!parentModel) {
+		this.sel.value = '';
+		return;
+	}
+	const v = String(parentModel.filter ?? '').toUpperCase();
+	this.sel.value = v === 'ACTIVE' || v === 'PAUSED' ? v : '';
+};
+// === Floating Filter: Account Status (estilo input + filtro de TEXTO) ===
+function AccountStatusFloatingFilter() {}
+AccountStatusFloatingFilter.prototype.init = function (params) {
+	this.params = params;
+
+	const wrap = document.createElement('div');
+	wrap.style.display = 'flex';
+	wrap.style.alignItems = 'center';
+	wrap.style.height = '100%';
+	wrap.style.padding = '0 6px';
+
+	const sel = document.createElement('select');
+	// mesmo visual do input padrão
+	sel.className = 'ag-input-field-input ag-text-field-input lion-ff-select--inputlike';
+	sel.style.width = '100%';
+	sel.style.height = '28px';
+	sel.style.fontSize = '12px';
+	sel.style.padding = '2px 8px';
+	sel.style.boxSizing = 'border-box';
+
+	// opções (All / ACTIVE / PAUSED)
+	[
+		['', '— All —'],
+		['ACTIVE', 'ACTIVE'],
+		['INATIVA PAGAMENTO', 'INATIVA PAGAMENTO'],
+	].forEach(([v, t]) => {
+		const o = document.createElement('option');
+		o.value = v;
+		o.textContent = t;
+		sel.appendChild(o);
+	});
+
+	// refletir modelo atual (text equals)
+	const applyFromModel = (model) => {
+		if (!model) {
+			sel.value = '';
+			return;
+		}
+		const v = String(model.filter ?? '').toUpperCase();
+		sel.value = v === 'ACTIVE' || v === 'PAUSED' ? v : '';
+	};
+	applyFromModel(params.parentModel);
+
+	const applyTextEquals = (val) => {
+		params.parentFilterInstance((parent) => {
+			if (!val) parent.setModel(null);
+			else parent.setModel({ filterType: 'text', type: 'equals', filter: val });
+			if (typeof parent.onBtApply === 'function') parent.onBtApply();
+			params.api.onFilterChanged();
+		});
+	};
+
+	sel.addEventListener('change', () => {
+		const v = sel.value ? String(sel.value).toUpperCase() : '';
+		applyTextEquals(v);
+	});
+
+	wrap.appendChild(sel);
+	this.eGui = wrap;
+	this.sel = sel;
+};
+AccountStatusFloatingFilter.prototype.getGui = function () {
+	return this.eGui;
+};
+AccountStatusFloatingFilter.prototype.onParentModelChanged = function (parentModel) {
+	if (!this.sel) return;
+	if (!parentModel) {
+		this.sel.value = '';
+		return;
+	}
+	const v = String(parentModel.filter ?? '').toUpperCase();
+	this.sel.value = v === 'ACTIVE' || v === 'PAUSED' ? v : '';
+};
 
 /* ======= ColumnDefs ======= */
 const columnDefs = [
@@ -1039,13 +1193,21 @@ const columnDefs = [
 		marryChildren: true,
 		openByDefault: true,
 		children: [
+			// 👉 na definição da coluna "Account Status", acrescente:
 			{
 				headerName: 'Account Status',
 				field: 'account_status',
-				minWidth: 95,
+				minWidth: 110,
 				flex: 0.7,
 				cellRenderer: statusPillRenderer,
+
+				// + floating filter como dropdown estilizado, aplicando TEXT equals
+				filter: 'agTextColumnFilter',
+				floatingFilter: true,
+				floatingFilterComponent: AccountStatusFloatingFilter,
+				floatingFilterComponentParams: { suppressFilterButton: true },
 			},
+
 			{
 				headerName: 'Daily Limit',
 				field: 'account_limit',
@@ -1058,13 +1220,20 @@ const columnDefs = [
 				headerName: 'Campaign Status',
 				field: 'campaign_status',
 				cellClass: ['lion-center-cell'],
-				minWidth: 105,
+				minWidth: 115,
 				flex: 0.8,
 				cellRenderer: StatusSliderRenderer,
 				cellRendererParams: { interactiveLevels: [0, 1, 2], smallKnob: true },
 				suppressKeyboardEvent: () => true,
 				cellClassRules: { 'ag-cell-loading': (p) => isCellLoading(p, 'campaign_status') },
+
+				// 👇👇 ADIÇÕES
+				filter: 'agTextColumnFilter',
+				floatingFilter: true,
+				floatingFilterComponent: CampaignStatusFloatingFilter,
+				floatingFilterComponentParams: { suppressFilterButton: true },
 			},
+
 			{
 				headerName: 'Budget',
 				field: 'budget',
