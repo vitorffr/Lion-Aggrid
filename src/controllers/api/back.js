@@ -10,7 +10,14 @@
 // Observação: todos aceitam também GET com os mesmos parâmetros na querystring.
 // Em caso de erro, SEMPRE retornam JSON (evita “error code: 1042”).
 
-/* ==================== Helpers de texto/número ==================== */
+/* ============================================================
+ * 1) Helpers de texto/número
+ * ============================================================ */
+/**
+ * Remove tags HTML e normaliza espaços.
+ * @param {string|any} s
+ * @returns {string|any}
+ */
 const stripHtml = (s) =>
 	typeof s === 'string'
 		? s
@@ -19,13 +26,23 @@ const stripHtml = (s) =>
 				.trim()
 		: s;
 
+/**
+ * Extrai texto de <strong>...</strong> ou devolve o texto limpo.
+ * @param {string|any} s
+ * @returns {string|any}
+ */
 const strongText = (s) => {
 	if (typeof s !== 'string') return s;
 	const m = s.match(/<strong[^>]*>(.*?)<\/strong>/i);
 	return stripHtml(m ? m[1] : s);
 };
 
-// "R$ 1.618,65" | "-R$ 1,00" | "2.360,73" -> Number
+/**
+ * Converte números no formato BR para Number.
+ * Ex.: "R$ 1.618,65" -> 1618.65
+ * @param {string|number|null} s
+ * @returns {number|null}
+ */
 const toNumberBR = (s) => {
 	if (s == null) return null;
 	if (typeof s === 'number' && Number.isFinite(s)) return s;
@@ -40,20 +57,30 @@ const toNumberBR = (s) => {
 	return Number.isFinite(n) ? sign * n : null;
 };
 
+/**
+ * Limpa campos textuais de uma linha de campanha.
+ * @param {object} r
+ * @returns {object}
+ */
 function cleanRow(r) {
 	return {
 		...r,
 		profile_name: stripHtml(r.profile_name),
 		bc_name: stripHtml(r.bc_name),
 		account_name: stripHtml(r.account_name),
-		account_status: strongText(r.account_status), // extrai texto do <strong>
+		account_status: strongText(r.account_status),
 		campaign_name: stripHtml(r.campaign_name),
 		revenue: stripHtml(r.revenue),
 		mx: stripHtml(r.mx),
 	};
 }
 
-// extrai apenas o primeiro número principal (ex: "R$ 2.553,34 (R$ 341,69...)" → 2553.34)
+/**
+ * Extrai o primeiro número principal de uma string de revenue.
+ * Ex.: "R$ 2.553,34 (R$ 341,69...)" -> 2553.34
+ * @param {string|number|null} s
+ * @returns {number|null}
+ */
 function toNumberFirst(s) {
 	if (s == null) return null;
 	const str = String(s);
@@ -64,7 +91,15 @@ function toNumberFirst(s) {
 	return Number.isFinite(n) ? n : null;
 }
 
-// sort universal (com suporte a revenue e status custom)
+/* ============================================================
+ * 2) Sort & Filter
+ * ============================================================ */
+/**
+ * Ordenação com regras especiais para status e revenue.
+ * @param {Array<object>} rows
+ * @param {Array<object>} sortModel
+ * @returns {Array<object>}
+ */
 function applySort(rows, sortModel) {
 	if (!Array.isArray(sortModel) || !sortModel.length) return rows;
 
@@ -119,6 +154,12 @@ function applySort(rows, sortModel) {
 	});
 }
 
+/**
+ * Aplica filterModel (inclui _global).
+ * @param {Array<object>} rows
+ * @param {object} filterModel
+ * @returns {Array<object>}
+ */
 function applyFilters(rows, filterModel) {
 	if (!filterModel || typeof filterModel !== 'object') return rows;
 
@@ -131,7 +172,7 @@ function applyFilters(rows, filterModel) {
 		.map(([field, f]) => {
 			const ft = f.filterType || f.type || 'text';
 
-			// === includes / excludes (lista de valores)
+			// includes / excludes
 			if (ft === 'includes' && Array.isArray(f.values)) {
 				const set = new Set(f.values.map((v) => String(v).toLowerCase()));
 				return (r) => set.has(String(r[field] ?? '').toLowerCase());
@@ -141,7 +182,7 @@ function applyFilters(rows, filterModel) {
 				return (r) => !set.has(String(r[field] ?? '').toLowerCase());
 			}
 
-			// === texto padrão com todos os tipos
+			// texto
 			if (ft === 'text') {
 				const comp = String(f.type || 'contains');
 				const needle = String(f.filter ?? '').toLowerCase();
@@ -166,7 +207,7 @@ function applyFilters(rows, filterModel) {
 				};
 			}
 
-			// === número padrão (adiciona contains/notContains também)
+			// número (+ contains/notContains)
 			if (ft === 'number') {
 				const comp = String(f.type || 'equals');
 				const val = Number(f.filter);
@@ -211,10 +252,13 @@ function applyFilters(rows, filterModel) {
 	});
 }
 
-/* ==================== Agregadores de rodapé ==================== */
+/* ============================================================
+ * 3) Agregadores de rodapé
+ * ============================================================ */
 const sum = (a, b) => (Number.isFinite(a) ? a : 0) + (Number.isFinite(b) ? b : 0);
 const safeDiv = (num, den) => (den > 0 ? num / den : 0);
 
+/** Soma um campo numérico BR. */
 function sumField(rows, field) {
 	return rows.reduce((acc, r) => sum(acc, toNumberBR(r[field])), 0);
 }
@@ -222,7 +266,7 @@ function hasSomeField(rows, field) {
 	return rows.some((r) => toNumberBR(r[field]) != null);
 }
 
-// Totais/rodapé para a RAIZ (campanhas)
+/** Totais para a RAIZ (campanhas). */
 function computeTotalsRoot(rows) {
 	const totals = {};
 	totals.impressions_sum = sumField(rows, 'impressions');
@@ -245,7 +289,7 @@ function computeTotalsRoot(rows) {
 	return totals;
 }
 
-// Totais genéricos (adsets/ads). Calcula o que existir.
+/** Totais genéricos (adsets/ads). */
 function computeTotalsGeneric(rows) {
 	const totals = {};
 	const maybeSum = (key, outKey = `${key}_sum`) => {
@@ -285,7 +329,12 @@ function computeTotalsGeneric(rows) {
 	return totals;
 }
 
-/* ==================== Carregamento via ASSETS/public ==================== */
+/* ============================================================
+ * 4) Carregamento via ASSETS/public
+ * ============================================================ */
+/**
+ * Lê e cacheia JSON de assets (Workers Sites/R2/ASSETS).
+ */
 async function loadAssetJSON(request, env, assetPath) {
 	globalThis.__LION_CACHE__ = globalThis.__LION_CACHE__ || new Map();
 	const cache = globalThis.__LION_CACHE__;
@@ -326,7 +375,14 @@ async function loadDump(request, env) {
 	return loadAssetJSON(request, env, '/constants/clean-dump.json');
 }
 
-/* ==================== Parser do request (POST body ou GET query) ==================== */
+/* ============================================================
+ * 5) Parser do request (POST body ou GET query)
+ * ============================================================ */
+/**
+ * Unifica leitura do payload via body ou querystring.
+ * @param {Request} req
+ * @returns {Promise<{startRow:number,endRow:number,sortModel:Array,filterModel:Object,url:string}>}
+ */
 function parseRequestPayload(req) {
 	const url = new URL(req.url);
 
@@ -366,7 +422,12 @@ function parseRequestPayload(req) {
 		});
 }
 
-/* ==================== Filtro por parent + period ==================== */
+/* ============================================================
+ * 6) Filtro por parent + period
+ * ============================================================ */
+/**
+ * Filtra linhas por id do parent (idKey/idValue) e período.
+ */
 function filterByParentAndPeriod(rows, { idKey, idValue, period }) {
 	const wantPeriod = String(period || 'TODAY').toUpperCase();
 	return rows.filter((r) => {
@@ -376,7 +437,9 @@ function filterByParentAndPeriod(rows, { idKey, idValue, period }) {
 	});
 }
 
-/* ==================== Overlay em memória ==================== */
+/* ============================================================
+ * 7) Overlay em memória (volátil por isolate)
+ * ============================================================ */
 // ⚠️ VOLÁTIL: por isolate. Para durabilidade real, use KV/D1.
 function getMutStore() {
 	globalThis.__LION_MUT__ = globalThis.__LION_MUT__ || {
@@ -424,12 +487,16 @@ function overlayAd(row) {
 	const statusVal = String(base.campaign_status ?? base.status ?? '').toUpperCase();
 	return statusVal ? { ...base, campaign_status: statusVal } : base;
 }
-
 function overlayAdArray(rows) {
 	return rows.map(overlayAd);
 }
 
-/* ==================== /api/adsets (filtra por campaign_id + period) ==================== */
+/* ============================================================
+ * 8) Handlers: /api/adsets & /api/ads
+ * ============================================================ */
+/**
+ * /api/adsets (filtra por campaign_id + period)
+ */
 async function adsets(req, env) {
 	try {
 		const reqForBody = req.clone();
@@ -482,7 +549,9 @@ async function adsets(req, env) {
 	}
 }
 
-/* ==================== /api/ads (filtra por adset_id + period) ==================== */
+/**
+ * /api/ads (filtra por adset_id + period)
+ */
 async function ads(req, env) {
 	try {
 		const reqForBody = req.clone();
@@ -537,8 +606,12 @@ async function ads(req, env) {
 	}
 }
 
-/* ==================== Mutations (Campaigns + Adsets + Ads) ==================== */
-// campaign status
+/* ============================================================
+ * 9) Mutations: Status (Campaigns + Adsets + Ads)
+ * ============================================================ */
+/**
+ * PUT /api/campaigns/:id/status
+ */
 async function updateCampaignStatus(req, env) {
 	try {
 		const url = new URL(req.url);
@@ -566,7 +639,9 @@ async function updateCampaignStatus(req, env) {
 	}
 }
 
-// adset status (espelha em campaign_status)
+/**
+ * PUT /api/adsets/:id/status (espelha em campaign_status)
+ */
 async function updateAdsetStatus(req, env) {
 	try {
 		const url = new URL(req.url);
@@ -594,8 +669,10 @@ async function updateAdsetStatus(req, env) {
 	}
 }
 
+/**
+ * PUT /api/ads/:id/status (novo) — espelha em campaign_status
+ */
 // ads status (novo) — espelha em campaign_status
-
 async function updateAdStatus(req, env) {
 	try {
 		const url = new URL(req.url);
@@ -624,7 +701,10 @@ async function updateAdStatus(req, env) {
 	}
 }
 
-/* ==================== Bid/Budget (campanha – já existentes) ==================== */
+/* ============================================================
+ * 10) Mutations: Bid/Budget (campanha)
+ * ============================================================ */
+/** PUT /api/campaigns/:id/bid */
 async function updateCampaignBid(req, env) {
 	try {
 		const url = new URL(req.url);
@@ -651,6 +731,7 @@ async function updateCampaignBid(req, env) {
 	}
 }
 
+/** PUT /api/campaigns/:id/budget */
 async function updateCampaignBudget(req, env) {
 	try {
 		const url = new URL(req.url);
@@ -677,7 +758,12 @@ async function updateCampaignBudget(req, env) {
 	}
 }
 
-/* ==================== /api/ssrm/ (raiz) ==================== */
+/* ============================================================
+ * 11) /api/ssrm/ (raiz)
+ * ============================================================ */
+/**
+ * Root SSRM: aplica overlay, filtros, sort, totais e paginação.
+ */
 async function ssrm(req, env) {
 	try {
 		const reqForBody = req.clone();
@@ -724,7 +810,14 @@ async function ssrm(req, env) {
 	}
 }
 
-/* ==================== Normalização de filterModel (auto-group -> campaign) ==================== */
+/* ============================================================
+ * 12) Normalização de filterModel (auto-group -> campaign)
+ * ============================================================ */
+/**
+ * Corrige o id da coluna auto-group do AG Grid para "campaign".
+ * @param {object} filterModel
+ * @returns {object}
+ */
 function normalizeFilterKeys(filterModel) {
 	if (!filterModel || typeof filterModel !== 'object') return filterModel || {};
 	const fm = { ...filterModel };
@@ -736,7 +829,12 @@ function normalizeFilterKeys(filterModel) {
 	return fm;
 }
 
-// ==================== /api/dev/test-toggle (mock genérico de sucesso/erro) ====================
+/* ============================================================
+ * 13) /api/dev/test-toggle (mock genérico de sucesso/erro)
+ * ============================================================ */
+/**
+ * Mock para simular aplicação de toggles/flags com chance de erro.
+ */
 async function testToggle(req, env) {
 	try {
 		const body = await req.json().catch(() => ({}));
@@ -758,10 +856,7 @@ async function testToggle(req, env) {
 
 		if (!success) {
 			return new Response(
-				JSON.stringify({
-					ok: false,
-					error: `Mock: falha ao aplicar "${feature}"`,
-				}),
+				JSON.stringify({ ok: false, error: `Mock: falha ao aplicar "${feature}"` }),
 				{ headers: { 'Content-Type': 'application/json' } }
 			);
 		}
@@ -782,7 +877,9 @@ async function testToggle(req, env) {
 	}
 }
 
-/* ==================== Export ==================== */
+/* ============================================================
+ * 14) Export
+ * ============================================================ */
 export default {
 	ssrm,
 	adsets,

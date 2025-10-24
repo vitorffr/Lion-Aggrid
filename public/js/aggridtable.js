@@ -1463,6 +1463,8 @@ const columnDefs = [
 			{
 				headerName: 'Spend',
 				field: 'spent',
+				pinned: 'right',
+
 				valueGetter: (p) => toNumberBR(p.data?.spent),
 				valueFormatter: currencyFormatter,
 				minWidth: 90,
@@ -1479,7 +1481,6 @@ const columnDefs = [
 			{
 				headerName: 'Push Revenue',
 				field: 'push_revenue',
-				pinned: 'right',
 				valueGetter: (p) => toNumberBR(p.data?.push_revenue),
 				valueFormatter: currencyFormatter,
 				minWidth: 94,
@@ -2007,7 +2008,7 @@ function togglePinnedColsFromCheckbox(silent = false) {
 	];
 	if (selectionColId) leftPins.push({ colId: selectionColId, pinned: checked ? 'left' : null });
 	const rightPins = [
-		{ colId: 'push_revenue', pinned: checked ? 'right' : null },
+		{ colId: 'spent', pinned: checked ? 'right' : null },
 		{ colId: 'revenue', pinned: checked ? 'right' : null },
 		{ colId: 'mx', pinned: checked ? 'right' : null },
 		{ colId: 'profit', pinned: checked ? 'right' : null },

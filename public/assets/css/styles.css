@@ -21,7 +21,7 @@
 .camp-grand .ag-group-value {
 	display: flex; /* vira um flex container só do valor */
 	align-items: top;
-	padding: 8px; /* centra verticalmente o texto */
+	padding: 7px; /* centra verticalmente o texto */
 	height: 100%; /* ocupa a altura inteira da célula */
 	/* nada de justify-content, pra não mexer no alinhamento horizontal */
 }

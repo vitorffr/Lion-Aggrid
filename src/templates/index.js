@@ -3,6 +3,7 @@ import header from './files/header.html';
 import footer from './files/footer.html';
 import homePage from './files/home/index.html';
 import masterdetailPage from './files/masterdetail/index.html';
+import infinitePage from './files/infinitetable/index.html';
 
 const cache = Object.freeze({
 	header,
@@ -10,6 +11,7 @@ const cache = Object.freeze({
 	login,
 	homePage,
 	masterdetailPage,
+	infinitePage,
 });
 
 /**

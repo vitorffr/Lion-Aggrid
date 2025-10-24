@@ -78,6 +78,9 @@ router.get('/', homePage.index);
 import masterdetailPage from './controllers/pages/masterdetail.js';
 router.get('/masterdetail/', masterdetailPage.index);
 
+import infinitePage from './controllers/pages/infinitetable.js';
+router.get('/infinite/', infinitePage.index);
+
 /* =================== CATCH ALL =================== */
 router.all(
 	'*',
