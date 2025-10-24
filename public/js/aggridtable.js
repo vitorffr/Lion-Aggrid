@@ -988,7 +988,7 @@ function parseCurrencyInput(params) {
 function isPinnedOrGroup(params) {
 	return params?.node?.rowPinned || params?.node?.group;
 }
-// === Floating Filter: Campaign Status (ESTILO "input padrão" + FUNCIONAMENTO por TEXTO) ===
+// === Floating Filter: Campaign Status (ALL limpa, aplica TEXT equals) ===
 function CampaignStatusFloatingFilter() {}
 CampaignStatusFloatingFilter.prototype.init = function (params) {
 	this.params = params;
@@ -1000,7 +1000,6 @@ CampaignStatusFloatingFilter.prototype.init = function (params) {
 	wrap.style.padding = '0 6px';
 
 	const sel = document.createElement('select');
-	// 🔹 estilo igual ao "input padrão"
 	sel.className = 'ag-input-field-input ag-text-field-input lion-ff-select--inputlike';
 	sel.style.width = '100%';
 	sel.style.height = '28px';
@@ -1008,9 +1007,9 @@ CampaignStatusFloatingFilter.prototype.init = function (params) {
 	sel.style.padding = '2px 8px';
 	sel.style.boxSizing = 'border-box';
 
-	// opções
+	// "" => limpa (ALL)
 	[
-		['', '— All —'],
+		['', 'ALL'],
 		['ACTIVE', 'ACTIVE'],
 		['PAUSED', 'PAUSED'],
 	].forEach(([v, t]) => {
@@ -1020,7 +1019,6 @@ CampaignStatusFloatingFilter.prototype.init = function (params) {
 		sel.appendChild(o);
 	});
 
-	// aplica modelo atual (TEXT filter)
 	const applyFromModel = (model) => {
 		if (!model) {
 			sel.value = '';
@@ -1031,18 +1029,10 @@ CampaignStatusFloatingFilter.prototype.init = function (params) {
 	};
 	applyFromModel(params.parentModel);
 
-	// muda SEMPRE via TEXT equals (o que já "funciona" no seu grid)
 	const applyTextEquals = (val) => {
 		params.parentFilterInstance((parent) => {
-			if (!val) {
-				parent.setModel(null);
-			} else {
-				parent.setModel({
-					filterType: 'text',
-					type: 'equals',
-					filter: val,
-				});
-			}
+			if (!val) parent.setModel(null); // 👈 ALL limpa
+			else parent.setModel({ filterType: 'text', type: 'equals', filter: val });
 			if (typeof parent.onBtApply === 'function') parent.onBtApply();
 			params.api.onFilterChanged();
 		});
@@ -1065,11 +1055,12 @@ CampaignStatusFloatingFilter.prototype.onParentModelChanged = function (parentMo
 	if (!parentModel) {
 		this.sel.value = '';
 		return;
-	}
+	} // 👈 mantém ALL quando limpar por fora
 	const v = String(parentModel.filter ?? '').toUpperCase();
 	this.sel.value = v === 'ACTIVE' || v === 'PAUSED' ? v : '';
 };
-// === Floating Filter: Account Status (estilo input + filtro de TEXTO) ===
+
+// === Floating Filter: Account Status (ALL limpa, aplica TEXT equals) ===
 function AccountStatusFloatingFilter() {}
 AccountStatusFloatingFilter.prototype.init = function (params) {
 	this.params = params;
@@ -1081,7 +1072,6 @@ AccountStatusFloatingFilter.prototype.init = function (params) {
 	wrap.style.padding = '0 6px';
 
 	const sel = document.createElement('select');
-	// mesmo visual do input padrão
 	sel.className = 'ag-input-field-input ag-text-field-input lion-ff-select--inputlike';
 	sel.style.width = '100%';
 	sel.style.height = '28px';
@@ -1089,9 +1079,8 @@ AccountStatusFloatingFilter.prototype.init = function (params) {
 	sel.style.padding = '2px 8px';
 	sel.style.boxSizing = 'border-box';
 
-	// opções (All / ACTIVE / PAUSED)
 	[
-		['', '— All —'],
+		['', 'ALL'],
 		['ACTIVE', 'ACTIVE'],
 		['INATIVA PAGAMENTO', 'INATIVA PAGAMENTO'],
 	].forEach(([v, t]) => {
@@ -1101,20 +1090,19 @@ AccountStatusFloatingFilter.prototype.init = function (params) {
 		sel.appendChild(o);
 	});
 
-	// refletir modelo atual (text equals)
 	const applyFromModel = (model) => {
 		if (!model) {
 			sel.value = '';
 			return;
 		}
 		const v = String(model.filter ?? '').toUpperCase();
-		sel.value = v === 'ACTIVE' || v === 'PAUSED' ? v : '';
+		sel.value = v === 'ACTIVE' || v === 'INATIVA PAGAMENTO' ? v : '';
 	};
 	applyFromModel(params.parentModel);
 
 	const applyTextEquals = (val) => {
 		params.parentFilterInstance((parent) => {
-			if (!val) parent.setModel(null);
+			if (!val) parent.setModel(null); // 👈 ALL limpa
 			else parent.setModel({ filterType: 'text', type: 'equals', filter: val });
 			if (typeof parent.onBtApply === 'function') parent.onBtApply();
 			params.api.onFilterChanged();
@@ -1138,9 +1126,95 @@ AccountStatusFloatingFilter.prototype.onParentModelChanged = function (parentMod
 	if (!parentModel) {
 		this.sel.value = '';
 		return;
-	}
+	} // 👈 mantém ALL quando limpar por fora
 	const v = String(parentModel.filter ?? '').toUpperCase();
-	this.sel.value = v === 'ACTIVE' || v === 'PAUSED' ? v : '';
+	this.sel.value = v === 'ACTIVE' || v === 'INATIVA PAGAMENTO' ? v : '';
+};
+// === CurrencyMaskEditor (pt-BR money mask: 1.234,56) ===
+function CurrencyMaskEditor() {}
+
+CurrencyMaskEditor.prototype.init = function (params) {
+	this.params = params;
+	const startNumber =
+		typeof params.value === 'number'
+			? params.value
+			: parseCurrencyFlexible(params.value, getAppCurrency());
+
+	this.input = document.createElement('input');
+	this.input.type = 'text';
+	this.input.className = 'ag-input-field-input ag-text-field-input';
+	this.input.style.width = '100%';
+	this.input.style.height = '100%';
+	this.input.style.boxSizing = 'border-box';
+	this.input.style.padding = '2px 6px';
+	this.input.autocomplete = 'off';
+	this.input.inputMode = 'numeric';
+
+	const fmt = (n) => {
+		if (n == null || !Number.isFinite(n)) return '';
+		return new Intl.NumberFormat('pt-BR', {
+			minimumFractionDigits: 2,
+			maximumFractionDigits: 2,
+		}).format(n);
+	};
+
+	const asNumberFromDigits = (digits) => {
+		if (!digits) return null;
+		const intCents = parseInt(digits, 10);
+		if (!Number.isFinite(intCents)) return null;
+		return intCents / 100;
+	};
+
+	const formatFromRawInput = () => {
+		// mantém só dígitos, interpreta como centavos
+		const raw = (this.input.value || '').replace(/\D+/g, '');
+		const n = asNumberFromDigits(raw);
+		this.input.value = n == null ? '' : fmt(n);
+	};
+
+	// seed inicial
+	this.input.value = fmt(startNumber);
+
+	// máscara em tempo real
+	this.onInput = () => {
+		const selEnd = this.input.selectionEnd;
+		formatFromRawInput();
+		// joga o cursor pro fim pra não ficar pulando
+		this.input.setSelectionRange(this.input.value.length, this.input.value.length);
+	};
+
+	this.input.addEventListener('input', this.onInput);
+
+	// Enter/Tab confirmam; Esc cancela
+	this.onKeyDown = (e) => {
+		if (e.key === 'Enter' || e.key === 'Tab') {
+			// deixa ag-Grid encerrar a edição normalmente
+		} else if (e.key === 'Escape') {
+			// devolve valor original formatado
+			this.input.value = fmt(startNumber);
+		}
+	};
+	this.input.addEventListener('keydown', this.onKeyDown);
+};
+
+CurrencyMaskEditor.prototype.getGui = function () {
+	return this.input;
+};
+CurrencyMaskEditor.prototype.afterGuiAttached = function () {
+	this.input.focus();
+	// seleciona tudo pra facilitar digitação direta
+	this.input.select();
+};
+CurrencyMaskEditor.prototype.getValue = function () {
+	// devolve string "1.234,56" — teu valueParser (parseCurrencyFlexible) já trata isso
+	return this.input.value;
+};
+CurrencyMaskEditor.prototype.destroy = function () {
+	this.input?.removeEventListener?.('input', this.onInput);
+	this.input?.removeEventListener?.('keydown', this.onKeyDown);
+};
+CurrencyMaskEditor.prototype.isPopup = function () {
+	return false;
 };
 
 /* ======= ColumnDefs ======= */
@@ -1238,8 +1312,8 @@ const columnDefs = [
 				headerName: 'Budget',
 				field: 'budget',
 				editable: (p) => p.node?.level === 0 && !isCellLoading(p, 'budget'),
-				cellEditor: 'agNumberCellEditor',
-				valueParser: parseCurrencyInput,
+				cellEditor: CurrencyMaskEditor, // 👈 trocado
+				valueParser: parseCurrencyInput, // já usa parseCurrencyFlexible (ok com vírgula)
 				valueFormatter: currencyFormatter,
 				minWidth: 100,
 				flex: 0.6,
@@ -1281,12 +1355,13 @@ const columnDefs = [
 					}
 				},
 			},
+
 			{
 				headerName: 'Bid',
 				field: 'bid',
 				editable: (p) => p.node?.level === 0 && !isCellLoading(p, 'bid'),
-				cellEditor: 'agNumberCellEditor',
-				valueParser: parseCurrencyInput,
+				cellEditor: CurrencyMaskEditor, // 👈 trocado
+				valueParser: parseCurrencyInput, // já usa parseCurrencyFlexible (ok com vírgula)
 				valueFormatter: currencyFormatter,
 				minWidth: 70,
 				flex: 0.6,
@@ -1328,6 +1403,7 @@ const columnDefs = [
 					}
 				},
 			},
+
 			{
 				headerName: 'Ads',
 				field: '_ads',
@@ -2202,6 +2278,7 @@ function makeGrid() {
 
 			const dataSource = {
 				getRows: async (req) => {
+					// Substitua o método getRows pelo abaixo
 					try {
 						const {
 							startRow = 0,
@@ -2214,7 +2291,9 @@ function makeGrid() {
 						// monta filterModel com _global.filter (quick filter)
 						const filterModelWithGlobal = buildFilterModelWithGlobal(filterModel);
 
+						// =========================
 						// Nível 0 => campanhas (SSRM)
+						// =========================
 						if (groupKeys.length === 0) {
 							// POST principal
 							let res = await fetch(ENDPOINTS.SSRM, {
@@ -2228,6 +2307,7 @@ function makeGrid() {
 									filterModel: filterModelWithGlobal,
 								}),
 							});
+
 							// Fallback GET
 							if (!res.ok) {
 								const qs = new URLSearchParams({
@@ -2240,8 +2320,10 @@ function makeGrid() {
 									credentials: 'same-origin',
 								});
 							}
+
 							const data = await res.json().catch(() => ({ rows: [], lastRow: 0 }));
 							const totals = data?.totals || {};
+
 							const pinnedTotal = {
 								id: '__pinned_total__',
 								bc_name: 'TOTAL',
@@ -2281,6 +2363,7 @@ function makeGrid() {
 								'mx',
 							])
 								pinnedTotal[k] = nfCur.format(Number(pinnedTotal[k]) || 0);
+
 							for (const k of [
 								'impressions',
 								'clicks',
@@ -2289,15 +2372,30 @@ function makeGrid() {
 								'real_conversions',
 							])
 								pinnedTotal[k] = intFmt.format(Number(pinnedTotal[k]) || 0);
+
 							if (typeof pinnedTotal.ctr === 'number')
 								pinnedTotal.ctr = (pinnedTotal.ctr * 100).toFixed(2) + '%';
 
+							// === NOVO: total de campanhas na linha pinada (coluna Campaign / __label)
+							const totalCampaigns =
+								typeof data.lastRow === 'number' && data.lastRow >= 0
+									? data.lastRow
+									: data?.totals?.campaigns_count ?? (data.rows || []).length;
+
+							// o valueGetter da Auto Group Column usa __label (junto com utm)
+							pinnedTotal.__label = `Campanhas: ${intFmt.format(totalCampaigns)}`;
+
 							const rows = (data.rows || []).map(normalizeCampaignRow);
+
 							try {
-								const api = params.api;
-								if (api?.setPinnedBottomRowData)
-									api.setPinnedBottomRowData([pinnedTotal]);
-								else params.api?.setGridOption?.('pinnedBottomRowData', [pinnedTotal]);
+								const api =
+									this?.gridApi ||
+									(globalThis.LionGrid && globalThis.LionGrid.api) ||
+									null;
+								const targetApi = api || (req.api ?? null);
+								if (targetApi?.setPinnedBottomRowData)
+									targetApi.setPinnedBottomRowData([pinnedTotal]);
+								else req.api?.setGridOption?.('pinnedBottomRowData', [pinnedTotal]);
 							} catch (e) {
 								console.warn('Erro ao aplicar pinned bottom row:', e);
 							}
@@ -2306,7 +2404,9 @@ function makeGrid() {
 							return;
 						}
 
+						// =========================
 						// Nível 1 => adsets (DRILL)
+						// =========================
 						if (groupKeys.length === 1) {
 							const campaignId = groupKeys[0];
 							const qs = new URLSearchParams({
@@ -2323,7 +2423,9 @@ function makeGrid() {
 							return;
 						}
 
+						// =========================
 						// Nível 2 => ads (DRILL)
+						// =========================
 						if (groupKeys.length === 2) {
 							const adsetId = groupKeys[1];
 							const qs = new URLSearchParams({
@@ -2340,6 +2442,7 @@ function makeGrid() {
 							return;
 						}
 
+						// fallback
 						req.success({ rowData: [], rowCount: 0 });
 					} catch (e) {
 						console.error('[TREE SSRM] getRows failed:', e);
