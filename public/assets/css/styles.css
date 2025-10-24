@@ -1,5 +1,16 @@
 /* pill arrastável dentro da célula */
 /* empilha texto do header e ícones em coluna */
+
+/* some só o botão do floating filter nessa coluna */
+.ag-header-cell[col-id='campaign_status'] .ag-floating-filter-button {
+	display: none !important;
+}
+
+/* (opcional) se ainda aparecer o ícone de filtro do header, esconda só ele */
+.ag-header-cell[col-id='campaign_status'] .ag-header-icon.ag-header-icon-filter {
+	display: none !important;
+}
+
 /* mantém root como está */
 .camp-root {
 	font-size: 12px;

@@ -706,7 +706,17 @@ StatusSliderRenderer.prototype.init = function (p) {
 			openMenu();
 		}
 	});
-
+	// 👇👇 **NOVO:** duplo clique no próprio renderer, mesmo fluxo do slider/dropdown
+	root.addEventListener('dblclick', (e) => {
+		e.preventDefault();
+		e.stopPropagation();
+		if (isCellLoading({ data: p.node?.data }, colId)) return;
+		const cur = getVal();
+		const prevOn = cur === 'ACTIVE';
+		const next = prevOn ? 'PAUSED' : 'ACTIVE';
+		this._userInteracted = true;
+		commit(next, prevOn);
+	});
 	const openMenu = () => {
 		if (isCellLoading({ data: p.node?.data }, colId)) return;
 		const cur = getVal();
@@ -1700,6 +1710,66 @@ function togglePinnedColsFromCheckbox(silent = false) {
 		applyPresetUser,
 	});
 })();
+// ADD: duplo-clique no campaign_status com mesmo comportamento do slider/dropdown
+async function handleCampaignStatusDoubleClick(p) {
+	// só reage na coluna campaign_status e em linhas "reais"
+	if (p?.column?.getColId?.() !== 'campaign_status') return;
+	const lvl = p?.node?.level ?? -1;
+	if (lvl < 0 || lvl > 2) return;
+	if (isCellLoading(p, 'campaign_status')) return;
+
+	const d = p.data || {};
+	const colId = 'campaign_status';
+	const key = 'campaign_status' in d ? 'campaign_status' : 'status';
+
+	// scope + id por nível (mesma lógica do slider)
+	const scope = lvl === 2 ? 'ad' : lvl === 1 ? 'adset' : 'campaign';
+	const id = lvl === 0 ? String(d.id ?? d.utm_campaign ?? '') : String(d.id ?? '') || '';
+
+	if (!id) return;
+
+	const cur = String(d[key] ?? '').toUpperCase();
+	const next = cur === 'ACTIVE' ? 'PAUSED' : 'ACTIVE';
+
+	// liga loading
+	setCellLoading(p.node, colId, true);
+	p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
+
+	// otimista
+	d[key] = next;
+	p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
+
+	try {
+		// mesmo pré-check usado pelo slider
+		const okTest = await toggleFeature('status', { scope, id, value: next });
+		if (!okTest) {
+			d[key] = cur; // rollback
+			p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
+			return;
+		}
+
+		// backend real por escopo (igual ao slider)
+		if (scope === 'ad') {
+			await updateAdStatusBackend(id, next);
+		} else if (scope === 'adset') {
+			await updateAdsetStatusBackend(id, next);
+		} else {
+			await updateCampaignStatusBackend(id, next);
+		}
+
+		const scopeLabel = scope === 'ad' ? 'Ad' : scope === 'adset' ? 'Adset' : 'Campanha';
+		showToast(next === 'ACTIVE' ? `${scopeLabel} ativado` : `${scopeLabel} pausado`, 'success');
+	} catch (e) {
+		// rollback em erro
+		d[key] = cur;
+		p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
+		showToast(`Falha ao salvar status: ${e?.message || e}`, 'danger');
+	} finally {
+		// desliga loading
+		setCellLoading(p.node, colId, false);
+		p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
+	}
+}
 
 /* =========================================
  * 19) Normalizadores (TreeData)
