@@ -1,4 +1,39 @@
-/* public/js/lion-grid.js */
+/* public/js/lion-grid.js
+ *
+ * Lion Grid — AG Grid (TreeData + SSRM)
+ * -------------------------------------
+ * - NÃO remove nada: apenas reordenação e documentação.
+ * - Mesma API pública (globalThis.LionGrid), mesmos endpoints e renderers.
+ * - Comentários JSDoc adicionados para funções-chave.
+ *
+ * Estrutura:
+ *  1) Constantes & Config
+ *  2) Estado Global (moeda / quick filter)
+ *  3) Utilidades (sleep/spinner, parsing, edição silenciosa)
+ *  4) Toast
+ *  5) CSS de Loading (IIFE)
+ *  6) AG Grid: acesso + licença (IIFE)
+ *  7) Helpers/Formatters (HTML/numérico/moedas, badges)
+ *  8) Utils de status/loading por célula
+ *  9) Renderers (status pill, chips, profile, revenue)
+ * 10) Backend API (update*, fetchJSON, toggleFeature)
+ * 11) Modal simples (KTUI-like)
+ * 12) Tema (createAgTheme)
+ * 13) Colunas (defaultColDef, defs)
+ * 14) SSRM refresh compat
+ * 15) Global Quick Filter (IIFE)
+ * 16) State (load/apply saved)
+ * 17) Toggle de colunas pinadas (getSelectionColId/togglePinnedColsFromCheckbox)
+ * 18) Toolbar (presets, tamanho colunas, binds) (IIFE)
+ * 19) Normalizadores (tree)
+ * 20) Clipboard
+ * 21) Grid (makeGrid)
+ * 22) Page module (mount)
+ */
+
+/* =========================================
+ * 1) Constantes & Config
+ * =======================================*/
 const ENDPOINTS = { SSRM: '/api/ssrm/?clean=1' };
 const DRILL_ENDPOINTS = { ADSETS: '/api/adsets/', ADS: '/api/ads/' };
 const DRILL = { period: 'TODAY' };
@@ -6,17 +41,24 @@ const DRILL = { period: 'TODAY' };
 /* ========= Grid State (sessionStorage) ========= */
 const GRID_STATE_KEY = 'lion.aggrid.state.v1';
 const GRID_STATE_IGNORE_ON_RESTORE = ['pagination', 'scroll', 'rowSelection', 'focusedCell'];
+
 // === Fake network & min spinner ===
 const DEV_FAKE_NETWORK_LATENCY_MS = 0;
 const MIN_SPINNER_MS = 500;
 
+/* =========================================
+ * 2) Estado Global
+ * =======================================*/
 // Moeda global da aplicação
 let LION_CURRENCY = 'BRL'; // 'BRL' | 'USD'
 
-// ===== 🔍 QUICK FILTER (global, será enviado em filterModel._global.filter) =====
-let GLOBAL_QUICK_FILTER = ''; // preenchido pelo #quickFilter
+// 🔍 QUICK FILTER global (vai em filterModel._global.filter)
+let GLOBAL_QUICK_FILTER = ''; // alimentado pelo #quickFilter
 
-// Setter para trocar em runtime
+/**
+ * Altera a moeda da aplicação em runtime.
+ * @param {'USD'|'BRL'} mode
+ */
 function setLionCurrency(mode) {
 	const m = String(mode || '').toUpperCase();
 	if (m === 'USD' || m === 'BRL') LION_CURRENCY = m;
@@ -26,7 +68,31 @@ function getAppCurrency() {
 	return LION_CURRENCY;
 }
 
-// Parser tolerante a BRL/USD
+/* =========================================
+ * 3) Utilidades (tempo/edição/parsing)
+ * =======================================*/
+/**
+ * Sleep async
+ * @param {number} ms
+ */
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Garante spinner mínimo num fluxo async.
+ * @param {number} startMs performance.now() no início
+ * @param {number} minMs   ms mínimo de spinner
+ */
+async function withMinSpinner(startMs, minMs) {
+	const elapsed = performance.now() - startMs;
+	if (elapsed < minMs) await sleep(minMs - elapsed);
+}
+
+/**
+ * Parser tolerante a BRL/USD (string → number)
+ * @param {string|number|null} value
+ * @param {'USD'|'BRL'} [mode]
+ * @returns {number|null}
+ */
 function parseCurrencyFlexible(value, mode = getAppCurrency()) {
 	if (value == null || value === '') return null;
 	if (typeof value === 'number') return Number.isFinite(value) ? value : null;
@@ -50,13 +116,11 @@ function parseCurrencyFlexible(value, mode = getAppCurrency()) {
 	return Number.isFinite(n) ? n : null;
 }
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-async function withMinSpinner(startMs, minMs) {
-	const elapsed = performance.now() - startMs;
-	if (elapsed < minMs) await sleep(minMs - elapsed);
-}
-
-// marca por célula que o próximo setDataValue NÃO deve disparar lógica de edição
+/**
+ * Marca que o próximo setDataValue para a célula NÃO deve disparar onCellValueChanged.
+ * @param {*} p params do AG Grid
+ * @param {string} colId
+ */
 function shouldSuppressCellChange(p, colId) {
 	const key = `__suppress_${colId}`;
 	if (p?.data?.[key]) {
@@ -65,13 +129,52 @@ function shouldSuppressCellChange(p, colId) {
 	}
 	return false;
 }
+
+/**
+ * Faz update de célula sem disparar handlers de edição.
+ * @param {*} p params do AG Grid
+ * @param {string} colId
+ * @param {*} value
+ */
 function setCellSilently(p, colId, value) {
 	const key = `__suppress_${colId}`;
 	if (p?.data) p.data[key] = true;
 	p.node.setDataValue(colId, value);
 }
 
-/* ====== CSS de loading (injeção automática) ====== */
+/* =========================================
+ * 4) Toast (fallback console)
+ * =======================================*/
+/**
+ * Toast simples (Toastify)
+ * @param {string} msg
+ * @param {'info'|'success'|'warning'|'danger'} [type]
+ */
+function showToast(msg, type = 'info') {
+	const colors = {
+		info: 'linear-gradient(90deg,#06b6d4,#3b82f6)',
+		success: 'linear-gradient(90deg,#22c55e,#16a34a)',
+		warning: 'linear-gradient(90deg,#f59e0b,#eab308)',
+		danger: 'linear-gradient(90deg,#ef4444,#dc2626)',
+	};
+	if (globalThis.Toastify) {
+		Toastify({
+			text: msg,
+			duration: 2200,
+			close: true,
+			gravity: 'bottom',
+			position: 'right',
+			stopOnFocus: true,
+			backgroundColor: colors[type] || colors.info,
+		}).showToast();
+	} else {
+		console.log(`[Toast] ${msg}`);
+	}
+}
+
+/* =========================================
+ * 5) CSS de Loading (injeção automática)
+ * =======================================*/
 (function ensureLoadingStyles() {
 	if (document.getElementById('lion-loading-styles')) return;
 	const css = `
@@ -93,368 +196,10 @@ function setCellSilently(p, colId, value) {
 	document.head.appendChild(el);
 })();
 
-/* ==== Toolbar actions (state/layout + presets built-in & custom) ==== */
-(function setupToolbar() {
-	const byId = (id) => document.getElementById(id);
-	function ensureApi() {
-		const api = globalThis.LionGrid?.api;
-		if (!api) {
-			console.warn('Grid API ainda não disponível');
-			return null;
-		}
-		return api;
-	}
-	const SS_KEY_STATE = GRID_STATE_KEY || 'lion.aggrid.state.v1';
-	const LS_KEY_PRESETS = 'lion.aggrid.presets.v1';
-	const LS_KEY_ACTIVE_PRESET = 'lion.aggrid.activePreset.v1';
-	const PRESET_VERSION = 1;
-
-	function getState() {
-		const api = ensureApi();
-		if (!api) return null;
-		try {
-			return api.getState();
-		} catch {
-			return null;
-		}
-	}
-	function setState(state, ignore = []) {
-		const api = ensureApi();
-		if (!api) return;
-		try {
-			api.setState(state, ignore || []);
-		} catch (e) {
-			console.warn('setState fail', e);
-		}
-	}
-
-	function resetLayout() {
-		const api = ensureApi();
-		if (!api) return;
-		try {
-			sessionStorage.removeItem(SS_KEY_STATE);
-			localStorage.removeItem(LS_KEY_ACTIVE_PRESET);
-			api.setState({}, []);
-			api.resetColumnState?.();
-			api.setFilterModel?.(null);
-			api.setSortModel?.([]);
-			refreshPresetUserSelect();
-			togglePinnedColsFromCheckbox(true);
-
-			showToast('Layout Reset', 'info');
-		} catch (e) {
-			console.warn('resetLayout fail', e);
-		}
-	}
-
-	function readPresets() {
-		try {
-			return JSON.parse(localStorage.getItem(LS_KEY_PRESETS) || '{}');
-		} catch {
-			return {};
-		}
-	}
-	function writePresets(obj) {
-		localStorage.setItem(LS_KEY_PRESETS, JSON.stringify(obj));
-	}
-	function listPresetNames() {
-		return Object.keys(readPresets()).sort((a, b) => a.localeCompare(b, 'pt-BR'));
-	}
-
-	function refreshPresetUserSelect() {
-		const sel = byId('presetUserSelect');
-		if (!sel) return;
-		const activePreset = localStorage.getItem(LS_KEY_ACTIVE_PRESET) || '';
-		while (sel.firstChild) sel.removeChild(sel.firstChild);
-		const placeholderText = 'Default';
-		sel.appendChild(new Option(placeholderText, ''));
-		listPresetNames().forEach((name) => sel.appendChild(new Option(name, name)));
-		if (activePreset && [...sel.options].some((o) => o.value === activePreset))
-			sel.value = activePreset;
-		else sel.value = '';
-	}
-
-	function saveAsPreset() {
-		const api = ensureApi();
-		if (!api) return;
-		const name = prompt('Preset name:');
-		if (!name) return;
-		let state;
-		try {
-			state = api.getState();
-		} catch {}
-		if (!state) return showToast("Couldn't capture grid state", 'danger');
-		const bag = readPresets();
-		bag[name] = { v: PRESET_VERSION, name, createdAt: Date.now(), grid: state };
-		writePresets(bag);
-		refreshPresetUserSelect();
-		const sel = byId('presetUserSelect');
-		if (sel) sel.value = name;
-		showToast(`Preset "${name}" saved`, 'success');
-	}
-
-	function applyPresetUser(name) {
-		if (!name) return;
-		const bag = readPresets();
-		const p = bag[name];
-		if (!p?.grid) return showToast('Preset not found', 'warning');
-		setState(p.grid, ['pagination', 'scroll', 'rowSelection', 'focusedCell']);
-		localStorage.setItem(LS_KEY_ACTIVE_PRESET, name);
-		refreshPresetUserSelect();
-		showToast(`Preset "${name}" applied`, 'success');
-	}
-
-	function deletePreset() {
-		const sel = byId('presetUserSelect');
-		const name = sel?.value || '';
-		if (!name) return showToast('Pick a preset first', 'warning');
-		if (!confirm(`Delete preset "${name}"?`)) return;
-		const bag = readPresets();
-		delete bag[name];
-		writePresets(bag);
-		const activePreset = localStorage.getItem(LS_KEY_ACTIVE_PRESET);
-		if (activePreset === name) localStorage.removeItem(LS_KEY_ACTIVE_PRESET);
-		refreshPresetUserSelect();
-		showToast(`Preset "${name}" removed`, 'info');
-	}
-
-	function downloadPreset() {
-		const sel = byId('presetUserSelect');
-		const name = sel?.value || '';
-		if (!name) return showToast('Pick a preset first', 'warning');
-		const bag = readPresets();
-		const p = bag[name];
-		if (!p) return showToast('Preset not found', 'warning');
-		const blob = new Blob([JSON.stringify(p, null, 2)], { type: 'application/json;charset=utf-8' });
-		const url = URL.createObjectURL(blob);
-		const a = document.createElement('a');
-		a.href = url;
-		a.download = `lion-preset-${name}.json`;
-		document.body.appendChild(a);
-		a.click();
-		a.remove();
-		URL.revokeObjectURL(url);
-		showToast(`Preset "${name}" downloaded`, 'success');
-	}
-
-	function uploadPreset() {
-		const input = byId('presetFileInput');
-		if (!input) return;
-		input.value = '';
-		input.click();
-	}
-	byId('presetFileInput')?.addEventListener('change', (e) => {
-		const file = e.target.files?.[0];
-		if (!file) return;
-		const reader = new FileReader();
-		reader.onload = () => {
-			try {
-				const parsed = JSON.parse(String(reader.result || '{}'));
-				if (!parsed?.grid) return showToast('Invalid preset file', 'danger');
-				const name = prompt(
-					'Name to save this preset as:',
-					parsed.name || file.name.replace(/\.json$/i, '')
-				);
-				if (!name) return;
-				const bag = readPresets();
-				bag[name] = { ...parsed, name, importedAt: Date.now() };
-				writePresets(bag);
-				refreshPresetUserSelect();
-				const sel = byId('presetUserSelect');
-				if (sel) sel.value = name;
-				applyPresetUser(name);
-			} catch {
-				showToast('Failed to read JSON', 'danger');
-			}
-		};
-		reader.readAsText(file, 'utf-8');
-	});
-
-	/* ===== Toggle: modo de ajuste de colunas ===== */
-	const LS_KEY_SIZE_MODE = 'lion.aggrid.sizeMode'; // 'auto' | 'fit'
-	function applySizeMode(mode) {
-		const api = (globalThis.LionGrid || {}).api;
-		if (!api) return;
-		try {
-			if (mode === 'auto') {
-				const all = api.getColumns()?.map((c) => c.getColId()) || [];
-				api.autoSizeColumns(all, false);
-			} else {
-				api.sizeColumnsToFit();
-			}
-		} catch {}
-	}
-	function getSizeMode() {
-		const v = localStorage.getItem(LS_KEY_SIZE_MODE);
-		return v === 'auto' ? 'auto' : 'fit';
-	}
-	function setSizeMode(mode) {
-		localStorage.setItem(LS_KEY_SIZE_MODE, mode);
-	}
-
-	(function initSizeModeToggle() {
-		const el = byId('colSizeModeToggle');
-		if (!el) return;
-		const mode = getSizeMode();
-		el.checked = mode === 'auto';
-		applySizeMode(mode);
-		el.addEventListener('change', () => {
-			const next = el.checked ? 'auto' : 'fit';
-			setSizeMode(next);
-			applySizeMode(next);
-			showToast(next === 'auto' ? 'Mode: Auto Size' : 'Mode: Size To Fit', 'info');
-		});
-		window.addEventListener('resize', () => applySizeMode(getSizeMode()));
-	})();
-
-	/* ========== binds (botões/menus são opcionais) ========== */
-	byId('btnResetLayout')?.addEventListener('click', resetLayout);
-	byId('presetUserSelect')?.addEventListener('change', (e) => {
-		const v = e.target.value;
-		if (!v) {
-			resetLayout();
-			localStorage.removeItem(LS_KEY_ACTIVE_PRESET);
-			refreshPresetUserSelect();
-			return;
-		}
-		applyPresetUser(v);
-	});
-	byId('btnSaveAsPreset')?.addEventListener('click', saveAsPreset);
-	byId('btnDeletePreset')?.addEventListener('click', deletePreset);
-	byId('btnDownloadPreset')?.addEventListener('click', downloadPreset);
-	byId('btnUploadPreset')?.addEventListener('click', uploadPreset);
-
-	refreshPresetUserSelect();
-
-	globalThis.addEventListener('lionGridReady', () => {
-		const activePreset = localStorage.getItem(LS_KEY_ACTIVE_PRESET);
-		if (activePreset) {
-			const bag = readPresets();
-			const p = bag[activePreset];
-			if (p?.grid) {
-				setState(p.grid, ['pagination', 'scroll', 'rowSelection', 'focusedCell']);
-				console.log(`[Preset] Auto-aplicado: "${activePreset}"`);
-			}
-		}
-	});
-
-	globalThis.LionGrid = Object.assign(globalThis.LionGrid || {}, {
-		getState,
-		setState,
-		resetLayout,
-		saveAsPreset,
-		applyPresetUser,
-	});
-})();
-
-// ====== SSRM refresh compat ======
-function refreshSSRM(api) {
-	if (!api) return;
-	if (typeof api.refreshServerSideStore === 'function') {
-		api.refreshServerSideStore({ purge: true });
-	} else if (typeof api.purgeServerSideCache === 'function') {
-		api.purgeServerSideCache();
-	} else if (typeof api.refreshServerSide === 'function') {
-		api.refreshServerSide({ purge: true });
-	} else if (typeof api.onFilterChanged === 'function') {
-		api.onFilterChanged();
-	}
-}
-
-(function setupGlobalQuickFilter() {
-	function focusQuickFilter() {
-		const input = document.getElementById('quickFilter');
-		if (!input) return;
-		input.focus();
-		input.select?.();
-	}
-
-	function applyGlobalFilter(val) {
-		GLOBAL_QUICK_FILTER = String(val || '');
-		const api = globalThis.LionGrid?.api;
-		if (!api) return;
-		refreshSSRM(api);
-	}
-
-	function init() {
-		const input = document.getElementById('quickFilter'); // id padrão do AG Grid
-		if (!input) return;
-
-		// atalho de acessibilidade opcional (vira Alt+Shift+K em vários browsers)
-		try {
-			input.setAttribute('accesskey', 'k');
-		} catch {}
-
-		let t = null;
-		input.addEventListener('input', () => {
-			clearTimeout(t);
-			t = setTimeout(() => applyGlobalFilter(input.value.trim()), 250);
-		});
-		if (input.value) applyGlobalFilter(input.value.trim());
-	}
-
-	// Global hotkeys: Meta+K (quando o navegador permitir) e Ctrl+K sempre
-	window.addEventListener(
-		'keydown',
-		(e) => {
-			const tag = e.target && e.target.tagName ? e.target.tagName.toLowerCase() : '';
-			const editable =
-				tag === 'input' || tag === 'textarea' || (e.target && e.target.isContentEditable);
-			// não roubar o atalho se já estiver digitando em algum campo
-			if (editable) return;
-
-			const key = String(e.key || '').toLowerCase();
-			// 1) Fallback consistente: Ctrl+K
-			if (e.ctrlKey && !e.shiftKey && !e.altKey && key === 'k') {
-				e.preventDefault();
-				focusQuickFilter();
-				return;
-			}
-			// 2) Tentativa: Meta+K (Cmd no macOS, Win no Windows) — pode não disparar no Windows por ser atalho do sistema
-			if (e.metaKey && !e.shiftKey && !e.altKey && key === 'k') {
-				e.preventDefault();
-				focusQuickFilter();
-				return;
-			}
-		},
-		{ capture: true }
-	);
-
-	globalThis.addEventListener('lionGridReady', init);
-})();
-
-/* ======= Build de payload no padrão do BACK ======= */
-function buildFilterModelWithGlobal(baseFilterModel) {
-	const fm = { ...(baseFilterModel || {}) };
-	const gf = (GLOBAL_QUICK_FILTER || '').trim();
-	fm._global = Object.assign({}, fm._global, { filter: gf });
-	return fm;
-}
-
-/* ======= State ======= */
-function loadSavedState() {
-	try {
-		const raw = sessionStorage.getItem(GRID_STATE_KEY);
-		if (!raw) return null;
-		const parsed = JSON.parse(raw);
-		return parsed?.state || null;
-	} catch {
-		return null;
-	}
-}
-function applySavedStateIfAny(api) {
-	const saved = loadSavedState();
-	if (!saved) return false;
-	try {
-		api.setState(saved, GRID_STATE_IGNORE_ON_RESTORE);
-		return true;
-	} catch (e) {
-		console.warn('[GridState] restore failed:', e);
-		return false;
-	}
-}
-
-/* ============ AG Grid boot/licença ============ */
+/* =========================================
+ * 6) AG Grid: acesso + licença
+ * =======================================*/
+/** Obtém objeto global do AG Grid (UMD). */
 function getAgGrid() {
 	const AG = globalThis.agGrid;
 	if (!AG)
@@ -470,7 +215,9 @@ function getAgGrid() {
 	} catch {}
 })();
 
-/* ============ Helpers/formatters ============ */
+/* =========================================
+ * 7) Helpers/Formatters (HTML/numérico/moedas, badges)
+ * =======================================*/
 const stripHtml = (s) =>
 	typeof s === 'string'
 		? s
@@ -478,11 +225,13 @@ const stripHtml = (s) =>
 				.replace(/\s+/g, ' ')
 				.trim()
 		: s;
+
 const strongText = (s) => {
 	if (typeof s !== 'string') return s;
 	const m = s.match(/<strong[^>]*>(.*?)<\/strong>/i);
 	return stripHtml(m ? m[1] : s);
 };
+
 const toNumberBR = (s) => {
 	if (s == null) return null;
 	if (typeof s === 'number') return s;
@@ -493,9 +242,11 @@ const toNumberBR = (s) => {
 	const n = parseFloat(raw);
 	return Number.isFinite(n) ? n : null;
 };
+
 const brlFmt = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 const intFmt = new Intl.NumberFormat('pt-BR');
 
+/** Formatter de moeda dinâmico (BRL/USD) para AG Grid. */
 function currencyFormatter(p) {
 	const currency = getAppCurrency();
 	const locale = currency === 'USD' ? 'en-US' : 'pt-BR';
@@ -508,6 +259,7 @@ const intFormatter = (p) => {
 	return n == null ? p.value ?? '' : intFmt.format(Math.round(n));
 };
 
+/** Cores fallback para badges (sem tailwind). */
 const FALLBACK_STYLE = {
 	success: { bg: '#22c55e', fg: '#ffffff' },
 	primary: { bg: '#3b82f6', fg: '#ffffff' },
@@ -549,6 +301,36 @@ function isPinnedOrTotal(params) {
 		params?.node?.group === true
 	);
 }
+
+/* =========================================
+ * 8) Utils de status/loading por célula
+ * =======================================*/
+function isStatusActiveVal(v) {
+	return String(v ?? '').toUpperCase() === 'ACTIVE';
+}
+function getRowStatusValue(p) {
+	return p?.data?.campaign_status ?? p?.data?.status ?? p?.value ?? '';
+}
+function setRowStatus(data, on) {
+	const next = on ? 'ACTIVE' : 'PAUSED';
+	if (data) {
+		if ('campaign_status' in data) data.campaign_status = next;
+		if ('status' in data) data.status = next;
+	}
+}
+function setCellLoading(node, colId, on) {
+	if (!node?.data) return;
+	node.data.__loading = node.data.__loading || {};
+	node.data.__loading[colId] = !!on;
+}
+function isCellLoading(p, colId) {
+	return !!p?.data?.__loading?.[colId];
+}
+
+/* =========================================
+ * 9) Renderers
+ * =======================================*/
+/** Renderer de status (Account Status) em forma de 'pill'. */
 function statusPillRenderer(p) {
 	const raw = p.value ?? '';
 	if (isPinnedOrTotal(p) || !raw) {
@@ -574,6 +356,7 @@ function statusPillRenderer(p) {
 	return renderBadgeNode(labelUp, color);
 }
 
+/** Badge "X/Y" com cor baseada na fração. */
 function pickChipColorFromFraction(value) {
 	const txt = stripHtml(value ?? '').trim();
 	const m = txt.match(/^(\d+)\s*\/\s*(\d+)$/);
@@ -598,211 +381,8 @@ function chipFractionBadgeRenderer(p) {
 	host.innerHTML = renderBadge(label, color);
 	return host.firstElementChild;
 }
-// coloque junto com os outros "update*Backend"
-async function updateAdStatusBackend(id, status) {
-	const t0 = performance.now();
-	if (DEV_FAKE_NETWORK_LATENCY_MS > 0) await sleep(DEV_FAKE_NETWORK_LATENCY_MS);
-	const res = await fetch(`/api/ads/${encodeURIComponent(id)}/status/`, {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		credentials: 'same-origin',
-		body: JSON.stringify({ status }),
-	});
-	const data = await res.json().catch(() => ({}));
-	if (!res.ok || data?.ok === false) throw new Error(data?.error || 'Ad status update failed');
-	await withMinSpinner(t0, MIN_SPINNER_MS);
-	return data;
-}
 
-async function updateAdsetStatusBackend(id, status) {
-	const t0 = performance.now();
-	if (DEV_FAKE_NETWORK_LATENCY_MS > 0) await sleep(DEV_FAKE_NETWORK_LATENCY_MS);
-	const res = await fetch(`/api/adsets/${encodeURIComponent(id)}/status/`, {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		credentials: 'same-origin',
-		body: JSON.stringify({ status }),
-	});
-	const data = await res.json().catch(() => ({}));
-	if (!res.ok || data?.ok === false) throw new Error(data?.error || 'Adset status update failed');
-	await withMinSpinner(t0, MIN_SPINNER_MS);
-	return data;
-}
-async function updateCampaignStatusBackend(id, status) {
-	const t0 = performance.now();
-	if (DEV_FAKE_NETWORK_LATENCY_MS > 0) await sleep(DEV_FAKE_NETWORK_LATENCY_MS);
-	const res = await fetch(`/api/campaigns/${encodeURIComponent(id)}/status/`, {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		credentials: 'same-origin',
-		body: JSON.stringify({ status }),
-	});
-	const data = await res.json().catch(() => ({}));
-	if (!res.ok || data?.ok === false) throw new Error(data?.error || 'Status update failed');
-	await withMinSpinner(t0, MIN_SPINNER_MS);
-	return data;
-}
-async function updateCampaignBudgetBackend(id, budgetNumber) {
-	const t0 = performance.now();
-	if (DEV_FAKE_NETWORK_LATENCY_MS > 0) await sleep(DEV_FAKE_NETWORK_LATENCY_MS);
-	const res = await fetch(`/api/campaigns/${encodeURIComponent(id)}/budget/`, {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		credentials: 'same-origin',
-		body: JSON.stringify({ budget: budgetNumber }),
-	});
-	const data = await res.json().catch(() => ({}));
-	if (!res.ok || data?.ok === false) throw new Error(data?.error || 'Budget update failed');
-	await withMinSpinner(t0, MIN_SPINNER_MS);
-	return data;
-}
-async function updateCampaignBidBackend(id, bidNumber) {
-	const t0 = performance.now();
-	if (DEV_FAKE_NETWORK_LATENCY_MS > 0) await sleep(DEV_FAKE_NETWORK_LATENCY_MS);
-	const res = await fetch(`/api/campaigns/${encodeURIComponent(id)}/bid/`, {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		credentials: 'same-origin',
-		body: JSON.stringify({ bid: bidNumber }),
-	});
-	const data = await res.json().catch(() => ({}));
-	if (!res.ok || data?.ok === false) throw new Error(data?.error || 'Bid update failed');
-	await withMinSpinner(t0, MIN_SPINNER_MS);
-	return data;
-}
-
-// GET/POST JSON
-async function fetchJSON(url, opts) {
-	const res = await fetch(url, {
-		headers: { 'Content-Type': 'application/json' },
-		credentials: 'same-origin',
-		...opts,
-	});
-	let data;
-	try {
-		data = await res.json();
-	} catch {
-		data = {};
-	}
-	if (!res.ok) throw new Error(data?.error || res.statusText || 'Request failed');
-	return data;
-}
-
-/* ======= Utils de status e de loading ======= */
-function isStatusActiveVal(v) {
-	return String(v ?? '').toUpperCase() === 'ACTIVE';
-}
-function getRowStatusValue(p) {
-	return p?.data?.campaign_status ?? p?.data?.status ?? p?.value ?? '';
-}
-function setRowStatus(data, on) {
-	const next = on ? 'ACTIVE' : 'PAUSED';
-	if (data) {
-		if ('campaign_status' in data) data.campaign_status = next;
-		if ('status' in data) data.status = next;
-	}
-}
-function setCellLoading(node, colId, on) {
-	if (!node?.data) return;
-	node.data.__loading = node.data.__loading || {};
-	node.data.__loading[colId] = !!on;
-}
-function isCellLoading(p, colId) {
-	return !!p?.data?.__loading?.[colId];
-}
-
-/* ============ Modal simples (KTUI-like) ============ */
-function ensureKtModalDom() {
-	if (document.getElementById('lionKtModal')) return;
-	const tpl = document.createElement('div');
-	tpl.innerHTML = `
-<div class="kt-modal hidden" data-kt-modal="true" id="lionKtModal" aria-hidden="true">
-  <div class="kt-modal-content max-w-[420px] top-[10%]">
-    <div class="kt-modal-header">
-      <h3 class="kt-modal-title">Detalhes</h3>
-      <button type="button" class="kt-modal-close" aria-label="Close" data-kt-modal-dismiss="#lionKtModal">✕</button>
-    </div>
-    <div class="kt-modal-body">
-      <pre class="whitespace-pre-wrap text-sm"></pre>
-    </div>
-  </div>
-</div>`;
-	document.body.appendChild(tpl.firstElementChild);
-	document
-		.querySelector('[data-kt-modal-dismiss="#lionKtModal"]')
-		?.addEventListener('click', () => closeKTModal('#lionKtModal'));
-	document.getElementById('lionKtModal')?.addEventListener('click', (e) => {
-		if (e.target.id === 'lionKtModal') closeKTModal('#lionKtModal');
-	});
-}
-function openKTModal(selector = '#lionKtModal') {
-	const el = document.querySelector(selector);
-	if (!el) return;
-	el.style.display = 'block';
-	el.classList.add('kt-modal--open');
-	el.classList.remove('hidden');
-	el.removeAttribute('aria-hidden');
-}
-function closeKTModal(selector = '#lionKtModal') {
-	const el = document.querySelector(selector);
-	if (!el) return;
-	el.style.display = 'none';
-	el.classList.remove('kt-modal--open');
-	el.classList.add('hidden');
-	el.setAttribute('aria-hidden', 'true');
-}
-function showKTModal({ title = 'Detalhes', content = '' } = {}) {
-	ensureKtModalDom();
-	const modal = document.querySelector('#lionKtModal');
-	if (!modal) return;
-	modal.querySelector('.kt-modal-title').textContent = title;
-	modal.querySelector('.kt-modal-body > pre').textContent = content;
-	openKTModal('#lionKtModal');
-}
-
-/* ============ Tema opcional ============ */
-function createAgTheme() {
-	const AG = getAgGrid();
-	const { themeQuartz, iconSetMaterial } = AG;
-	if (!themeQuartz || !iconSetMaterial) return undefined;
-	return themeQuartz.withPart(iconSetMaterial).withParams({
-		browserColorScheme: 'dark',
-		backgroundColor: '#0C0C0D',
-		foregroundColor: '#BBBEC9',
-		headerBackgroundColor: '#141414',
-		headerTextColor: '#FFFFFF',
-		accentColor: '#15BDE8',
-		borderColor: '#FFFFFF0A',
-		rowBorder: true,
-		headerRowBorder: true,
-		fontFamily: { googleFont: 'IBM Plex Sans' },
-		fontSize: 14,
-		spacing: 6,
-	});
-}
-const LION_CENTER_EXCLUDES = new Set(['profile_name']);
-
-/* ============ Colunas ============ */
-const defaultColDef = {
-	sortable: true,
-	filter: 'agTextColumnFilter',
-	floatingFilter: true,
-	resizable: true,
-	cellClass: (p) => (LION_CENTER_EXCLUDES.has(p.column.getColId()) ? null : 'lion-center-cell'),
-	wrapHeaderText: true,
-	autoHeaderHeight: true,
-	enableRowGroup: true,
-	enablePivot: true,
-	enableValue: true,
-	suppressHeaderFilterButton: true,
-};
-function parseCurrencyInput(params) {
-	return parseCurrencyFlexible(params.newValue, getAppCurrency());
-}
-function isPinnedOrGroup(params) {
-	return params?.node?.rowPinned || params?.node?.group;
-}
-
+/** Renderer do nome do perfil (2 linhas: nome / meta). */
 function profileCellRenderer(params) {
 	const raw = String(params?.value ?? '').trim();
 	if (!raw) return '';
@@ -828,7 +408,7 @@ function profileCellRenderer(params) {
 	return wrap;
 }
 
-/* Revenue renderer (total + partes) */
+/** Renderer de Revenue (total + partes A/B). */
 const REVENUE_LABELS = ['A', 'B'];
 function parseRevenue(raw) {
 	const txt = stripHtml(raw ?? '').trim();
@@ -867,24 +447,7 @@ function revenueCellRenderer(p) {
 	return wrap;
 }
 
-async function toggleFeature(feature, value) {
-	const res = await fetch('/api/dev/test-toggle/', {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		credentials: 'same-origin',
-		body: JSON.stringify({ feature, value }),
-	});
-	const data = await res.json();
-	if (res.ok && data.ok) {
-		showToast(data.message || 'Aplicado', 'success');
-		return true;
-	}
-	const msg = data?.error || `Erro (${res.status})`;
-	showToast(msg, 'danger');
-	return false;
-}
-
-/* ======= Campaign Status Renderer (otimizado) ======= */
+/* ======= Campaign Status Slider Renderer (otimizado) ======= */
 function StatusSliderRenderer() {}
 const LionStatusMenu = (() => {
 	let el = null,
@@ -1014,7 +577,7 @@ StatusSliderRenderer.prototype.init = function (p) {
 
 		if (!id) return;
 
-		// agora cobre os 3 níveis
+		// cobre os 3 níveis
 		const scope = level === 2 ? 'ad' : level === 1 ? 'adset' : 'campaign';
 		const colId = p.column.getColId();
 
@@ -1205,6 +768,216 @@ StatusSliderRenderer.prototype.refresh = function (p) {
 StatusSliderRenderer.prototype.destroy = function () {
 	this._cleanup?.();
 };
+
+/* =========================================
+ * 10) Backend API (update*, fetchJSON, toggleFeature)
+ * =======================================*/
+// (observação: mantidos nomes/assinaturas originais)
+
+async function updateAdStatusBackend(id, status) {
+	const t0 = performance.now();
+	if (DEV_FAKE_NETWORK_LATENCY_MS > 0) await sleep(DEV_FAKE_NETWORK_LATENCY_MS);
+	const res = await fetch(`/api/ads/${encodeURIComponent(id)}/status/`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		credentials: 'same-origin',
+		body: JSON.stringify({ status }),
+	});
+	const data = await res.json().catch(() => ({}));
+	if (!res.ok || data?.ok === false) throw new Error(data?.error || 'Ad status update failed');
+	await withMinSpinner(t0, MIN_SPINNER_MS);
+	return data;
+}
+
+async function updateAdsetStatusBackend(id, status) {
+	const t0 = performance.now();
+	if (DEV_FAKE_NETWORK_LATENCY_MS > 0) await sleep(DEV_FAKE_NETWORK_LATENCY_MS);
+	const res = await fetch(`/api/adsets/${encodeURIComponent(id)}/status/`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		credentials: 'same-origin',
+		body: JSON.stringify({ status }),
+	});
+	const data = await res.json().catch(() => ({}));
+	if (!res.ok || data?.ok === false) throw new Error(data?.error || 'Adset status update failed');
+	await withMinSpinner(t0, MIN_SPINNER_MS);
+	return data;
+}
+async function updateCampaignStatusBackend(id, status) {
+	const t0 = performance.now();
+	if (DEV_FAKE_NETWORK_LATENCY_MS > 0) await sleep(DEV_FAKE_NETWORK_LATENCY_MS);
+	const res = await fetch(`/api/campaigns/${encodeURIComponent(id)}/status/`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		credentials: 'same-origin',
+		body: JSON.stringify({ status }),
+	});
+	const data = await res.json().catch(() => ({}));
+	if (!res.ok || data?.ok === false) throw new Error(data?.error || 'Status update failed');
+	await withMinSpinner(t0, MIN_SPINNER_MS);
+	return data;
+}
+async function updateCampaignBudgetBackend(id, budgetNumber) {
+	const t0 = performance.now();
+	if (DEV_FAKE_NETWORK_LATENCY_MS > 0) await sleep(DEV_FAKE_NETWORK_LATENCY_MS);
+	const res = await fetch(`/api/campaigns/${encodeURIComponent(id)}/budget/`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		credentials: 'same-origin',
+		body: JSON.stringify({ budget: budgetNumber }),
+	});
+	const data = await res.json().catch(() => ({}));
+	if (!res.ok || data?.ok === false) throw new Error(data?.error || 'Budget update failed');
+	await withMinSpinner(t0, MIN_SPINNER_MS);
+	return data;
+}
+async function updateCampaignBidBackend(id, bidNumber) {
+	const t0 = performance.now();
+	if (DEV_FAKE_NETWORK_LATENCY_MS > 0) await sleep(DEV_FAKE_NETWORK_LATENCY_MS);
+	const res = await fetch(`/api/campaigns/${encodeURIComponent(id)}/bid/`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		credentials: 'same-origin',
+		body: JSON.stringify({ bid: bidNumber }),
+	});
+	const data = await res.json().catch(() => ({}));
+	if (!res.ok || data?.ok === false) throw new Error(data?.error || 'Bid update failed');
+	await withMinSpinner(t0, MIN_SPINNER_MS);
+	return data;
+}
+
+/** GET/POST JSON com tratamento de erro comum. */
+async function fetchJSON(url, opts) {
+	const res = await fetch(url, {
+		headers: { 'Content-Type': 'application/json' },
+		credentials: 'same-origin',
+		...opts,
+	});
+	let data;
+	try {
+		data = await res.json();
+	} catch {
+		data = {};
+	}
+	if (!res.ok) throw new Error(data?.error || res.statusText || 'Request failed');
+	return data;
+}
+
+/** Toggle fake de feature para modo DEV/teste. */
+async function toggleFeature(feature, value) {
+	const res = await fetch('/api/dev/test-toggle/', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		credentials: 'same-origin',
+		body: JSON.stringify({ feature, value }),
+	});
+	const data = await res.json();
+	if (res.ok && data.ok) {
+		showToast(data.message || 'Aplicado', 'success');
+		return true;
+	}
+	const msg = data?.error || `Erro (${res.status})`;
+	showToast(msg, 'danger');
+	return false;
+}
+
+/* =========================================
+ * 11) Modal simples (KTUI-like)
+ * =======================================*/
+function ensureKtModalDom() {
+	if (document.getElementById('lionKtModal')) return;
+	const tpl = document.createElement('div');
+	tpl.innerHTML = `
+<div class="kt-modal hidden" data-kt-modal="true" id="lionKtModal" aria-hidden="true">
+  <div class="kt-modal-content max-w-[420px] top-[10%]">
+    <div class="kt-modal-header">
+      <h3 class="kt-modal-title">Detalhes</h3>
+      <button type="button" class="kt-modal-close" aria-label="Close" data-kt-modal-dismiss="#lionKtModal">✕</button>
+    </div>
+    <div class="kt-modal-body">
+      <pre class="whitespace-pre-wrap text-sm"></pre>
+    </div>
+  </div>
+</div>`;
+	document.body.appendChild(tpl.firstElementChild);
+	document
+		.querySelector('[data-kt-modal-dismiss="#lionKtModal"]')
+		?.addEventListener('click', () => closeKTModal('#lionKtModal'));
+	document.getElementById('lionKtModal')?.addEventListener('click', (e) => {
+		if (e.target.id === 'lionKtModal') closeKTModal('#lionKtModal');
+	});
+}
+function openKTModal(selector = '#lionKtModal') {
+	const el = document.querySelector(selector);
+	if (!el) return;
+	el.style.display = 'block';
+	el.classList.add('kt-modal--open');
+	el.classList.remove('hidden');
+	el.removeAttribute('aria-hidden');
+}
+function closeKTModal(selector = '#lionKtModal') {
+	const el = document.querySelector(selector);
+	if (!el) return;
+	el.style.display = 'none';
+	el.classList.remove('kt-modal--open');
+	el.classList.add('hidden');
+	el.setAttribute('aria-hidden', 'true');
+}
+function showKTModal({ title = 'Detalhes', content = '' } = {}) {
+	ensureKtModalDom();
+	const modal = document.querySelector('#lionKtModal');
+	if (!modal) return;
+	modal.querySelector('.kt-modal-title').textContent = title;
+	modal.querySelector('.kt-modal-body > pre').textContent = content;
+	openKTModal('#lionKtModal');
+}
+
+/* =========================================
+ * 12) Tema (AG Grid Quartz)
+ * =======================================*/
+function createAgTheme() {
+	const AG = getAgGrid();
+	const { themeQuartz, iconSetMaterial } = AG;
+	if (!themeQuartz || !iconSetMaterial) return undefined;
+	return themeQuartz.withPart(iconSetMaterial).withParams({
+		browserColorScheme: 'dark',
+		backgroundColor: '#0C0C0D',
+		foregroundColor: '#BBBEC9',
+		headerBackgroundColor: '#141414',
+		headerTextColor: '#FFFFFF',
+		accentColor: '#15BDE8',
+		borderColor: '#FFFFFF0A',
+		rowBorder: true,
+		headerRowBorder: true,
+		fontFamily: { googleFont: 'IBM Plex Sans' },
+		fontSize: 14,
+		spacing: 6,
+	});
+}
+const LION_CENTER_EXCLUDES = new Set(['profile_name']);
+
+/* =========================================
+ * 13) Colunas (defaultColDef, defs)
+ * =======================================*/
+const defaultColDef = {
+	sortable: true,
+	filter: 'agTextColumnFilter',
+	floatingFilter: true,
+	resizable: true,
+	cellClass: (p) => (LION_CENTER_EXCLUDES.has(p.column.getColId()) ? null : 'lion-center-cell'),
+	wrapHeaderText: true,
+	autoHeaderHeight: true,
+	enableRowGroup: true,
+	enablePivot: true,
+	enableValue: true,
+	suppressHeaderFilterButton: true,
+};
+function parseCurrencyInput(params) {
+	return parseCurrencyFlexible(params.newValue, getAppCurrency());
+}
+function isPinnedOrGroup(params) {
+	return params?.node?.rowPinned || params?.node?.group;
+}
 
 /* ======= ColumnDefs ======= */
 const columnDefs = [
@@ -1463,11 +1236,11 @@ const columnDefs = [
 			{
 				headerName: 'Spend',
 				field: 'spent',
-				pinned: 'right',
-
 				valueGetter: (p) => toNumberBR(p.data?.spent),
 				valueFormatter: currencyFormatter,
 				minWidth: 90,
+				pinned: 'right',
+
 				flex: 0.8,
 			},
 			{
@@ -1519,7 +1292,418 @@ const columnDefs = [
 	},
 ];
 
-/* ============ Normalizadores tree ============ */
+/* =========================================
+ * 14) SSRM refresh compat
+ * =======================================*/
+function refreshSSRM(api) {
+	if (!api) return;
+	if (typeof api.refreshServerSideStore === 'function') {
+		api.refreshServerSideStore({ purge: true });
+	} else if (typeof api.purgeServerSideCache === 'function') {
+		api.purgeServerSideCache();
+	} else if (typeof api.refreshServerSide === 'function') {
+		api.refreshServerSide({ purge: true });
+	} else if (typeof api.onFilterChanged === 'function') {
+		api.onFilterChanged();
+	}
+}
+
+/* =========================================
+ * 15) Global Quick Filter (IIFE)
+ * =======================================*/
+(function setupGlobalQuickFilter() {
+	function focusQuickFilter() {
+		const input = document.getElementById('quickFilter');
+		if (!input) return;
+		input.focus();
+		input.select?.();
+	}
+
+	function applyGlobalFilter(val) {
+		GLOBAL_QUICK_FILTER = String(val || '');
+		const api = globalThis.LionGrid?.api;
+		if (!api) return;
+		refreshSSRM(api);
+	}
+
+	function init() {
+		const input = document.getElementById('quickFilter'); // id padrão do AG Grid
+		if (!input) return;
+
+		// atalho de acessibilidade opcional (vira Alt+Shift+K em vários browsers)
+		try {
+			input.setAttribute('accesskey', 'k');
+		} catch {}
+
+		let t = null;
+		input.addEventListener('input', () => {
+			clearTimeout(t);
+			t = setTimeout(() => applyGlobalFilter(input.value.trim()), 250);
+		});
+		if (input.value) applyGlobalFilter(input.value.trim());
+	}
+
+	// Global hotkeys: Meta+K e Ctrl+K
+	window.addEventListener(
+		'keydown',
+		(e) => {
+			const tag = e.target && e.target.tagName ? e.target.tagName.toLowerCase() : '';
+			const editable =
+				tag === 'input' || tag === 'textarea' || (e.target && e.target.isContentEditable);
+			if (editable) return;
+
+			const key = String(e.key || '').toLowerCase();
+			if (e.ctrlKey && !e.shiftKey && !e.altKey && key === 'k') {
+				e.preventDefault();
+				focusQuickFilter();
+				return;
+			}
+			if (e.metaKey && !e.shiftKey && !e.altKey && key === 'k') {
+				e.preventDefault();
+				focusQuickFilter();
+				return;
+			}
+		},
+		{ capture: true }
+	);
+
+	globalThis.addEventListener('lionGridReady', init);
+})();
+
+/* =========================================
+ * 16) State (load/apply)
+ * =======================================*/
+function buildFilterModelWithGlobal(baseFilterModel) {
+	const fm = { ...(baseFilterModel || {}) };
+	const gf = (GLOBAL_QUICK_FILTER || '').trim();
+	fm._global = Object.assign({}, fm._global, { filter: gf });
+	return fm;
+}
+function loadSavedState() {
+	try {
+		const raw = sessionStorage.getItem(GRID_STATE_KEY);
+		if (!raw) return null;
+		const parsed = JSON.parse(raw);
+		return parsed?.state || null;
+	} catch {
+		return null;
+	}
+}
+function applySavedStateIfAny(api) {
+	const saved = loadSavedState();
+	if (!saved) return false;
+	try {
+		api.setState(saved, GRID_STATE_IGNORE_ON_RESTORE);
+		return true;
+	} catch (e) {
+		console.warn('[GridState] restore failed:', e);
+		return false;
+	}
+}
+
+/* =========================================
+ * 17) Toggle de colunas pinadas
+ * =======================================*/
+/** Tenta descobrir a coluna de seleção (checkbox) corrente. */
+function getSelectionColId(api) {
+	try {
+		const cols = api.getColumns() || [];
+		const ids = cols.map((c) => c.getColId());
+		if (ids.includes('ag-Grid-Selection')) return 'ag-Grid-Selection';
+		const found = cols.find(
+			(c) => c.getColDef()?.headerCheckboxSelection || c.getColDef()?.checkboxSelection
+		);
+		return found?.getColId() || null;
+	} catch {
+		return null;
+	}
+}
+/**
+ * Pin/unpin colunas úteis (lado esquerdo/direito) a partir de um checkbox.
+ * @param {boolean} [silent=false]
+ */
+function togglePinnedColsFromCheckbox(silent = false) {
+	const api = globalThis.LionGrid?.api;
+	if (!api) return;
+	const el = document.getElementById('pinToggle');
+	if (!el) return;
+	const checked = !!el.checked;
+	const selectionColId = getSelectionColId(api);
+	const leftPins = [
+		{ colId: 'ag-Grid-SelectionColumn', pinned: checked ? 'left' : null },
+		{ colId: 'ag-Grid-AutoColumn', pinned: checked ? 'left' : null },
+		{ colId: 'profile_name', pinned: checked ? 'left' : null },
+	];
+	if (selectionColId) leftPins.push({ colId: selectionColId, pinned: checked ? 'left' : null });
+	const rightPins = [
+		{ colId: 'spent', pinned: checked ? 'right' : null },
+		{ colId: 'revenue', pinned: checked ? 'right' : null },
+		{ colId: 'mx', pinned: checked ? 'right' : null },
+		{ colId: 'profit', pinned: checked ? 'right' : null },
+	];
+	api.applyColumnState({ state: [...leftPins, ...rightPins], defaultState: { pinned: null } });
+	if (!silent)
+		showToast(checked ? 'Columns Pinned' : 'Columns Unpinned', checked ? 'success' : 'info');
+}
+
+/* =========================================
+ * 18) Toolbar (state/layout + presets + tamanho colunas)
+ * =======================================*/
+(function setupToolbar() {
+	const byId = (id) => document.getElementById(id);
+	function ensureApi() {
+		const api = globalThis.LionGrid?.api;
+		if (!api) {
+			console.warn('Grid API ainda não disponível');
+			return null;
+		}
+		return api;
+	}
+	const SS_KEY_STATE = GRID_STATE_KEY || 'lion.aggrid.state.v1';
+	const LS_KEY_PRESETS = 'lion.aggrid.presets.v1';
+	const LS_KEY_ACTIVE_PRESET = 'lion.aggrid.activePreset.v1';
+	const PRESET_VERSION = 1;
+
+	function getState() {
+		const api = ensureApi();
+		if (!api) return null;
+		try {
+			return api.getState();
+		} catch {
+			return null;
+		}
+	}
+	function setState(state, ignore = []) {
+		const api = ensureApi();
+		if (!api) return;
+		try {
+			api.setState(state, ignore || []);
+		} catch (e) {
+			console.warn('setState fail', e);
+		}
+	}
+
+	function resetLayout() {
+		const api = ensureApi();
+		if (!api) return;
+		try {
+			sessionStorage.removeItem(SS_KEY_STATE);
+			localStorage.removeItem(LS_KEY_ACTIVE_PRESET);
+			api.setState({}, []);
+			api.resetColumnState?.();
+			api.setFilterModel?.(null);
+			api.setSortModel?.([]);
+			refreshPresetUserSelect();
+			togglePinnedColsFromCheckbox(true);
+			showToast('Layout Reset', 'info');
+		} catch (e) {
+			console.warn('resetLayout fail', e);
+		}
+	}
+
+	function readPresets() {
+		try {
+			return JSON.parse(localStorage.getItem(LS_KEY_PRESETS) || '{}');
+		} catch {
+			return {};
+		}
+	}
+	function writePresets(obj) {
+		localStorage.setItem(LS_KEY_PRESETS, JSON.stringify(obj));
+	}
+	function listPresetNames() {
+		return Object.keys(readPresets()).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+	}
+
+	function refreshPresetUserSelect() {
+		const sel = byId('presetUserSelect');
+		if (!sel) return;
+		const activePreset = localStorage.getItem(LS_KEY_ACTIVE_PRESET) || '';
+		while (sel.firstChild) sel.removeChild(sel.firstChild);
+		const placeholderText = 'Default';
+		sel.appendChild(new Option(placeholderText, ''));
+		listPresetNames().forEach((name) => sel.appendChild(new Option(name, name)));
+		if (activePreset && [...sel.options].some((o) => o.value === activePreset))
+			sel.value = activePreset;
+		else sel.value = '';
+	}
+
+	function saveAsPreset() {
+		const api = ensureApi();
+		if (!api) return;
+		const name = prompt('Preset name:');
+		if (!name) return;
+		let state;
+		try {
+			state = api.getState();
+		} catch {}
+		if (!state) return showToast("Couldn't capture grid state", 'danger');
+		const bag = readPresets();
+		bag[name] = { v: PRESET_VERSION, name, createdAt: Date.now(), grid: state };
+		writePresets(bag);
+		refreshPresetUserSelect();
+		const sel = byId('presetUserSelect');
+		if (sel) sel.value = name;
+		showToast(`Preset "${name}" saved`, 'success');
+	}
+
+	function applyPresetUser(name) {
+		if (!name) return;
+		const bag = readPresets();
+		const p = bag[name];
+		if (!p?.grid) return showToast('Preset not found', 'warning');
+		setState(p.grid, ['pagination', 'scroll', 'rowSelection', 'focusedCell']);
+		localStorage.setItem(LS_KEY_ACTIVE_PRESET, name);
+		refreshPresetUserSelect();
+		showToast(`Preset "${name}" applied`, 'success');
+	}
+
+	function deletePreset() {
+		const sel = byId('presetUserSelect');
+		const name = sel?.value || '';
+		if (!name) return showToast('Pick a preset first', 'warning');
+		if (!confirm(`Delete preset "${name}"?`)) return;
+		const bag = readPresets();
+		delete bag[name];
+		writePresets(bag);
+		const activePreset = localStorage.getItem(LS_KEY_ACTIVE_PRESET);
+		if (activePreset === name) localStorage.removeItem(LS_KEY_ACTIVE_PRESET);
+		refreshPresetUserSelect();
+		showToast(`Preset "${name}" removed`, 'info');
+	}
+
+	function downloadPreset() {
+		const sel = byId('presetUserSelect');
+		const name = sel?.value || '';
+		if (!name) return showToast('Pick a preset first', 'warning');
+		const bag = readPresets();
+		const p = bag[name];
+		if (!p) return showToast('Preset not found', 'warning');
+		const blob = new Blob([JSON.stringify(p, null, 2)], { type: 'application/json;charset=utf-8' });
+		const url = URL.createObjectURL(blob);
+		const a = document.createElement('a');
+		a.href = url;
+		a.download = `lion-preset-${name}.json`;
+		document.body.appendChild(a);
+		a.click();
+		a.remove();
+		URL.revokeObjectURL(url);
+		showToast(`Preset "${name}" downloaded`, 'success');
+	}
+
+	function uploadPreset() {
+		const input = byId('presetFileInput');
+		if (!input) return;
+		input.value = '';
+		input.click();
+	}
+	byId('presetFileInput')?.addEventListener('change', (e) => {
+		const file = e.target.files?.[0];
+		if (!file) return;
+		const reader = new FileReader();
+		reader.onload = () => {
+			try {
+				const parsed = JSON.parse(String(reader.result || '{}'));
+				if (!parsed?.grid) return showToast('Invalid preset file', 'danger');
+				const name = prompt(
+					'Name to save this preset as:',
+					parsed.name || file.name.replace(/\.json$/i, '')
+				);
+				if (!name) return;
+				const bag = readPresets();
+				bag[name] = { ...parsed, name, importedAt: Date.now() };
+				writePresets(bag);
+				refreshPresetUserSelect();
+				const sel = byId('presetUserSelect');
+				if (sel) sel.value = name;
+				applyPresetUser(name);
+			} catch {
+				showToast('Failed to read JSON', 'danger');
+			}
+		};
+		reader.readAsText(file, 'utf-8');
+	});
+
+	/* ===== Toggle: modo de ajuste de colunas ===== */
+	const LS_KEY_SIZE_MODE = 'lion.aggrid.sizeMode'; // 'auto' | 'fit'
+	function applySizeMode(mode) {
+		const api = (globalThis.LionGrid || {}).api;
+		if (!api) return;
+		try {
+			if (mode === 'auto') {
+				const all = api.getColumns()?.map((c) => c.getColId()) || [];
+				api.autoSizeColumns(all, false);
+			} else {
+				api.sizeColumnsToFit();
+			}
+		} catch {}
+	}
+	function getSizeMode() {
+		const v = localStorage.getItem(LS_KEY_SIZE_MODE);
+		return v === 'auto' ? 'auto' : 'fit';
+	}
+	function setSizeMode(mode) {
+		localStorage.setItem(LS_KEY_SIZE_MODE, mode);
+	}
+
+	(function initSizeModeToggle() {
+		const el = byId('colSizeModeToggle');
+		if (!el) return;
+		const mode = getSizeMode();
+		el.checked = mode === 'auto';
+		applySizeMode(mode);
+		el.addEventListener('change', () => {
+			const next = el.checked ? 'auto' : 'fit';
+			setSizeMode(next);
+			applySizeMode(next);
+			showToast(next === 'auto' ? 'Mode: Auto Size' : 'Mode: Size To Fit', 'info');
+		});
+		window.addEventListener('resize', () => applySizeMode(getSizeMode()));
+	})();
+
+	/* ========== binds (botões/menus são opcionais) ========== */
+	byId('btnResetLayout')?.addEventListener('click', resetLayout);
+	byId('presetUserSelect')?.addEventListener('change', (e) => {
+		const v = e.target.value;
+		if (!v) {
+			resetLayout();
+			localStorage.removeItem(LS_KEY_ACTIVE_PRESET);
+			refreshPresetUserSelect();
+			return;
+		}
+		applyPresetUser(v);
+	});
+	byId('btnSaveAsPreset')?.addEventListener('click', saveAsPreset);
+	byId('btnDeletePreset')?.addEventListener('click', deletePreset);
+	byId('btnDownloadPreset')?.addEventListener('click', downloadPreset);
+	byId('btnUploadPreset')?.addEventListener('click', uploadPreset);
+
+	refreshPresetUserSelect();
+
+	globalThis.addEventListener('lionGridReady', () => {
+		const activePreset = localStorage.getItem(LS_KEY_ACTIVE_PRESET);
+		if (activePreset) {
+			const bag = readPresets();
+			const p = bag[activePreset];
+			if (p?.grid) {
+				setState(p.grid, ['pagination', 'scroll', 'rowSelection', 'focusedCell']);
+				console.log(`[Preset] Auto-aplicado: "${activePreset}"`);
+			}
+		}
+	});
+
+	globalThis.LionGrid = Object.assign(globalThis.LionGrid || {}, {
+		getState,
+		setState,
+		resetLayout,
+		saveAsPreset,
+		applyPresetUser,
+	});
+})();
+
+/* =========================================
+ * 19) Normalizadores (TreeData)
+ * =======================================*/
 function normalizeCampaignRow(r) {
 	return {
 		__nodeType: 'campaign',
@@ -1540,6 +1724,9 @@ function normalizeAdRow(r) {
 	return { __nodeType: 'ad', __label: stripHtml(r.name || '(ad)'), ...r };
 }
 
+/* =========================================
+ * 20) Clipboard
+ * =======================================*/
 async function copyToClipboard(text) {
 	try {
 		await navigator.clipboard.writeText(String(text ?? ''));
@@ -1562,7 +1749,9 @@ async function copyToClipboard(text) {
 	}
 }
 
-/* ============ Grid (Tree Data + SSRM) ============ */
+/* =========================================
+ * 21) Grid (Tree Data + SSRM)
+ * =======================================*/
 function makeGrid() {
 	const AG = getAgGrid();
 	const gridDiv = document.getElementById('lionGrid');
@@ -1574,8 +1763,8 @@ function makeGrid() {
 
 	const autoGroupColumnDef = {
 		headerName: 'Campaign',
-		colId: 'campaign', // 👈 importante: bate com o back
-		filter: 'agTextColumnFilter', // 👈 habilita filtro de coluna
+		colId: 'campaign', // bate com o back
+		filter: 'agTextColumnFilter',
 		floatingFilter: true,
 		sortable: false,
 		wrapText: true,
@@ -1620,7 +1809,7 @@ function makeGrid() {
 				return label;
 			},
 		},
-		// valor usado pelo filtro do autoGroup (campo virtual)
+		// valor usado no filtro do autoGroup (campo virtual)
 		valueGetter: (p) => {
 			const d = p.data || {};
 			const name = d.__label || '';
@@ -1636,7 +1825,7 @@ function makeGrid() {
 		context: { showToast: (msg, type) => Toastify({ text: msg }).showToast() },
 		rowModelType: 'serverSide',
 		cacheBlockSize: 200,
-		maxBlocksInCache: 4,
+		// maxBlocksInCache: 4,
 		treeData: true,
 
 		isServerSideGroup: (data) => data?.__nodeType === 'campaign' || data?.__nodeType === 'adset',
@@ -1797,7 +1986,7 @@ function makeGrid() {
 									startRow,
 									endRow,
 									sortModel: sortModel || [],
-									filterModel: filterModelWithGlobal, // 👈 formato que o back espera
+									filterModel: filterModelWithGlobal,
 								}),
 							});
 							// Fallback GET
@@ -1806,7 +1995,7 @@ function makeGrid() {
 									startRow: String(startRow),
 									endRow: String(endRow),
 									sortModel: JSON.stringify(sortModel || []),
-									filterModel: JSON.stringify(filterModelWithGlobal || {}), // 👈 inclui _global
+									filterModel: JSON.stringify(filterModelWithGlobal || {}),
 								});
 								res = await fetch(`${ENDPOINTS.SSRM}&${qs.toString()}`, {
 									credentials: 'same-origin',
@@ -1886,8 +2075,8 @@ function makeGrid() {
 								period: DRILL.period,
 								startRow: String(startRow),
 								endRow: String(endRow),
-								sortModel: JSON.stringify(sortModel || []), // 👈 envia sort para o back
-								filterModel: JSON.stringify(filterModelWithGlobal || {}), // 👈 inclui _global.filter
+								sortModel: JSON.stringify(sortModel || []),
+								filterModel: JSON.stringify(filterModelWithGlobal || {}),
 							});
 							const data = await fetchJSON(`${DRILL_ENDPOINTS.ADSETS}?${qs.toString()}`);
 							const rows = (data.rows || []).map(normalizeAdsetRow);
@@ -1903,8 +2092,8 @@ function makeGrid() {
 								period: DRILL.period,
 								startRow: String(startRow),
 								endRow: String(endRow),
-								sortModel: JSON.stringify(sortModel || []), // 👈 envia sort para o back
-								filterModel: JSON.stringify(filterModelWithGlobal || {}), // 👈 inclui _global.filter
+								sortModel: JSON.stringify(sortModel || []),
+								filterModel: JSON.stringify(filterModelWithGlobal || {}),
 							});
 							const data = await fetchJSON(`${DRILL_ENDPOINTS.ADS}?${qs.toString()}`);
 							const rows = (data.rows || []).map(normalizeAdRow);
@@ -1957,68 +2146,9 @@ function makeGrid() {
 	return { api, gridDiv };
 }
 
-/* ============ Toast simples (Toastify) ============ */
-function showToast(msg, type = 'info') {
-	const colors = {
-		info: 'linear-gradient(90deg,#06b6d4,#3b82f6)',
-		success: 'linear-gradient(90deg,#22c55e,#16a34a)',
-		warning: 'linear-gradient(90deg,#f59e0b,#eab308)',
-		danger: 'linear-gradient(90deg,#ef4444,#dc2626)',
-	};
-	if (globalThis.Toastify) {
-		Toastify({
-			text: msg,
-			duration: 2200,
-			close: true,
-			gravity: 'bottom',
-			position: 'right',
-			stopOnFocus: true,
-			backgroundColor: colors[type] || colors.info,
-		}).showToast();
-	} else {
-		console.log(`[Toast] ${msg}`);
-	}
-}
-
-/* ============ Toggle de colunas pinadas ============ */
-function getSelectionColId(api) {
-	try {
-		const cols = api.getColumns() || [];
-		const ids = cols.map((c) => c.getColId());
-		if (ids.includes('ag-Grid-Selection')) return 'ag-Grid-Selection';
-		const found = cols.find(
-			(c) => c.getColDef()?.headerCheckboxSelection || c.getColDef()?.checkboxSelection
-		);
-		return found?.getColId() || null;
-	} catch {
-		return null;
-	}
-}
-function togglePinnedColsFromCheckbox(silent = false) {
-	const api = globalThis.LionGrid?.api;
-	if (!api) return;
-	const el = document.getElementById('pinToggle');
-	if (!el) return;
-	const checked = !!el.checked;
-	const selectionColId = getSelectionColId(api);
-	const leftPins = [
-		{ colId: 'ag-Grid-SelectionColumn', pinned: checked ? 'left' : null },
-		{ colId: 'ag-Grid-AutoColumn', pinned: checked ? 'left' : null },
-		{ colId: 'profile_name', pinned: checked ? 'left' : null },
-	];
-	if (selectionColId) leftPins.push({ colId: selectionColId, pinned: checked ? 'left' : null });
-	const rightPins = [
-		{ colId: 'spent', pinned: checked ? 'right' : null },
-		{ colId: 'revenue', pinned: checked ? 'right' : null },
-		{ colId: 'mx', pinned: checked ? 'right' : null },
-		{ colId: 'profit', pinned: checked ? 'right' : null },
-	];
-	api.applyColumnState({ state: [...leftPins, ...rightPins], defaultState: { pinned: null } });
-	if (!silent)
-		showToast(checked ? 'Columns Pinned' : 'Columns Unpinned', checked ? 'success' : 'info');
-}
-
-/* ============ Page module ============ */
+/* =========================================
+ * 22) Page module (mount)
+ * =======================================*/
 const LionPage = (() => {
 	let gridRef = null;
 	function mount() {
