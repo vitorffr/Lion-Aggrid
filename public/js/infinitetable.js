@@ -2,32 +2,31 @@
  *
  * Lion Grid — AG Grid (Infinite Row Model)
  * ----------------------------------------
- * - NÃO remove nada: apenas adaptação de SSRM/TreeData → Infinite.
- * - Mesma API pública (globalThis.LionGrid), mesmos endpoints e renderers.
- * - Comentários JSDoc adicionados.
+ * - Mantém API pública (globalThis.LionGrid), endpoints e renderers.
+ * - Conversão de TreeData+SSRM → Infinite (flat) sem perder funcionalidades.
  *
  * Estrutura:
  *  1) Constantes & Config
- *  2) Estado Global (moeda / quick filter)
- *  3) Utilidades (sleep/spinner, parsing, edição silenciosa)
+ *  2) Estado Global
+ *  3) Utilidades
  *  4) Toast
- *  5) CSS de Loading (IIFE)
- *  6) AG Grid: acesso + licença (IIFE)
- *  7) Helpers/Formatters (HTML/numérico/moedas, badges)
+ *  5) CSS de Loading
+ *  6) AG Grid: acesso + licença
+ *  7) Helpers/Formatters
  *  8) Utils de status/loading por célula
- *  9) Renderers (status pill, chips, profile, revenue, slider)
- * 10) Backend API (update*, fetchJSON, toggleFeature)
- * 11) Modal simples (KTUI-like)
- * 12) Tema (createAgTheme)
- * 13) Colunas (defaultColDef, defs)
+ *  9) Renderers
+ * 10) Backend API
+ * 11) Modal simples
+ * 12) Tema
+ * 13) Colunas
  * 14) Refresh compat (Infinite)
- * 15) Global Quick Filter (IIFE)
- * 16) State (load/apply saved)
- * 17) Toggle de colunas pinadas
- * 18) Toolbar (presets, tamanho colunas, binds) (IIFE)
- * 19) Normalizadores (flat/campaign)
+ * 15) Global Quick Filter
+ * 16) State (load/apply)
+ * 17) Toggle colunas pinadas
+ * 18) Toolbar (presets, tamanho colunas, binds)
+ * 19) Normalizadores (legacy)
  * 20) Clipboard
- * 21) Grid (Infinite Row Model)
+ * 21) Grid (Infinite)
  * 22) Page module (mount)
  */
 
@@ -35,7 +34,7 @@
  * 1) Constantes & Config
  * =======================================*/
 const ENDPOINTS = { SSRM: '/api/ssrm/?clean=1' };
-const DRILL_ENDPOINTS = { ADSETS: '/api/adsets/', ADS: '/api/ads/' }; // mantidos (não usados no Infinite flat)
+const DRILL_ENDPOINTS = { ADSETS: '/api/adsets/', ADS: '/api/ads/' }; // legacy (não usados no infinito)
 const DRILL = { period: 'TODAY' };
 
 /* ========= Grid State (sessionStorage) ========= */
@@ -49,16 +48,9 @@ const MIN_SPINNER_MS = 500;
 /* =========================================
  * 2) Estado Global
  * =======================================*/
-// Moeda global da aplicação
 let LION_CURRENCY = 'BRL'; // 'BRL' | 'USD'
+let GLOBAL_QUICK_FILTER = ''; // aplicado em filterModel._global.filter
 
-// 🔍 QUICK FILTER global (vai em filterModel._global.filter)
-let GLOBAL_QUICK_FILTER = ''; // alimentado pelo #quickFilter
-
-/**
- * Altera a moeda da aplicação em runtime.
- * @param {'USD'|'BRL'} mode
- */
 function setLionCurrency(mode) {
 	const m = String(mode || '').toUpperCase();
 	if (m === 'USD' || m === 'BRL') LION_CURRENCY = m;
@@ -69,30 +61,13 @@ function getAppCurrency() {
 }
 
 /* =========================================
- * 3) Utilidades (tempo/edição/parsing)
+ * 3) Utilidades
  * =======================================*/
-/**
- * Sleep async
- * @param {number} ms
- */
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-/**
- * Garante spinner mínimo num fluxo async.
- * @param {number} startMs performance.now() no início
- * @param {number} minMs   ms mínimo de spinner
- */
 async function withMinSpinner(startMs, minMs) {
 	const elapsed = performance.now() - startMs;
 	if (elapsed < minMs) await sleep(minMs - elapsed);
 }
-
-/**
- * Parser tolerante a BRL/USD (string → number)
- * @param {string|number|null} value
- * @param {'USD'|'BRL'} [mode]
- * @returns {number|null}
- */
 function parseCurrencyFlexible(value, mode = getAppCurrency()) {
 	if (value == null || value === '') return null;
 	if (typeof value === 'number') return Number.isFinite(value) ? value : null;
@@ -115,12 +90,6 @@ function parseCurrencyFlexible(value, mode = getAppCurrency()) {
 	const n = parseFloat(normalized);
 	return Number.isFinite(n) ? n : null;
 }
-
-/**
- * Marca que o próximo setDataValue para a célula NÃO deve disparar onCellValueChanged.
- * @param {*} p params do AG Grid
- * @param {string} colId
- */
 function shouldSuppressCellChange(p, colId) {
 	const key = `__suppress_${colId}`;
 	if (p?.data?.[key]) {
@@ -129,13 +98,6 @@ function shouldSuppressCellChange(p, colId) {
 	}
 	return false;
 }
-
-/**
- * Faz update de célula sem disparar handlers de edição.
- * @param {*} p params do AG Grid
- * @param {string} colId
- * @param {*} value
- */
 function setCellSilently(p, colId, value) {
 	const key = `__suppress_${colId}`;
 	if (p?.data) p.data[key] = true;
@@ -143,13 +105,8 @@ function setCellSilently(p, colId, value) {
 }
 
 /* =========================================
- * 4) Toast (fallback console)
+ * 4) Toast
  * =======================================*/
-/**
- * Toast simples (Toastify)
- * @param {string} msg
- * @param {'info'|'success'|'warning'|'danger'} [type]
- */
 function showToast(msg, type = 'info') {
 	const colors = {
 		info: 'linear-gradient(90deg,#06b6d4,#3b82f6)',
@@ -173,7 +130,7 @@ function showToast(msg, type = 'info') {
 }
 
 /* =========================================
- * 5) CSS de Loading (injeção automática)
+ * 5) CSS de Loading
  * =======================================*/
 (function ensureLoadingStyles() {
 	if (document.getElementById('lion-loading-styles')) return;
@@ -199,11 +156,9 @@ function showToast(msg, type = 'info') {
 /* =========================================
  * 6) AG Grid: acesso + licença
  * =======================================*/
-/** Obtém objeto global do AG Grid (UMD). */
 function getAgGrid() {
 	const AG = globalThis.agGrid;
-	if (!AG)
-		throw new Error('AG Grid UMD não carregado. Verifique a ORDEM dos scripts e o path do CDN.');
+	if (!AG) throw new Error('AG Grid UMD não carregado. Verifique ordem dos scripts/CDN.');
 	return AG;
 }
 (function applyAgGridLicense() {
@@ -216,8 +171,79 @@ function getAgGrid() {
 })();
 
 /* =========================================
- * 7) Helpers/Formatters (HTML/numérico/moedas, badges)
+ * 7) Helpers/Formatters
  * =======================================*/
+/* =========================================
+ * 20.5) Totais no cliente (dataset inteiro)
+ * =======================================*/
+function numBR(x) {
+	// tenta BR -> number; se falhar, tenta parser flexível (BRL/USD)
+	const n1 = toNumberBR(x);
+	if (n1 != null) return n1;
+	const n2 = parseCurrencyFlexible(x, getAppCurrency());
+	return Number.isFinite(n2) ? n2 : null;
+}
+function sumNum(arr, pick) {
+	let acc = 0;
+	for (let i = 0; i < arr.length; i++) {
+		const v = pick(arr[i]);
+		if (Number.isFinite(v)) acc += v;
+	}
+	return acc;
+}
+function safeDiv(num, den) {
+	return den > 0 ? num / den : 0;
+}
+function computeClientTotals(rows) {
+	// rows = dataset inteiro já filtrado/ordenado vindo do back
+	// preferimos campos numéricos separados; se não tiver, caímos pro "revenue" string
+	const spent_sum = sumNum(rows, (r) => numBR(r.spent));
+	const fb_revenue_sum = sumNum(rows, (r) => numBR(r.fb_revenue));
+	const push_revenue_sum = sumNum(rows, (r) => numBR(r.push_revenue));
+
+	// revenue: se não veio separado, tenta somar via r.revenue (string) com parser flexível
+	const revenue_sum =
+		(Number.isFinite(fb_revenue_sum) ? fb_revenue_sum : 0) +
+			(Number.isFinite(push_revenue_sum) ? push_revenue_sum : 0) ||
+		sumNum(rows, (r) => numBR(r.revenue));
+
+	const impressions_sum = sumNum(rows, (r) => numBR(r.impressions));
+	const clicks_sum = sumNum(rows, (r) => numBR(r.clicks));
+	const visitors_sum = sumNum(rows, (r) => numBR(r.visitors));
+	const conversions_sum = sumNum(rows, (r) => numBR(r.conversions));
+	const real_conversions_sum = sumNum(rows, (r) => numBR(r.real_conversions));
+	const profit_sum = sumNum(rows, (r) => numBR(r.profit));
+	const budget_sum = sumNum(rows, (r) => numBR(r.budget));
+
+	// métricas derivadas
+	const cpc_total = safeDiv(spent_sum, clicks_sum);
+	const cpa_fb_total = safeDiv(spent_sum, conversions_sum);
+	const real_cpa_total = safeDiv(spent_sum, real_conversions_sum);
+	const ctr_total = safeDiv(clicks_sum, impressions_sum);
+	const epc_total = safeDiv(revenue_sum, clicks_sum);
+	const mx_total = safeDiv(revenue_sum, spent_sum);
+
+	return {
+		impressions_sum,
+		clicks_sum,
+		visitors_sum,
+		conversions_sum,
+		real_conversions_sum,
+		spent_sum,
+		fb_revenue_sum,
+		push_revenue_sum,
+		revenue_sum,
+		profit_sum,
+		budget_sum,
+		cpc_total,
+		cpa_fb_total,
+		real_cpa_total,
+		ctr_total,
+		epc_total,
+		mx_total,
+	};
+}
+
 const stripHtml = (s) =>
 	typeof s === 'string'
 		? s
@@ -243,10 +269,8 @@ const toNumberBR = (s) => {
 	return Number.isFinite(n) ? n : null;
 };
 
-const brlFmt = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 const intFmt = new Intl.NumberFormat('pt-BR');
 
-/** Formatter de moeda dinâmico (BRL/USD) para AG Grid. */
 function currencyFormatter(p) {
 	const currency = getAppCurrency();
 	const locale = currency === 'USD' ? 'en-US' : 'pt-BR';
@@ -259,7 +283,6 @@ const intFormatter = (p) => {
 	return n == null ? p.value ?? '' : intFmt.format(Math.round(n));
 };
 
-/** Cores fallback para badges (sem tailwind). */
 const FALLBACK_STYLE = {
 	success: { bg: '#22c55e', fg: '#ffffff' },
 	primary: { bg: '#3b82f6', fg: '#ffffff' },
@@ -293,31 +316,18 @@ function pickStatusColor(raw) {
 		.toLowerCase();
 	return s === 'active' ? 'success' : 'secondary';
 }
-function isPinnedOrTotal(params) {
+function isPinnedOrTotal(p) {
 	return (
-		params?.node?.rowPinned === 'bottom' ||
-		params?.node?.rowPinned === 'top' ||
-		params?.data?.__nodeType === 'total' ||
-		params?.node?.group === true
+		p?.node?.rowPinned === 'bottom' ||
+		p?.node?.rowPinned === 'top' ||
+		p?.data?.__nodeType === 'total' ||
+		p?.node?.group === true
 	);
 }
 
 /* =========================================
  * 8) Utils de status/loading por célula
  * =======================================*/
-function isStatusActiveVal(v) {
-	return String(v ?? '').toUpperCase() === 'ACTIVE';
-}
-function getRowStatusValue(p) {
-	return p?.data?.campaign_status ?? p?.data?.status ?? p?.value ?? '';
-}
-function setRowStatus(data, on) {
-	const next = on ? 'ACTIVE' : 'PAUSED';
-	if (data) {
-		if ('campaign_status' in data) data.campaign_status = next;
-		if ('status' in data) data.status = next;
-	}
-}
 function setCellLoading(node, colId, on) {
 	if (!node?.data) return;
 	node.data.__loading = node.data.__loading || {};
@@ -330,7 +340,6 @@ function isCellLoading(p, colId) {
 /* =========================================
  * 9) Renderers
  * =======================================*/
-/** Renderer de status (Account Status) em forma de 'pill'. */
 function statusPillRenderer(p) {
 	const raw = p.value ?? '';
 	if (isPinnedOrTotal(p) || !raw) {
@@ -356,7 +365,6 @@ function statusPillRenderer(p) {
 	return renderBadgeNode(labelUp, color);
 }
 
-/** Badge "X/Y" com cor baseada na fração. */
 function pickChipColorFromFraction(value) {
 	const txt = stripHtml(value ?? '').trim();
 	const m = txt.match(/^(\d+)\s*\/\s*(\d+)$/);
@@ -382,7 +390,6 @@ function chipFractionBadgeRenderer(p) {
 	return host.firstElementChild;
 }
 
-/** Renderer do nome do perfil (2 linhas: nome / meta). */
 function profileCellRenderer(params) {
 	const raw = String(params?.value ?? '').trim();
 	if (!raw) return '';
@@ -408,7 +415,6 @@ function profileCellRenderer(params) {
 	return wrap;
 }
 
-/** Renderer de Revenue (total + partes A/B). */
 const REVENUE_LABELS = ['A', 'B'];
 function parseRevenue(raw) {
 	const txt = stripHtml(raw ?? '').trim();
@@ -447,7 +453,7 @@ function revenueCellRenderer(p) {
 	return wrap;
 }
 
-/* ======= Campaign Status Slider Renderer ======= */
+/* ======= Status slider (flat) ======= */
 function StatusSliderRenderer() {}
 const LionStatusMenu = (() => {
 	let el = null,
@@ -505,14 +511,13 @@ StatusSliderRenderer.prototype.init = function (p) {
 	const cfg = p.colDef?.cellRendererParams || {};
 	const interactive = new Set(Array.isArray(cfg.interactiveLevels) ? cfg.interactiveLevels : [0]);
 	const smallKnob = !!cfg.smallKnob;
-	const level = 0; // Infinite (flat): tudo nível 0
-	const colId = p.column.getColId();
 
+	const colId = p.column.getColId();
 	const getVal = () =>
 		String(p.data?.campaign_status ?? p.data?.status ?? p.value ?? '').toUpperCase();
 	const isOnVal = () => getVal() === 'ACTIVE';
 
-	if (isPinnedOrTotal(p) || !interactive.has(level)) {
+	if (isPinnedOrTotal(p) || !interactive.has(0)) {
 		this.eGui = document.createElement('span');
 		this.eGui.textContent = strongText(String(p.value ?? ''));
 		return;
@@ -522,7 +527,6 @@ StatusSliderRenderer.prototype.init = function (p) {
 	root.className = 'ag-status-pill';
 	root.setAttribute('role', 'switch');
 	root.setAttribute('tabindex', '0');
-
 	const fill = document.createElement('div');
 	fill.className = 'ag-status-fill';
 	const knob = document.createElement('div');
@@ -533,8 +537,8 @@ StatusSliderRenderer.prototype.init = function (p) {
 	root.append(fill, label, knob);
 	this.eGui = root;
 
-	let trackLenPx = 0;
-	let rafToken = null;
+	let trackLenPx = 0,
+		rafToken = null;
 	const computeTrackLen = () => {
 		const pad = parseFloat(getComputedStyle(root).paddingLeft || '0');
 		const knobW = knob.clientWidth || 0;
@@ -569,11 +573,9 @@ StatusSliderRenderer.prototype.init = function (p) {
 				? 'ACTIVE'
 				: 'PAUSED';
 
-		// Flat: só campanha
+		const scope = 'campaign';
 		const id = String(p.data?.id ?? p.data?.utm_campaign ?? '');
 		if (!id) return;
-
-		const scope = 'campaign';
 
 		setCellBusy(true);
 		try {
@@ -588,8 +590,6 @@ StatusSliderRenderer.prototype.init = function (p) {
 				p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
 				return;
 			}
-
-			// otimista no grid
 			if (p.data) {
 				if ('campaign_status' in p.data) p.data.campaign_status = nextVal;
 				if ('status' in p.data) p.data.status = nextVal;
@@ -599,10 +599,8 @@ StatusSliderRenderer.prototype.init = function (p) {
 
 			try {
 				await updateCampaignStatusBackend(id, nextVal);
-				if (this._userInteracted) {
-					const msg = nextVal === 'ACTIVE' ? 'Campanha ativada' : 'Campanha pausada';
-					showToast(msg, 'success');
-				}
+				if (this._userInteracted)
+					showToast(nextVal === 'ACTIVE' ? 'Campanha ativada' : 'Campanha pausada', 'success');
 			} catch (e) {
 				const rollbackVal = prevOn ? 'ACTIVE' : 'PAUSED';
 				if (p.data) {
@@ -693,7 +691,16 @@ StatusSliderRenderer.prototype.init = function (p) {
 			openMenu();
 		}
 	});
-
+	root.addEventListener('dblclick', (e) => {
+		e.preventDefault();
+		e.stopPropagation();
+		if (isCellLoading({ data: p.node?.data }, colId)) return;
+		const cur = getVal();
+		const prevOn = cur === 'ACTIVE';
+		const next = prevOn ? 'PAUSED' : 'ACTIVE';
+		this._userInteracted = true;
+		commit(next, prevOn);
+	});
 	const openMenu = () => {
 		if (isCellLoading({ data: p.node?.data }, colId)) return;
 		const cur = getVal();
@@ -724,8 +731,7 @@ StatusSliderRenderer.prototype.getGui = function () {
 StatusSliderRenderer.prototype.refresh = function (p) {
 	const cfg = p.colDef?.cellRendererParams || {};
 	const interactive = new Set(Array.isArray(cfg.interactiveLevels) ? cfg.interactiveLevels : [0]);
-	const level = 0;
-	if (!this.eGui || isPinnedOrTotal(p) || !interactive.has(level)) return false;
+	if (!this.eGui || isPinnedOrTotal(p) || !interactive.has(0)) return false;
 
 	const raw = String(p.data?.campaign_status ?? p.data?.status ?? p.value ?? '').toUpperCase();
 	const isOn = raw === 'ACTIVE';
@@ -757,10 +763,8 @@ StatusSliderRenderer.prototype.destroy = function () {
 };
 
 /* =========================================
- * 10) Backend API (update*, fetchJSON, toggleFeature)
+ * 10) Backend API
  * =======================================*/
-// (observação: mantidos nomes/assinaturas originais)
-
 async function updateAdStatusBackend(id, status) {
 	const t0 = performance.now();
 	if (DEV_FAKE_NETWORK_LATENCY_MS > 0) await sleep(DEV_FAKE_NETWORK_LATENCY_MS);
@@ -775,7 +779,6 @@ async function updateAdStatusBackend(id, status) {
 	await withMinSpinner(t0, MIN_SPINNER_MS);
 	return data;
 }
-
 async function updateAdsetStatusBackend(id, status) {
 	const t0 = performance.now();
 	if (DEV_FAKE_NETWORK_LATENCY_MS > 0) await sleep(DEV_FAKE_NETWORK_LATENCY_MS);
@@ -832,8 +835,6 @@ async function updateCampaignBidBackend(id, bidNumber) {
 	await withMinSpinner(t0, MIN_SPINNER_MS);
 	return data;
 }
-
-/** GET/POST JSON com tratamento de erro comum. */
 async function fetchJSON(url, opts) {
 	const res = await fetch(url, {
 		headers: { 'Content-Type': 'application/json' },
@@ -849,8 +850,6 @@ async function fetchJSON(url, opts) {
 	if (!res.ok) throw new Error(data?.error || res.statusText || 'Request failed');
 	return data;
 }
-
-/** Toggle fake de feature para modo DEV/teste. */
 async function toggleFeature(feature, value) {
 	const res = await fetch('/api/dev/test-toggle/', {
 		method: 'POST',
@@ -863,13 +862,12 @@ async function toggleFeature(feature, value) {
 		showToast(data.message || 'Aplicado', 'success');
 		return true;
 	}
-	const msg = data?.error || `Erro (${res.status})`;
-	showToast(msg, 'danger');
+	showToast(data?.error || `Erro (${res.status})`, 'danger');
 	return false;
 }
 
 /* =========================================
- * 11) Modal simples (KTUI-like)
+ * 11) Modal simples
  * =======================================*/
 function ensureKtModalDom() {
 	if (document.getElementById('lionKtModal')) return;
@@ -920,7 +918,7 @@ function showKTModal({ title = 'Detalhes', content = '' } = {}) {
 }
 
 /* =========================================
- * 12) Tema (AG Grid Quartz)
+ * 12) Tema
  * =======================================*/
 function createAgTheme() {
 	const AG = getAgGrid();
@@ -944,7 +942,7 @@ function createAgTheme() {
 const LION_CENTER_EXCLUDES = new Set(['profile_name']);
 
 /* =========================================
- * 13) Colunas (defaultColDef, defs)
+ * 13) Colunas
  * =======================================*/
 const defaultColDef = {
 	sortable: true,
@@ -962,12 +960,285 @@ const defaultColDef = {
 function parseCurrencyInput(params) {
 	return parseCurrencyFlexible(params.newValue, getAppCurrency());
 }
-function isPinnedOrGroup(params) {
-	return params?.node?.rowPinned || params?.node?.group;
-}
 
-/* ======= ColumnDefs ======= */
+// Coluna de seleção (compat infinita)
+const selectionCol = {
+	headerName: '',
+	colId: 'ag-Grid-SelectionColumn',
+	checkboxSelection: true,
+	headerCheckboxSelection: true,
+	width: 36,
+	maxWidth: 48,
+	pinned: 'left',
+	sortable: false,
+	filter: false,
+	resizable: false,
+	suppressHeaderMenuButton: true,
+	suppressHeaderFilterButton: true,
+};
+
+// Campaign (explicita — substitui autoGroup)
+const campaignColumn = {
+	headerName: 'Campaign',
+	field: '__label',
+	colId: 'campaign',
+	filter: 'agTextColumnFilter',
+	floatingFilter: true,
+	sortable: true,
+	wrapText: true,
+	autoHeight: false,
+	minWidth: 270,
+	pinned: 'left',
+	cellClass: () => 'camp-root',
+	tooltipValueGetter: (p) => {
+		const d = p.data || {};
+		const name = d.__label || '';
+		const utm = d.utm_campaign || '';
+		return utm ? `${name} — ${utm}` : name;
+	},
+	valueGetter: (p) => {
+		const d = p.data || {};
+		const name = d.__label || '';
+		const utm = d.utm_campaign || '';
+		return (name + ' ' + utm).trim();
+	},
+	cellRenderer: (p) => {
+		const d = p.data || {};
+		const label = d.__label || '';
+		const utm = d.utm_campaign || '';
+		if (!label && !utm) return '';
+		const wrap = document.createElement('span');
+		wrap.style.display = 'inline-flex';
+		wrap.style.flexDirection = 'column';
+		wrap.style.lineHeight = '1.25';
+		const l1 = document.createElement('span');
+		l1.textContent = label || '';
+		l1.style.fontWeight = '600';
+		wrap.appendChild(l1);
+		if (utm) {
+			const l2 = document.createElement('span');
+			l2.textContent = utm;
+			l2.style.fontSize = '9px';
+			l2.style.opacity = '0.75';
+			l2.style.letterSpacing = '0.2px';
+			wrap.appendChild(l2);
+		}
+		return wrap;
+	},
+};
+
+// Floating Filters de status (iguais aos originais)
+function CampaignStatusFloatingFilter() {}
+CampaignStatusFloatingFilter.prototype.init = function (params) {
+	this.params = params;
+	const wrap = document.createElement('div');
+	wrap.style.display = 'flex';
+	wrap.style.alignItems = 'center';
+	wrap.style.height = '100%';
+	wrap.style.padding = '0 6px';
+
+	const sel = document.createElement('select');
+	sel.className = 'ag-input-field-input ag-text-field-input lion-ff-select--inputlike';
+	sel.style.width = '100%';
+	sel.style.height = '28px';
+	sel.style.fontSize = '12px';
+	sel.style.padding = '2px 8px';
+	sel.style.boxSizing = 'border-box';
+
+	[
+		['', 'ALL'],
+		['ACTIVE', 'ACTIVE'],
+		['PAUSED', 'PAUSED'],
+	].forEach(([v, t]) => {
+		const o = document.createElement('option');
+		o.value = v;
+		o.textContent = t;
+		sel.appendChild(o);
+	});
+
+	const applyFromModel = (model) => {
+		if (!model) {
+			sel.value = '';
+			return;
+		}
+		const v = String(model.filter ?? '').toUpperCase();
+		sel.value = v === 'ACTIVE' || v === 'PAUSED' ? v : '';
+	};
+	applyFromModel(params.parentModel);
+
+	const applyTextEquals = (val) => {
+		params.parentFilterInstance((parent) => {
+			if (!val) parent.setModel(null);
+			else parent.setModel({ filterType: 'text', type: 'equals', filter: val });
+			if (typeof parent.onBtApply === 'function') parent.onBtApply();
+			params.api.onFilterChanged();
+		});
+	};
+	sel.addEventListener('change', () => {
+		const v = sel.value ? String(sel.value).toUpperCase() : '';
+		applyTextEquals(v);
+	});
+
+	wrap.appendChild(sel);
+	this.eGui = wrap;
+	this.sel = sel;
+};
+CampaignStatusFloatingFilter.prototype.getGui = function () {
+	return this.eGui;
+};
+CampaignStatusFloatingFilter.prototype.onParentModelChanged = function (parentModel) {
+	if (!this.sel) return;
+	if (!parentModel) {
+		this.sel.value = '';
+		return;
+	}
+	const v = String(parentModel.filter ?? '').toUpperCase();
+	this.sel.value = v === 'ACTIVE' || v === 'PAUSED' ? v : '';
+};
+
+function AccountStatusFloatingFilter() {}
+AccountStatusFloatingFilter.prototype.init = function (params) {
+	this.params = params;
+	const wrap = document.createElement('div');
+	wrap.style.display = 'flex';
+	wrap.style.alignItems = 'center';
+	wrap.style.height = '100%';
+	wrap.style.padding = '0 6px';
+
+	const sel = document.createElement('select');
+	sel.className = 'ag-input-field-input ag-text-field-input lion-ff-select--inputlike';
+	sel.style.width = '100%';
+	sel.style.height = '28px';
+	sel.style.fontSize = '12px';
+	sel.style.padding = '2px 8px';
+	sel.style.boxSizing = 'border-box';
+
+	[
+		['', 'ALL'],
+		['ACTIVE', 'ACTIVE'],
+		['INATIVA PAGAMENTO', 'INATIVA PAGAMENTO'],
+	].forEach(([v, t]) => {
+		const o = document.createElement('option');
+		o.value = v;
+		o.textContent = t;
+		sel.appendChild(o);
+	});
+
+	const applyFromModel = (model) => {
+		if (!model) {
+			sel.value = '';
+			return;
+		}
+		const v = String(model.filter ?? '').toUpperCase();
+		sel.value = v === 'ACTIVE' || v === 'INATIVA PAGAMENTO' ? v : '';
+	};
+	applyFromModel(params.parentModel);
+
+	const applyTextEquals = (val) => {
+		params.parentFilterInstance((parent) => {
+			if (!val) parent.setModel(null);
+			else parent.setModel({ filterType: 'text', type: 'equals', filter: val });
+			if (typeof parent.onBtApply === 'function') parent.onBtApply();
+			params.api.onFilterChanged();
+		});
+	};
+	sel.addEventListener('change', () => {
+		const v = sel.value ? String(sel.value).toUpperCase() : '';
+		applyTextEquals(v);
+	});
+
+	wrap.appendChild(sel);
+	this.eGui = wrap;
+	this.sel = sel;
+};
+AccountStatusFloatingFilter.prototype.getGui = function () {
+	return this.eGui;
+};
+AccountStatusFloatingFilter.prototype.onParentModelChanged = function (parentModel) {
+	if (!this.sel) return;
+	if (!parentModel) {
+		this.sel.value = '';
+		return;
+	}
+	const v = String(parentModel.filter ?? '').toUpperCase();
+	this.sel.value = v === 'ACTIVE' || v === 'INATIVA PAGAMENTO' ? v : '';
+};
+
+// Editor de moeda
+function CurrencyMaskEditor() {}
+CurrencyMaskEditor.prototype.init = function (params) {
+	this.params = params;
+	const startNumber =
+		typeof params.value === 'number'
+			? params.value
+			: parseCurrencyFlexible(params.value, getAppCurrency());
+
+	this.input = document.createElement('input');
+	this.input.type = 'text';
+	this.input.className = 'ag-input-field-input ag-text-field-input';
+	this.input.style.width = '100%';
+	this.input.style.height = '100%';
+	this.input.style.boxSizing = 'border-box';
+	this.input.style.padding = '2px 6px';
+	this.input.autocomplete = 'off';
+	this.input.inputMode = 'numeric';
+
+	const fmt = (n) =>
+		n == null || !Number.isFinite(n)
+			? ''
+			: new Intl.NumberFormat('pt-BR', {
+					minimumFractionDigits: 2,
+					maximumFractionDigits: 2,
+			  }).format(n);
+
+	const asNumberFromDigits = (digits) => {
+		if (!digits) return null;
+		const intCents = parseInt(digits, 10);
+		if (!Number.isFinite(intCents)) return null;
+		return intCents / 100;
+	};
+
+	const formatFromRawInput = () => {
+		const raw = (this.input.value || '').replace(/\D+/g, '');
+		const n = asNumberFromDigits(raw);
+		this.input.value = n == null ? '' : fmt(n);
+	};
+
+	this.input.value = fmt(startNumber);
+
+	this.onInput = () => {
+		formatFromRawInput();
+		this.input.setSelectionRange(this.input.value.length, this.input.value.length);
+	};
+	this.input.addEventListener('input', this.onInput);
+
+	this.onKeyDown = (e) => {
+		if (e.key === 'Escape') this.input.value = fmt(startNumber);
+	};
+	this.input.addEventListener('keydown', this.onKeyDown);
+};
+CurrencyMaskEditor.prototype.getGui = function () {
+	return this.input;
+};
+CurrencyMaskEditor.prototype.afterGuiAttached = function () {
+	this.input.focus();
+	this.input.select();
+};
+CurrencyMaskEditor.prototype.getValue = function () {
+	return this.input.value;
+};
+CurrencyMaskEditor.prototype.destroy = function () {
+	this.input?.removeEventListener?.('input', this.onInput);
+	this.input?.removeEventListener?.('keydown', this.onKeyDown);
+};
+CurrencyMaskEditor.prototype.isPopup = function () {
+	return false;
+};
+
 const columnDefs = [
+	selectionCol,
+	campaignColumn,
+
 	{
 		headerName: 'Profile',
 		field: 'profile_name',
@@ -992,7 +1263,7 @@ const columnDefs = [
 				flex: 1.0,
 				autoHeight: true,
 				wrapText: true,
-				cellStyle: (p) => (p?.node?.rowPinned ? null : { fontSize: '13px', lineHeight: '1.6' }),
+				cellStyle: () => ({ fontSize: '13px', lineHeight: '1.6' }),
 				tooltipValueGetter: (p) => p.value || '',
 			},
 			{
@@ -1003,7 +1274,7 @@ const columnDefs = [
 				autoHeight: true,
 				flex: 1.3,
 				wrapText: true,
-				cellStyle: (p) => (p?.node?.rowPinned ? null : { fontSize: '13px', lineHeight: '1.6' }),
+				cellStyle: () => ({ fontSize: '13px', lineHeight: '1.6' }),
 				tooltipValueGetter: (p) => p.value || '',
 			},
 		],
@@ -1017,9 +1288,13 @@ const columnDefs = [
 			{
 				headerName: 'Account Status',
 				field: 'account_status',
-				minWidth: 95,
+				minWidth: 110,
 				flex: 0.7,
 				cellRenderer: statusPillRenderer,
+				filter: 'agTextColumnFilter',
+				floatingFilter: true,
+				floatingFilterComponent: AccountStatusFloatingFilter,
+				floatingFilterComponentParams: { suppressFilterButton: true },
 			},
 			{
 				headerName: 'Daily Limit',
@@ -1033,18 +1308,22 @@ const columnDefs = [
 				headerName: 'Campaign Status',
 				field: 'campaign_status',
 				cellClass: ['lion-center-cell'],
-				minWidth: 105,
+				minWidth: 115,
 				flex: 0.8,
 				cellRenderer: StatusSliderRenderer,
 				cellRendererParams: { interactiveLevels: [0], smallKnob: true },
 				suppressKeyboardEvent: () => true,
 				cellClassRules: { 'ag-cell-loading': (p) => isCellLoading(p, 'campaign_status') },
+				filter: 'agTextColumnFilter',
+				floatingFilter: true,
+				floatingFilterComponent: CampaignStatusFloatingFilter,
+				floatingFilterComponentParams: { suppressFilterButton: true },
 			},
 			{
 				headerName: 'Budget',
 				field: 'budget',
 				editable: (p) => !isCellLoading(p, 'budget'),
-				cellEditor: 'agNumberCellEditor',
+				cellEditor: CurrencyMaskEditor,
 				valueParser: parseCurrencyInput,
 				valueFormatter: currencyFormatter,
 				minWidth: 100,
@@ -1090,7 +1369,7 @@ const columnDefs = [
 				headerName: 'Bid',
 				field: 'bid',
 				editable: (p) => !isCellLoading(p, 'bid'),
-				cellEditor: 'agNumberCellEditor',
+				cellEditor: CurrencyMaskEditor,
 				valueParser: parseCurrencyInput,
 				valueFormatter: currencyFormatter,
 				minWidth: 70,
@@ -1277,7 +1556,7 @@ const columnDefs = [
 /* =========================================
  * 14) Refresh compat (Infinite)
  * =======================================*/
-function refreshSSRM(api) {
+function refreshData(api) {
 	if (!api) return;
 	if (typeof api.purgeInfiniteCache === 'function') {
 		api.purgeInfiniteCache();
@@ -1287,7 +1566,7 @@ function refreshSSRM(api) {
 }
 
 /* =========================================
- * 15) Global Quick Filter (IIFE)
+ * 15) Global Quick Filter
  * =======================================*/
 (function setupGlobalQuickFilter() {
 	function focusQuickFilter() {
@@ -1296,21 +1575,18 @@ function refreshSSRM(api) {
 		input.focus();
 		input.select?.();
 	}
-
 	function applyGlobalFilter(val) {
 		GLOBAL_QUICK_FILTER = String(val || '');
 		const api = globalThis.LionGrid?.api;
 		if (!api) return;
-		refreshSSRM(api);
+		refreshData(api);
 	}
-
 	function init() {
 		const input = document.getElementById('quickFilter');
 		if (!input) return;
 		try {
 			input.setAttribute('accesskey', 'k');
 		} catch {}
-
 		let t = null;
 		input.addEventListener('input', () => {
 			clearTimeout(t);
@@ -1318,8 +1594,6 @@ function refreshSSRM(api) {
 		});
 		if (input.value) applyGlobalFilter(input.value.trim());
 	}
-
-	// Global hotkeys: Meta+K e Ctrl+K
 	window.addEventListener(
 		'keydown',
 		(e) => {
@@ -1327,22 +1601,14 @@ function refreshSSRM(api) {
 			const editable =
 				tag === 'input' || tag === 'textarea' || (e.target && e.target.isContentEditable);
 			if (editable) return;
-
 			const key = String(e.key || '').toLowerCase();
-			if (e.ctrlKey && !e.shiftKey && !e.altKey && key === 'k') {
+			if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && key === 'k') {
 				e.preventDefault();
 				focusQuickFilter();
-				return;
-			}
-			if (e.metaKey && !e.shiftKey && !e.altKey && key === 'k') {
-				e.preventDefault();
-				focusQuickFilter();
-				return;
 			}
 		},
 		{ capture: true }
 	);
-
 	globalThis.addEventListener('lionGridReady', init);
 })();
 
@@ -1378,9 +1644,8 @@ function applySavedStateIfAny(api) {
 }
 
 /* =========================================
- * 17) Toggle de colunas pinadas
+ * 17) Toggle colunas pinadas
  * =======================================*/
-/** Tenta descobrir a coluna de seleção (checkbox) corrente. */
 function getSelectionColId(api) {
 	try {
 		const cols = api.getColumns() || [];
@@ -1394,10 +1659,6 @@ function getSelectionColId(api) {
 		return null;
 	}
 }
-/**
- * Pin/unpin colunas úteis (lado esquerdo/direito) a partir de um checkbox.
- * @param {boolean} [silent=false]
- */
 function togglePinnedColsFromCheckbox(silent = false) {
 	const api = globalThis.LionGrid?.api;
 	if (!api) return;
@@ -1407,6 +1668,7 @@ function togglePinnedColsFromCheckbox(silent = false) {
 	const selectionColId = getSelectionColId(api);
 	const leftPins = [
 		{ colId: 'ag-Grid-SelectionColumn', pinned: checked ? 'left' : null },
+		{ colId: 'campaign', pinned: checked ? 'left' : null },
 		{ colId: 'profile_name', pinned: checked ? 'left' : null },
 	];
 	if (selectionColId) leftPins.push({ colId: selectionColId, pinned: checked ? 'left' : null });
@@ -1422,7 +1684,7 @@ function togglePinnedColsFromCheckbox(silent = false) {
 }
 
 /* =========================================
- * 18) Toolbar (state/layout + presets + tamanho colunas)
+ * 18) Toolbar
  * =======================================*/
 (function setupToolbar() {
 	const byId = (id) => document.getElementById(id);
@@ -1434,7 +1696,7 @@ function togglePinnedColsFromCheckbox(silent = false) {
 		}
 		return api;
 	}
-	const SS_KEY_STATE = GRID_STATE_KEY || 'lion.aggrid.state.v1';
+	const SS_KEY_STATE = GRID_STATE_KEY;
 	const LS_KEY_PRESETS = 'lion.aggrid.presets.v1';
 	const LS_KEY_ACTIVE_PRESET = 'lion.aggrid.activePreset.v1';
 	const PRESET_VERSION = 1;
@@ -1485,7 +1747,8 @@ function togglePinnedColsFromCheckbox(silent = false) {
 	}
 	function writePresets(obj) {
 		localStorage.setItem(LS_KEY_PRESETS, JSON.stringify(obj));
-	}
+	} // 👈 corrigido
+
 	function listPresetNames() {
 		return Object.keys(readPresets()).sort((a, b) => a.localeCompare(b, 'pt-BR'));
 	}
@@ -1599,7 +1862,7 @@ function togglePinnedColsFromCheckbox(silent = false) {
 		reader.readAsText(file, 'utf-8');
 	});
 
-	/* ===== Toggle: modo de ajuste de colunas ===== */
+	// Toggle: tamanho de colunas
 	const LS_KEY_SIZE_MODE = 'lion.aggrid.sizeMode'; // 'auto' | 'fit'
 	function applySizeMode(mode) {
 		const api = (globalThis.LionGrid || {}).api;
@@ -1636,7 +1899,6 @@ function togglePinnedColsFromCheckbox(silent = false) {
 		window.addEventListener('resize', () => applySizeMode(getSizeMode()));
 	})();
 
-	/* ========== binds (botões/menus são opcionais) ========== */
 	byId('btnResetLayout')?.addEventListener('click', resetLayout);
 	byId('presetUserSelect')?.addEventListener('change', (e) => {
 		const v = e.target.value;
@@ -1677,7 +1939,7 @@ function togglePinnedColsFromCheckbox(silent = false) {
 })();
 
 /* =========================================
- * 19) Normalizadores (flat)
+ * 19) Normalizadores (legacy)
  * =======================================*/
 function normalizeCampaignRow(r) {
 	return {
@@ -1686,6 +1948,17 @@ function normalizeCampaignRow(r) {
 		__label: stripHtml(r.campaign_name || '(sem nome)'),
 		...r,
 	};
+}
+function normalizeAdsetRow(r) {
+	return {
+		__nodeType: 'adset',
+		__groupKey: String(r.id || ''),
+		__label: stripHtml(r.name || '(adset)'),
+		...r,
+	};
+}
+function normalizeAdRow(r) {
+	return { __nodeType: 'ad', __label: stripHtml(r.name || '(ad)'), ...r };
 }
 
 /* =========================================
@@ -1712,9 +1985,24 @@ async function copyToClipboard(text) {
 		}
 	}
 }
+// helper resiliente p/ aplicar bottom row em qualquer versão do AG
+function applyPinnedBottom(api, row) {
+	try {
+		if (!api) return;
+		if (typeof api.setGridOption === 'function') {
+			api.setGridOption('pinnedBottomRowData', row ? [row] : []);
+		} else if (typeof api.setPinnedBottomRowData === 'function') {
+			api.setPinnedBottomRowData(row ? [row] : []);
+		}
+		// força repaint (alguns temas/quartz + infinite “perdem” o repaint)
+		api.refreshCells({ force: true, suppressFlash: true });
+	} catch (e) {
+		console.warn('[PinnedBottom] fail:', e);
+	}
+}
 
 /* =========================================
- * 21) Grid (Infinite Row Model)
+ * 21) Grid (Infinite)
  * =======================================*/
 function makeGrid() {
 	const AG = getAgGrid();
@@ -1731,27 +2019,19 @@ function makeGrid() {
 		headerHeight: 62,
 		context: { showToast: (msg, type) => Toastify({ text: msg }).showToast() },
 
-		/* === Infinite Row Model === */
+		// === INFINITE ===
 		rowModelType: 'infinite',
-		cacheBlockSize: 200, // tamanho do "page/chunk"
+		cacheBlockSize: 200,
 		maxConcurrentDatasourceRequests: 2,
-		infiniteInitialRowCount: 1, // placeholder mínimo
-		maxBlocksInCache: 6, // cache de blocos (pode ajustar)
+		maxBlocksInCache: 4,
+		blockLoadDebounceMillis: 0,
 
 		columnDefs: [].concat(columnDefs),
 		defaultColDef,
 
-		rowSelection: {
-			mode: 'multiRow',
-			checkboxes: { enabled: true, header: true },
-			selectionColumn: {
-				id: 'ag-Grid-SelectionColumn',
-				width: 36,
-				pinned: 'left',
-				suppressHeaderMenuButton: true,
-				suppressHeaderFilterButton: true,
-			},
-		},
+		// Seleção simples/compatível
+		rowSelection: 'multiple',
+		suppressRowClickSelection: false,
 
 		rowHeight: 60,
 		animateRows: true,
@@ -1781,6 +2061,8 @@ function makeGrid() {
 
 		onCellClicked(params) {
 			const MODAL_FIELDS = new Set([
+				'campaign',
+				'__label',
 				'profile_name',
 				'bc_name',
 				'account_name',
@@ -1791,8 +2073,9 @@ function makeGrid() {
 				'xabu_ads',
 				'xabu_adsets',
 			]);
-			const field = params.colDef?.field;
+			const field = params.colDef?.field || params.colDef?.colId;
 			if (!field || !MODAL_FIELDS.has(field)) return;
+
 			const vfmt = params.valueFormatted;
 			let display;
 			if (vfmt != null && vfmt !== '') display = String(vfmt);
@@ -1839,16 +2122,13 @@ function makeGrid() {
 		onGridReady(params) {
 			applySavedStateIfAny(params.api);
 
-			/* === Infinite Datasource === */
 			const dataSource = {
-				getRows: async (req) => {
+				getRows: async (dsParams) => {
 					try {
-						const { startRow = 0, endRow = startRow + 200, sortModel, filterModel } = req;
+						const { startRow = 0, endRow = 200, sortModel, filterModel } = dsParams;
 
-						// monta filterModel com _global.filter (quick filter)
 						const filterModelWithGlobal = buildFilterModelWithGlobal(filterModel);
 
-						// POST principal
 						let res = await fetch(ENDPOINTS.SSRM, {
 							method: 'POST',
 							headers: { 'Content-Type': 'application/json' },
@@ -1861,7 +2141,6 @@ function makeGrid() {
 							}),
 						});
 
-						// Fallback GET
 						if (!res.ok) {
 							const qs = new URLSearchParams({
 								startRow: String(startRow),
@@ -1876,8 +2155,14 @@ function makeGrid() {
 
 						const data = await res.json().catch(() => ({ rows: [], lastRow: 0 }));
 
-						// Totais → pinned bottom
-						const totals = data?.totals || {};
+						// dataset que vamos renderizar
+						const rowsRaw = data.rows || [];
+						const rows = rowsRaw.map(normalizeCampaignRow);
+
+						// === TOTAIS NO CLIENTE ===
+						const totals = computeClientTotals(rowsRaw);
+
+						// monta linha pinada usando os totais do cliente
 						const pinnedTotal = {
 							id: '__pinned_total__',
 							bc_name: 'TOTAL',
@@ -1899,7 +2184,7 @@ function makeGrid() {
 							ctr: totals.ctr_total ?? 0,
 						};
 
-						// format totals com a moeda ativa
+						// formatação amigável da linha pinada
 						const currency = getAppCurrency();
 						const locale = currency === 'USD' ? 'en-US' : 'pt-BR';
 						const nfCur = new Intl.NumberFormat(locale, { style: 'currency', currency });
@@ -1917,6 +2202,7 @@ function makeGrid() {
 							'mx',
 						])
 							pinnedTotal[k] = nfCur.format(Number(pinnedTotal[k]) || 0);
+
 						for (const k of [
 							'impressions',
 							'clicks',
@@ -1925,35 +2211,33 @@ function makeGrid() {
 							'real_conversions',
 						])
 							pinnedTotal[k] = intFmt.format(Number(pinnedTotal[k]) || 0);
+
 						if (typeof pinnedTotal.ctr === 'number')
 							pinnedTotal.ctr = (pinnedTotal.ctr * 100).toFixed(2) + '%';
 
-						try {
-							const api = params.api;
-							if (api?.setPinnedBottomRowData) api.setPinnedBottomRowData([pinnedTotal]);
-							else params.api?.setGridOption?.('pinnedBottomRowData', [pinnedTotal]);
-						} catch (e) {
-							console.warn('Erro ao aplicar pinned bottom row:', e);
-						}
+						// contagem de campanhas (fallback se lastRow não vier)
+						const totalCampaigns =
+							typeof data.lastRow === 'number' && data.lastRow >= 0
+								? data.lastRow
+								: rowsRaw.length;
 
-						const rows = (data.rows || []).map(normalizeCampaignRow);
+						pinnedTotal.__label = `CAMPAIGNS: ${intFmt.format(totalCampaigns)}`;
 
-						// successCallback(rows, lastRow)
-						req.successCallback(rows, data.lastRow ?? -1);
+						// entrega pro Infinite (render primeiro)
+						dsParams.successCallback(rows, data.lastRow ?? rows.length);
+
+						// aplica a bottom row usando API nova (com fallback) e força repaint
+						applyPinnedBottom(params.api, pinnedTotal);
 					} catch (e) {
 						console.error('[INFINITE] getRows failed:', e);
-						req.failCallback();
+						dsParams.failCallback();
 					}
 				},
 			};
 
-			// aplica datasource
-			if (typeof params.api.setDatasource === 'function') {
-				params.api.setDatasource(dataSource);
-			} else {
-				// fallback (versões antigas)
-				params.api.setGridOption?.('datasource', dataSource);
-			}
+			// pluga o datasource (API nova/antiga)
+			if (typeof params.api.setDatasource === 'function') params.api.setDatasource(dataSource);
+			else params.api.setGridOption?.('datasource', dataSource);
 
 			setTimeout(() => {
 				try {
