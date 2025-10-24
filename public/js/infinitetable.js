@@ -1,40 +1,41 @@
 /* public/js/lion-grid.js
  *
- * Lion Grid — AG Grid (Infinite Row Model)
- * ----------------------------------------
- * - Mantém API pública (globalThis.LionGrid), endpoints e renderers.
- * - Conversão de TreeData+SSRM → Infinite (flat) sem perder funcionalidades.
+ * Lion Grid — AG Grid (TreeData + SSRM)
+ * -------------------------------------
+ * - NÃO remove nada: apenas reordenação e documentação.
+ * - Mesma API pública (globalThis.LionGrid), mesmos endpoints e renderers.
+ * - Comentários JSDoc adicionados para funções-chave.
  *
  * Estrutura:
  *  1) Constantes & Config
- *  2) Estado Global
- *  3) Utilidades
+ *  2) Estado Global (moeda / quick filter)
+ *  3) Utilidades (sleep/spinner, parsing, edição silenciosa)
  *  4) Toast
- *  5) CSS de Loading
- *  6) AG Grid: acesso + licença
- *  7) Helpers/Formatters
+ *  5) CSS de Loading (IIFE)
+ *  6) AG Grid: acesso + licença (IIFE)
+ *  7) Helpers/Formatters (HTML/numérico/moedas, badges)
  *  8) Utils de status/loading por célula
- *  9) Renderers
- * 10) Backend API
- * 11) Modal simples
- * 12) Tema
- * 13) Colunas
- * 14) Refresh compat (Infinite)
- * 15) Global Quick Filter
- * 16) State (load/apply)
- * 17) Toggle colunas pinadas
- * 18) Toolbar (presets, tamanho colunas, binds)
- * 19) Normalizadores (legacy)
+ *  9) Renderers (status pill, chips, profile, revenue)
+ * 10) Backend API (update*, fetchJSON, toggleFeature)
+ * 11) Modal simples (KTUI-like)
+ * 12) Tema (createAgTheme)
+ * 13) Colunas (defaultColDef, defs)
+ * 14) SSRM refresh compat
+ * 15) Global Quick Filter (IIFE)
+ * 16) State (load/apply saved)
+ * 17) Toggle de colunas pinadas (getSelectionColId/togglePinnedColsFromCheckbox)
+ * 18) Toolbar (presets, tamanho colunas, binds) (IIFE)
+ * 19) Normalizadores (tree)
  * 20) Clipboard
- * 21) Grid (Infinite)
+ * 21) Grid (makeGrid)
  * 22) Page module (mount)
  */
 
 /* =========================================
  * 1) Constantes & Config
  * =======================================*/
-const ENDPOINTS = { SSRM: '/api/ssrm/?clean=1' };
-const DRILL_ENDPOINTS = { ADSETS: '/api/adsets/', ADS: '/api/ads/' }; // legacy (não usados no infinito)
+const ENDPOINTS = { SSRM: '/api/ssrm/?clean=1&mode=full' };
+const DRILL_ENDPOINTS = { ADSETS: '/api/adsets/', ADS: '/api/ads/' };
 const DRILL = { period: 'TODAY' };
 
 /* ========= Grid State (sessionStorage) ========= */
@@ -45,12 +46,22 @@ const GRID_STATE_IGNORE_ON_RESTORE = ['pagination', 'scroll', 'rowSelection', 'f
 const DEV_FAKE_NETWORK_LATENCY_MS = 0;
 const MIN_SPINNER_MS = 500;
 
+// === Cache local do nível 0 (campanhas) - carrega tudo de uma vez ===
+let ROOT_CACHE = null; // { rowsRaw: [], rowsNorm: [] }
+
 /* =========================================
  * 2) Estado Global
  * =======================================*/
+// Moeda global da aplicação
 let LION_CURRENCY = 'BRL'; // 'BRL' | 'USD'
-let GLOBAL_QUICK_FILTER = ''; // aplicado em filterModel._global.filter
 
+// 🔍 QUICK FILTER global (vai em filterModel._global.filter)
+let GLOBAL_QUICK_FILTER = ''; // alimentado pelo #quickFilter
+
+/**
+ * Altera a moeda da aplicação em runtime.
+ * @param {'USD'|'BRL'} mode
+ */
 function setLionCurrency(mode) {
 	const m = String(mode || '').toUpperCase();
 	if (m === 'USD' || m === 'BRL') LION_CURRENCY = m;
@@ -61,13 +72,30 @@ function getAppCurrency() {
 }
 
 /* =========================================
- * 3) Utilidades
+ * 3) Utilidades (tempo/edição/parsing)
  * =======================================*/
+/**
+ * Sleep async
+ * @param {number} ms
+ */
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Garante spinner mínimo num fluxo async.
+ * @param {number} startMs performance.now() no início
+ * @param {number} minMs   ms mínimo de spinner
+ */
 async function withMinSpinner(startMs, minMs) {
 	const elapsed = performance.now() - startMs;
 	if (elapsed < minMs) await sleep(minMs - elapsed);
 }
+
+/**
+ * Parser tolerante a BRL/USD (string → number)
+ * @param {string|number|null} value
+ * @param {'USD'|'BRL'} [mode]
+ * @returns {number|null}
+ */
 function parseCurrencyFlexible(value, mode = getAppCurrency()) {
 	if (value == null || value === '') return null;
 	if (typeof value === 'number') return Number.isFinite(value) ? value : null;
@@ -90,6 +118,12 @@ function parseCurrencyFlexible(value, mode = getAppCurrency()) {
 	const n = parseFloat(normalized);
 	return Number.isFinite(n) ? n : null;
 }
+
+/**
+ * Marca que o próximo setDataValue para a célula NÃO deve disparar onCellValueChanged.
+ * @param {*} p params do AG Grid
+ * @param {string} colId
+ */
 function shouldSuppressCellChange(p, colId) {
 	const key = `__suppress_${colId}`;
 	if (p?.data?.[key]) {
@@ -98,6 +132,13 @@ function shouldSuppressCellChange(p, colId) {
 	}
 	return false;
 }
+
+/**
+ * Faz update de célula sem disparar handlers de edição.
+ * @param {*} p params do AG Grid
+ * @param {string} colId
+ * @param {*} value
+ */
 function setCellSilently(p, colId, value) {
 	const key = `__suppress_${colId}`;
 	if (p?.data) p.data[key] = true;
@@ -105,7 +146,7 @@ function setCellSilently(p, colId, value) {
 }
 
 /* =========================================
- * 4) Toast
+ * 4) Toast (fallback console)
  * =======================================*/
 function showToast(msg, type = 'info') {
 	const colors = {
@@ -130,7 +171,7 @@ function showToast(msg, type = 'info') {
 }
 
 /* =========================================
- * 5) CSS de Loading
+ * 5) CSS de Loading (injeção automática)
  * =======================================*/
 (function ensureLoadingStyles() {
 	if (document.getElementById('lion-loading-styles')) return;
@@ -158,7 +199,8 @@ function showToast(msg, type = 'info') {
  * =======================================*/
 function getAgGrid() {
 	const AG = globalThis.agGrid;
-	if (!AG) throw new Error('AG Grid UMD não carregado. Verifique ordem dos scripts/CDN.');
+	if (!AG)
+		throw new Error('AG Grid UMD não carregado. Verifique a ORDEM dos scripts e o path do CDN.');
 	return AG;
 }
 (function applyAgGridLicense() {
@@ -171,79 +213,8 @@ function getAgGrid() {
 })();
 
 /* =========================================
- * 7) Helpers/Formatters
+ * 7) Helpers/Formatters (HTML/numérico/moedas, badges)
  * =======================================*/
-/* =========================================
- * 20.5) Totais no cliente (dataset inteiro)
- * =======================================*/
-function numBR(x) {
-	// tenta BR -> number; se falhar, tenta parser flexível (BRL/USD)
-	const n1 = toNumberBR(x);
-	if (n1 != null) return n1;
-	const n2 = parseCurrencyFlexible(x, getAppCurrency());
-	return Number.isFinite(n2) ? n2 : null;
-}
-function sumNum(arr, pick) {
-	let acc = 0;
-	for (let i = 0; i < arr.length; i++) {
-		const v = pick(arr[i]);
-		if (Number.isFinite(v)) acc += v;
-	}
-	return acc;
-}
-function safeDiv(num, den) {
-	return den > 0 ? num / den : 0;
-}
-function computeClientTotals(rows) {
-	// rows = dataset inteiro já filtrado/ordenado vindo do back
-	// preferimos campos numéricos separados; se não tiver, caímos pro "revenue" string
-	const spent_sum = sumNum(rows, (r) => numBR(r.spent));
-	const fb_revenue_sum = sumNum(rows, (r) => numBR(r.fb_revenue));
-	const push_revenue_sum = sumNum(rows, (r) => numBR(r.push_revenue));
-
-	// revenue: se não veio separado, tenta somar via r.revenue (string) com parser flexível
-	const revenue_sum =
-		(Number.isFinite(fb_revenue_sum) ? fb_revenue_sum : 0) +
-			(Number.isFinite(push_revenue_sum) ? push_revenue_sum : 0) ||
-		sumNum(rows, (r) => numBR(r.revenue));
-
-	const impressions_sum = sumNum(rows, (r) => numBR(r.impressions));
-	const clicks_sum = sumNum(rows, (r) => numBR(r.clicks));
-	const visitors_sum = sumNum(rows, (r) => numBR(r.visitors));
-	const conversions_sum = sumNum(rows, (r) => numBR(r.conversions));
-	const real_conversions_sum = sumNum(rows, (r) => numBR(r.real_conversions));
-	const profit_sum = sumNum(rows, (r) => numBR(r.profit));
-	const budget_sum = sumNum(rows, (r) => numBR(r.budget));
-
-	// métricas derivadas
-	const cpc_total = safeDiv(spent_sum, clicks_sum);
-	const cpa_fb_total = safeDiv(spent_sum, conversions_sum);
-	const real_cpa_total = safeDiv(spent_sum, real_conversions_sum);
-	const ctr_total = safeDiv(clicks_sum, impressions_sum);
-	const epc_total = safeDiv(revenue_sum, clicks_sum);
-	const mx_total = safeDiv(revenue_sum, spent_sum);
-
-	return {
-		impressions_sum,
-		clicks_sum,
-		visitors_sum,
-		conversions_sum,
-		real_conversions_sum,
-		spent_sum,
-		fb_revenue_sum,
-		push_revenue_sum,
-		revenue_sum,
-		profit_sum,
-		budget_sum,
-		cpc_total,
-		cpa_fb_total,
-		real_cpa_total,
-		ctr_total,
-		epc_total,
-		mx_total,
-	};
-}
-
 const stripHtml = (s) =>
 	typeof s === 'string'
 		? s
@@ -271,6 +242,7 @@ const toNumberBR = (s) => {
 
 const intFmt = new Intl.NumberFormat('pt-BR');
 
+/** Formatter de moeda dinâmico (BRL/USD) para AG Grid. */
 function currencyFormatter(p) {
 	const currency = getAppCurrency();
 	const locale = currency === 'USD' ? 'en-US' : 'pt-BR';
@@ -283,6 +255,7 @@ const intFormatter = (p) => {
 	return n == null ? p.value ?? '' : intFmt.format(Math.round(n));
 };
 
+/** Cores fallback para badges (sem tailwind). */
 const FALLBACK_STYLE = {
 	success: { bg: '#22c55e', fg: '#ffffff' },
 	primary: { bg: '#3b82f6', fg: '#ffffff' },
@@ -316,18 +289,91 @@ function pickStatusColor(raw) {
 		.toLowerCase();
 	return s === 'active' ? 'success' : 'secondary';
 }
-function isPinnedOrTotal(p) {
+function isPinnedOrTotal(params) {
 	return (
-		p?.node?.rowPinned === 'bottom' ||
-		p?.node?.rowPinned === 'top' ||
-		p?.data?.__nodeType === 'total' ||
-		p?.node?.group === true
+		params?.node?.rowPinned === 'bottom' ||
+		params?.node?.rowPinned === 'top' ||
+		params?.data?.__nodeType === 'total' ||
+		params?.node?.group === true
 	);
+}
+
+/* ===== Totais no CLIENTE (usados no nível 0) ===== */
+function numBR(x) {
+	const n1 = toNumberBR(x);
+	if (n1 != null) return n1;
+	const n2 = parseCurrencyFlexible(x, getAppCurrency());
+	return Number.isFinite(n2) ? n2 : null;
+}
+function sumNum(arr, pick) {
+	let acc = 0;
+	for (let i = 0; i < arr.length; i++) {
+		const v = pick(arr[i]);
+		if (Number.isFinite(v)) acc += v;
+	}
+	return acc;
+}
+function safeDiv(num, den) {
+	return den > 0 ? num / den : 0;
+}
+function computeClientTotals(rows) {
+	const spent_sum = sumNum(rows, (r) => numBR(r.spent));
+	const fb_revenue_sum = sumNum(rows, (r) => numBR(r.fb_revenue));
+	const push_revenue_sum = sumNum(rows, (r) => numBR(r.push_revenue));
+	const revenue_sum =
+		(Number.isFinite(fb_revenue_sum) ? fb_revenue_sum : 0) +
+			(Number.isFinite(push_revenue_sum) ? push_revenue_sum : 0) ||
+		sumNum(rows, (r) => numBR(r.revenue));
+	const impressions_sum = sumNum(rows, (r) => numBR(r.impressions));
+	const clicks_sum = sumNum(rows, (r) => numBR(r.clicks));
+	const visitors_sum = sumNum(rows, (r) => numBR(r.visitors));
+	const conversions_sum = sumNum(rows, (r) => numBR(r.conversions));
+	const real_conversions_sum = sumNum(rows, (r) => numBR(r.real_conversions));
+	const profit_sum = sumNum(rows, (r) => numBR(r.profit));
+	const budget_sum = sumNum(rows, (r) => numBR(r.budget));
+	const cpc_total = safeDiv(spent_sum, clicks_sum);
+	const cpa_fb_total = safeDiv(spent_sum, conversions_sum);
+	const real_cpa_total = safeDiv(spent_sum, real_conversions_sum);
+	const ctr_total = safeDiv(clicks_sum, impressions_sum);
+	const epc_total = safeDiv(revenue_sum, clicks_sum);
+	const mx_total = safeDiv(revenue_sum, spent_sum);
+	return {
+		impressions_sum,
+		clicks_sum,
+		visitors_sum,
+		conversions_sum,
+		real_conversions_sum,
+		spent_sum,
+		fb_revenue_sum,
+		push_revenue_sum,
+		revenue_sum,
+		profit_sum,
+		budget_sum,
+		cpc_total,
+		cpa_fb_total,
+		real_cpa_total,
+		ctr_total,
+		epc_total,
+		mx_total,
+	};
 }
 
 /* =========================================
  * 8) Utils de status/loading por célula
  * =======================================*/
+function isStatusActiveVal(v) {
+	return String(v ?? '').toUpperCase() === 'ACTIVE';
+}
+function getRowStatusValue(p) {
+	return p?.data?.campaign_status ?? p?.data?.status ?? p?.value ?? '';
+}
+function setRowStatus(data, on) {
+	const next = on ? 'ACTIVE' : 'PAUSED';
+	if (data) {
+		if ('campaign_status' in data) data.campaign_status = next;
+		if ('status' in data) data.status = next;
+	}
+}
 function setCellLoading(node, colId, on) {
 	if (!node?.data) return;
 	node.data.__loading = node.data.__loading || {};
@@ -453,7 +499,7 @@ function revenueCellRenderer(p) {
 	return wrap;
 }
 
-/* ======= Status slider (flat) ======= */
+/* ======= Campaign Status Slider Renderer (otimizado) ======= */
 function StatusSliderRenderer() {}
 const LionStatusMenu = (() => {
 	let el = null,
@@ -511,13 +557,14 @@ StatusSliderRenderer.prototype.init = function (p) {
 	const cfg = p.colDef?.cellRendererParams || {};
 	const interactive = new Set(Array.isArray(cfg.interactiveLevels) ? cfg.interactiveLevels : [0]);
 	const smallKnob = !!cfg.smallKnob;
-
+	const level = p?.node?.level ?? 0;
 	const colId = p.column.getColId();
+
 	const getVal = () =>
 		String(p.data?.campaign_status ?? p.data?.status ?? p.value ?? '').toUpperCase();
 	const isOnVal = () => getVal() === 'ACTIVE';
 
-	if (isPinnedOrTotal(p) || !interactive.has(0)) {
+	if (isPinnedOrTotal(p) || !interactive.has(level)) {
 		this.eGui = document.createElement('span');
 		this.eGui.textContent = strongText(String(p.value ?? ''));
 		return;
@@ -527,6 +574,7 @@ StatusSliderRenderer.prototype.init = function (p) {
 	root.className = 'ag-status-pill';
 	root.setAttribute('role', 'switch');
 	root.setAttribute('tabindex', '0');
+
 	const fill = document.createElement('div');
 	fill.className = 'ag-status-fill';
 	const knob = document.createElement('div');
@@ -573,9 +621,15 @@ StatusSliderRenderer.prototype.init = function (p) {
 				? 'ACTIVE'
 				: 'PAUSED';
 
-		const scope = 'campaign';
-		const id = String(p.data?.id ?? p.data?.utm_campaign ?? '');
+		const level = p.node?.level ?? 0;
+		const id =
+			level === 0
+				? String(p.data?.id ?? p.data?.utm_campaign ?? '')
+				: String(p.data?.id ?? '') || '';
+
 		if (!id) return;
+
+		const scope = level === 2 ? 'ad' : level === 1 ? 'adset' : 'campaign';
 
 		setCellBusy(true);
 		try {
@@ -590,6 +644,7 @@ StatusSliderRenderer.prototype.init = function (p) {
 				p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
 				return;
 			}
+
 			if (p.data) {
 				if ('campaign_status' in p.data) p.data.campaign_status = nextVal;
 				if ('status' in p.data) p.data.status = nextVal;
@@ -598,9 +653,15 @@ StatusSliderRenderer.prototype.init = function (p) {
 			p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
 
 			try {
-				await updateCampaignStatusBackend(id, nextVal);
-				if (this._userInteracted)
-					showToast(nextVal === 'ACTIVE' ? 'Campanha ativada' : 'Campanha pausada', 'success');
+				if (scope === 'ad') await updateAdStatusBackend(id, nextVal);
+				else if (scope === 'adset') await updateAdsetStatusBackend(id, nextVal);
+				else await updateCampaignStatusBackend(id, nextVal);
+
+				if (this._userInteracted) {
+					const scopeLabel = scope === 'ad' ? 'Ad' : scope === 'adset' ? 'Adset' : 'Campanha';
+					const msg = nextVal === 'ACTIVE' ? `${scopeLabel} ativado` : `${scopeLabel} pausado`;
+					showToast(msg, 'success');
+				}
 			} catch (e) {
 				const rollbackVal = prevOn ? 'ACTIVE' : 'PAUSED';
 				if (p.data) {
@@ -731,7 +792,8 @@ StatusSliderRenderer.prototype.getGui = function () {
 StatusSliderRenderer.prototype.refresh = function (p) {
 	const cfg = p.colDef?.cellRendererParams || {};
 	const interactive = new Set(Array.isArray(cfg.interactiveLevels) ? cfg.interactiveLevels : [0]);
-	if (!this.eGui || isPinnedOrTotal(p) || !interactive.has(0)) return false;
+	const level = p?.node?.level ?? 0;
+	if (!this.eGui || isPinnedOrTotal(p) || !interactive.has(level)) return false;
 
 	const raw = String(p.data?.campaign_status ?? p.data?.status ?? p.value ?? '').toUpperCase();
 	const isOn = raw === 'ACTIVE';
@@ -763,7 +825,7 @@ StatusSliderRenderer.prototype.destroy = function () {
 };
 
 /* =========================================
- * 10) Backend API
+ * 10) Backend API (update*, fetchJSON, toggleFeature)
  * =======================================*/
 async function updateAdStatusBackend(id, status) {
 	const t0 = performance.now();
@@ -862,12 +924,13 @@ async function toggleFeature(feature, value) {
 		showToast(data.message || 'Aplicado', 'success');
 		return true;
 	}
-	showToast(data?.error || `Erro (${res.status})`, 'danger');
+	const msg = data?.error || `Erro (${res.status})`;
+	showToast(msg, 'danger');
 	return false;
 }
 
 /* =========================================
- * 11) Modal simples
+ * 11) Modal simples (KTUI-like)
  * =======================================*/
 function ensureKtModalDom() {
 	if (document.getElementById('lionKtModal')) return;
@@ -918,7 +981,7 @@ function showKTModal({ title = 'Detalhes', content = '' } = {}) {
 }
 
 /* =========================================
- * 12) Tema
+ * 12) Tema (AG Grid Quartz)
  * =======================================*/
 function createAgTheme() {
 	const AG = getAgGrid();
@@ -942,7 +1005,7 @@ function createAgTheme() {
 const LION_CENTER_EXCLUDES = new Set(['profile_name']);
 
 /* =========================================
- * 13) Colunas
+ * 13) Colunas (defaultColDef, defs)
  * =======================================*/
 const defaultColDef = {
 	sortable: true,
@@ -960,74 +1023,10 @@ const defaultColDef = {
 function parseCurrencyInput(params) {
 	return parseCurrencyFlexible(params.newValue, getAppCurrency());
 }
+function isPinnedOrGroup(params) {
+	return params?.node?.rowPinned || params?.node?.group;
+}
 
-// Coluna de seleção (compat infinita)
-const selectionCol = {
-	headerName: '',
-	colId: 'ag-Grid-SelectionColumn',
-	checkboxSelection: true,
-	headerCheckboxSelection: true,
-	width: 36,
-	maxWidth: 48,
-	pinned: 'left',
-	sortable: false,
-	filter: false,
-	resizable: false,
-	suppressHeaderMenuButton: true,
-	suppressHeaderFilterButton: true,
-};
-
-// Campaign (explicita — substitui autoGroup)
-const campaignColumn = {
-	headerName: 'Campaign',
-	field: '__label',
-	colId: 'campaign',
-	filter: 'agTextColumnFilter',
-	floatingFilter: true,
-	sortable: true,
-	wrapText: true,
-	autoHeight: false,
-	minWidth: 270,
-	pinned: 'left',
-	cellClass: () => 'camp-root',
-	tooltipValueGetter: (p) => {
-		const d = p.data || {};
-		const name = d.__label || '';
-		const utm = d.utm_campaign || '';
-		return utm ? `${name} — ${utm}` : name;
-	},
-	valueGetter: (p) => {
-		const d = p.data || {};
-		const name = d.__label || '';
-		const utm = d.utm_campaign || '';
-		return (name + ' ' + utm).trim();
-	},
-	cellRenderer: (p) => {
-		const d = p.data || {};
-		const label = d.__label || '';
-		const utm = d.utm_campaign || '';
-		if (!label && !utm) return '';
-		const wrap = document.createElement('span');
-		wrap.style.display = 'inline-flex';
-		wrap.style.flexDirection = 'column';
-		wrap.style.lineHeight = '1.25';
-		const l1 = document.createElement('span');
-		l1.textContent = label || '';
-		l1.style.fontWeight = '600';
-		wrap.appendChild(l1);
-		if (utm) {
-			const l2 = document.createElement('span');
-			l2.textContent = utm;
-			l2.style.fontSize = '9px';
-			l2.style.opacity = '0.75';
-			l2.style.letterSpacing = '0.2px';
-			wrap.appendChild(l2);
-		}
-		return wrap;
-	},
-};
-
-// Floating Filters de status (iguais aos originais)
 function CampaignStatusFloatingFilter() {}
 CampaignStatusFloatingFilter.prototype.init = function (params) {
 	this.params = params;
@@ -1164,7 +1163,6 @@ AccountStatusFloatingFilter.prototype.onParentModelChanged = function (parentMod
 	this.sel.value = v === 'ACTIVE' || v === 'INATIVA PAGAMENTO' ? v : '';
 };
 
-// Editor de moeda
 function CurrencyMaskEditor() {}
 CurrencyMaskEditor.prototype.init = function (params) {
 	this.params = params;
@@ -1235,10 +1233,8 @@ CurrencyMaskEditor.prototype.isPopup = function () {
 	return false;
 };
 
+/* ======= ColumnDefs ======= */
 const columnDefs = [
-	selectionCol,
-	campaignColumn,
-
 	{
 		headerName: 'Profile',
 		field: 'profile_name',
@@ -1263,7 +1259,8 @@ const columnDefs = [
 				flex: 1.0,
 				autoHeight: true,
 				wrapText: true,
-				cellStyle: () => ({ fontSize: '13px', lineHeight: '1.6' }),
+				cellStyle: (p) =>
+					p?.node?.level === 0 ? { fontSize: '13px', lineHeight: '1.6' } : null,
 				tooltipValueGetter: (p) => p.value || '',
 			},
 			{
@@ -1274,7 +1271,8 @@ const columnDefs = [
 				autoHeight: true,
 				flex: 1.3,
 				wrapText: true,
-				cellStyle: () => ({ fontSize: '13px', lineHeight: '1.6' }),
+				cellStyle: (p) =>
+					p?.node?.level === 0 ? { fontSize: '13px', lineHeight: '1.6' } : null,
 				tooltipValueGetter: (p) => p.value || '',
 			},
 		],
@@ -1311,7 +1309,7 @@ const columnDefs = [
 				minWidth: 115,
 				flex: 0.8,
 				cellRenderer: StatusSliderRenderer,
-				cellRendererParams: { interactiveLevels: [0], smallKnob: true },
+				cellRendererParams: { interactiveLevels: [0, 1, 2], smallKnob: true },
 				suppressKeyboardEvent: () => true,
 				cellClassRules: { 'ag-cell-loading': (p) => isCellLoading(p, 'campaign_status') },
 				filter: 'agTextColumnFilter',
@@ -1322,7 +1320,7 @@ const columnDefs = [
 			{
 				headerName: 'Budget',
 				field: 'budget',
-				editable: (p) => !isCellLoading(p, 'budget'),
+				editable: (p) => p.node?.level === 0 && !isCellLoading(p, 'budget'),
 				cellEditor: CurrencyMaskEditor,
 				valueParser: parseCurrencyInput,
 				valueFormatter: currencyFormatter,
@@ -1332,6 +1330,7 @@ const columnDefs = [
 				onCellValueChanged: async (p) => {
 					try {
 						if (shouldSuppressCellChange(p, 'budget')) return;
+						if ((p?.node?.level ?? 0) !== 0) return;
 						const row = p?.data || {};
 						const id = String(row.id ?? row.utm_campaign ?? '');
 						if (!id) return;
@@ -1368,7 +1367,7 @@ const columnDefs = [
 			{
 				headerName: 'Bid',
 				field: 'bid',
-				editable: (p) => !isCellLoading(p, 'bid'),
+				editable: (p) => p.node?.level === 0 && !isCellLoading(p, 'bid'),
 				cellEditor: CurrencyMaskEditor,
 				valueParser: parseCurrencyInput,
 				valueFormatter: currencyFormatter,
@@ -1378,6 +1377,7 @@ const columnDefs = [
 				onCellValueChanged: async (p) => {
 					try {
 						if (shouldSuppressCellChange(p, 'bid')) return;
+						if ((p?.node?.level ?? 0) !== 0) return;
 						const row = p?.data || {};
 						const id = String(row.id ?? row.utm_campaign ?? '');
 						if (!id) return;
@@ -1554,19 +1554,23 @@ const columnDefs = [
 ];
 
 /* =========================================
- * 14) Refresh compat (Infinite)
+ * 14) SSRM refresh compat
  * =======================================*/
-function refreshData(api) {
+function refreshSSRM(api) {
 	if (!api) return;
-	if (typeof api.purgeInfiniteCache === 'function') {
-		api.purgeInfiniteCache();
+	if (typeof api.refreshServerSideStore === 'function') {
+		api.refreshServerSideStore({ purge: true });
+	} else if (typeof api.purgeServerSideCache === 'function') {
+		api.purgeServerSideCache();
+	} else if (typeof api.refreshServerSide === 'function') {
+		api.refreshServerSide({ purge: true });
 	} else if (typeof api.onFilterChanged === 'function') {
 		api.onFilterChanged();
 	}
 }
 
 /* =========================================
- * 15) Global Quick Filter
+ * 15) Global Quick Filter (IIFE)
  * =======================================*/
 (function setupGlobalQuickFilter() {
 	function focusQuickFilter() {
@@ -1575,12 +1579,14 @@ function refreshData(api) {
 		input.focus();
 		input.select?.();
 	}
+
 	function applyGlobalFilter(val) {
 		GLOBAL_QUICK_FILTER = String(val || '');
 		const api = globalThis.LionGrid?.api;
 		if (!api) return;
-		refreshData(api);
+		refreshSSRM(api);
 	}
+
 	function init() {
 		const input = document.getElementById('quickFilter');
 		if (!input) return;
@@ -1594,12 +1600,12 @@ function refreshData(api) {
 		});
 		if (input.value) applyGlobalFilter(input.value.trim());
 	}
+
 	window.addEventListener(
 		'keydown',
 		(e) => {
-			const tag = e.target && e.target.tagName ? e.target.tagName.toLowerCase() : '';
-			const editable =
-				tag === 'input' || tag === 'textarea' || (e.target && e.target.isContentEditable);
+			const tag = e.target?.tagName?.toLowerCase?.() || '';
+			const editable = tag === 'input' || tag === 'textarea' || e.target?.isContentEditable;
 			if (editable) return;
 			const key = String(e.key || '').toLowerCase();
 			if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && key === 'k') {
@@ -1609,6 +1615,7 @@ function refreshData(api) {
 		},
 		{ capture: true }
 	);
+
 	globalThis.addEventListener('lionGridReady', init);
 })();
 
@@ -1644,7 +1651,7 @@ function applySavedStateIfAny(api) {
 }
 
 /* =========================================
- * 17) Toggle colunas pinadas
+ * 17) Toggle de colunas pinadas
  * =======================================*/
 function getSelectionColId(api) {
 	try {
@@ -1668,7 +1675,7 @@ function togglePinnedColsFromCheckbox(silent = false) {
 	const selectionColId = getSelectionColId(api);
 	const leftPins = [
 		{ colId: 'ag-Grid-SelectionColumn', pinned: checked ? 'left' : null },
-		{ colId: 'campaign', pinned: checked ? 'left' : null },
+		{ colId: 'ag-Grid-AutoColumn', pinned: checked ? 'left' : null },
 		{ colId: 'profile_name', pinned: checked ? 'left' : null },
 	];
 	if (selectionColId) leftPins.push({ colId: selectionColId, pinned: checked ? 'left' : null });
@@ -1684,7 +1691,7 @@ function togglePinnedColsFromCheckbox(silent = false) {
 }
 
 /* =========================================
- * 18) Toolbar
+ * 18) Toolbar (state/layout + presets + tamanho colunas)
  * =======================================*/
 (function setupToolbar() {
 	const byId = (id) => document.getElementById(id);
@@ -1696,7 +1703,7 @@ function togglePinnedColsFromCheckbox(silent = false) {
 		}
 		return api;
 	}
-	const SS_KEY_STATE = GRID_STATE_KEY;
+	const SS_KEY_STATE = GRID_STATE_KEY || 'lion.aggrid.state.v1';
 	const LS_KEY_PRESETS = 'lion.aggrid.presets.v1';
 	const LS_KEY_ACTIVE_PRESET = 'lion.aggrid.activePreset.v1';
 	const PRESET_VERSION = 1;
@@ -1747,8 +1754,7 @@ function togglePinnedColsFromCheckbox(silent = false) {
 	}
 	function writePresets(obj) {
 		localStorage.setItem(LS_KEY_PRESETS, JSON.stringify(obj));
-	} // 👈 corrigido
-
+	}
 	function listPresetNames() {
 		return Object.keys(readPresets()).sort((a, b) => a.localeCompare(b, 'pt-BR'));
 	}
@@ -1862,7 +1868,6 @@ function togglePinnedColsFromCheckbox(silent = false) {
 		reader.readAsText(file, 'utf-8');
 	});
 
-	// Toggle: tamanho de colunas
 	const LS_KEY_SIZE_MODE = 'lion.aggrid.sizeMode'; // 'auto' | 'fit'
 	function applySizeMode(mode) {
 		const api = (globalThis.LionGrid || {}).api;
@@ -1871,9 +1876,7 @@ function togglePinnedColsFromCheckbox(silent = false) {
 			if (mode === 'auto') {
 				const all = api.getColumns()?.map((c) => c.getColId()) || [];
 				api.autoSizeColumns(all, false);
-			} else {
-				api.sizeColumnsToFit();
-			}
+			} else api.sizeColumnsToFit();
 		} catch {}
 	}
 	function getSizeMode() {
@@ -1939,7 +1942,7 @@ function togglePinnedColsFromCheckbox(silent = false) {
 })();
 
 /* =========================================
- * 19) Normalizadores (legacy)
+ * 19) Normalizadores (TreeData)
  * =======================================*/
 function normalizeCampaignRow(r) {
 	return {
@@ -1985,24 +1988,9 @@ async function copyToClipboard(text) {
 		}
 	}
 }
-// helper resiliente p/ aplicar bottom row em qualquer versão do AG
-function applyPinnedBottom(api, row) {
-	try {
-		if (!api) return;
-		if (typeof api.setGridOption === 'function') {
-			api.setGridOption('pinnedBottomRowData', row ? [row] : []);
-		} else if (typeof api.setPinnedBottomRowData === 'function') {
-			api.setPinnedBottomRowData(row ? [row] : []);
-		}
-		// força repaint (alguns temas/quartz + infinite “perdem” o repaint)
-		api.refreshCells({ force: true, suppressFlash: true });
-	} catch (e) {
-		console.warn('[PinnedBottom] fail:', e);
-	}
-}
 
 /* =========================================
- * 21) Grid (Infinite)
+ * 21) Grid (Tree Data + SSRM)
  * =======================================*/
 function makeGrid() {
 	const AG = getAgGrid();
@@ -2013,25 +2001,95 @@ function makeGrid() {
 	}
 	gridDiv.classList.add('ag-theme-quartz');
 
+	const autoGroupColumnDef = {
+		headerName: 'Campaign',
+		colId: 'campaign',
+		filter: 'agTextColumnFilter',
+		floatingFilter: true,
+		sortable: false,
+		wrapText: true,
+		autoHeight: false,
+		minWidth: 270,
+		pinned: 'left',
+		cellClass: (p) => ['camp-root', 'camp-child', 'camp-grand'][Math.min(p?.node?.level ?? 0, 2)],
+		tooltipValueGetter: (p) => {
+			const d = p.data || {};
+			if (p?.node?.level === 0) {
+				const name = d.__label || '';
+				const utm = d.utm_campaign || '';
+				return utm ? `${name} — ${utm}` : name;
+			}
+			return d.__label || '';
+		},
+		cellRendererParams: {
+			suppressCount: true,
+			innerRenderer: (p) => {
+				const d = p.data || {};
+				const label = d.__label || '';
+				const utm = d.utm_campaign || '';
+				if (p?.node?.level === 0 && (label || utm)) {
+					const wrap = document.createElement('span');
+					wrap.style.display = 'inline-flex';
+					wrap.style.flexDirection = 'column';
+					wrap.style.lineHeight = '1.25';
+					const l1 = document.createElement('span');
+					l1.textContent = label;
+					l1.style.fontWeight = '600';
+					wrap.appendChild(l1);
+					if (utm) {
+						const l2 = document.createElement('span');
+						l2.textContent = utm;
+						l2.style.fontSize = '9px';
+						l2.style.opacity = '0.75';
+						l2.style.letterSpacing = '0.2px';
+						wrap.appendChild(l2);
+					}
+					return wrap;
+				}
+				return label;
+			},
+		},
+		valueGetter: (p) => {
+			const d = p.data || {};
+			const name = d.__label || '';
+			const utm = d.utm_campaign || '';
+			return (name + ' ' + utm).trim();
+		},
+	};
+
 	const gridOptions = {
 		floatingFiltersHeight: 35,
 		groupHeaderHeight: 35,
 		headerHeight: 62,
 		context: { showToast: (msg, type) => Toastify({ text: msg }).showToast() },
-
-		// === INFINITE ===
-		rowModelType: 'infinite',
+		rowModelType: 'serverSide',
 		cacheBlockSize: 200,
-		maxConcurrentDatasourceRequests: 2,
-		maxBlocksInCache: 4,
-		blockLoadDebounceMillis: 0,
+		treeData: true,
+
+		isServerSideGroup: (data) => data?.__nodeType === 'campaign' || data?.__nodeType === 'adset',
+		getServerSideGroupKey: (data) => data?.__groupKey ?? '',
+		getRowId: (p) => {
+			if (p.data?.__nodeType === 'campaign') return `c:${p.data.__groupKey}`;
+			if (p.data?.__nodeType === 'adset') return `s:${p.data.__groupKey}`;
+			if (p.data?.__nodeType === 'ad')
+				return `a:${p.data.id || p.data.story_id || p.data.__label}`;
+			return Math.random().toString(36).slice(2);
+		},
 
 		columnDefs: [].concat(columnDefs),
+		autoGroupColumnDef,
 		defaultColDef,
-
-		// Seleção simples/compatível
-		rowSelection: 'multiple',
-		suppressRowClickSelection: false,
+		rowSelection: {
+			mode: 'multiRow',
+			checkboxes: { enabled: true, header: true },
+			selectionColumn: {
+				id: 'ag-Grid-SelectionColumn',
+				width: 36,
+				pinned: 'left',
+				suppressHeaderMenuButton: true,
+				suppressHeaderFilterButton: true,
+			},
+		},
 
 		rowHeight: 60,
 		animateRows: true,
@@ -2040,29 +2098,49 @@ function makeGrid() {
 
 		getContextMenuItems: (params) => {
 			const d = params.node?.data || {};
+			const isCampaign = params.node?.level === 0;
 			const items = [];
 			items.push('cut', 'copy', 'copyWithHeaders', 'copyWithGroupHeaders', 'export', 'separator');
-			const label = d.__label || d.campaign_name || '';
-			const utm = d.utm_campaign || '';
-			if (label)
-				items.push({
-					name: 'Copiar Campaign',
-					action: () => copyToClipboard(label),
-					icon: '<span class="ag-icon ag-icon-copy"></span>',
-				});
-			if (utm)
-				items.push({
-					name: 'Copiar UTM',
-					action: () => copyToClipboard(utm),
-					icon: '<span class="ag-icon ag-icon-copy"></span>',
-				});
+			if (isCampaign) {
+				const label = d.__label || d.campaign_name || '';
+				const utm = d.utm_campaign || '';
+				if (label)
+					items.push({
+						name: 'Copiar Campaign',
+						action: () => copyToClipboard(label),
+						icon: '<span class="ag-icon ag-icon-copy"></span>',
+					});
+				if (utm)
+					items.push({
+						name: 'Copiar UTM',
+						action: () => copyToClipboard(utm),
+						icon: '<span class="ag-icon ag-icon-copy"></span>',
+					});
+			}
 			return items;
 		},
 
 		onCellClicked(params) {
+			if (params?.node?.level > 0) return;
+			const isAutoGroupCol =
+				(typeof params.column?.isAutoRowGroupColumn === 'function' &&
+					params.column.isAutoRowGroupColumn()) ||
+				params.colDef?.colId === 'ag-Grid-AutoColumn' ||
+				!!params.colDef?.showRowGroup ||
+				params?.column?.getColId?.() === 'campaign';
+			const clickedExpanderOrCheckbox = !!params.event?.target?.closest?.(
+				'.ag-group-expanded, .ag-group-contracted, .ag-group-checkbox'
+			);
+			if (
+				isAutoGroupCol &&
+				!clickedExpanderOrCheckbox &&
+				params?.data?.__nodeType === 'campaign'
+			) {
+				const label = params.data.__label || '(sem nome)';
+				showKTModal({ title: 'Campaign', content: label });
+				return;
+			}
 			const MODAL_FIELDS = new Set([
-				'campaign',
-				'__label',
 				'profile_name',
 				'bc_name',
 				'account_name',
@@ -2073,9 +2151,8 @@ function makeGrid() {
 				'xabu_ads',
 				'xabu_adsets',
 			]);
-			const field = params.colDef?.field || params.colDef?.colId;
+			const field = params.colDef?.field;
 			if (!field || !MODAL_FIELDS.has(field)) return;
-
 			const vfmt = params.valueFormatted;
 			let display;
 			if (vfmt != null && vfmt !== '') display = String(vfmt);
@@ -2123,121 +2200,183 @@ function makeGrid() {
 			applySavedStateIfAny(params.api);
 
 			const dataSource = {
-				getRows: async (dsParams) => {
+				getRows: async (req) => {
 					try {
-						const { startRow = 0, endRow = 200, sortModel, filterModel } = dsParams;
-
+						const {
+							startRow = 0,
+							endRow = 200,
+							groupKeys = [],
+							sortModel,
+							filterModel,
+						} = req.request;
 						const filterModelWithGlobal = buildFilterModelWithGlobal(filterModel);
 
-						let res = await fetch(ENDPOINTS.SSRM, {
-							method: 'POST',
-							headers: { 'Content-Type': 'application/json' },
-							credentials: 'same-origin',
-							body: JSON.stringify({
-								startRow,
-								endRow,
-								sortModel: sortModel || [],
-								filterModel: filterModelWithGlobal,
-							}),
-						});
+						// =========================================
+						// Nível 0 — CAMPANHAS
+						// -> Carrega TUDO uma única vez e fatia local
+						// -> Totais calculados no FRONT (ROOT_CACHE.rowsRaw)
+						// =========================================
+						if (groupKeys.length === 0) {
+							// carrega cache se necessário
+							if (!ROOT_CACHE) {
+								// pede tudo de uma vez (usa um endRow bem alto para compat)
+								const hardEnd = 1000000;
+								let res = await fetch(ENDPOINTS.SSRM, {
+									method: 'POST',
+									headers: { 'Content-Type': 'application/json' },
+									credentials: 'same-origin',
+									body: JSON.stringify({
+										startRow: 0,
+										endRow: hardEnd,
+										sortModel: sortModel || [],
+										filterModel: filterModelWithGlobal,
+									}),
+								});
 
-						if (!res.ok) {
+								if (!res.ok) {
+									const qs = new URLSearchParams({
+										startRow: '0',
+										endRow: String(hardEnd),
+										sortModel: JSON.stringify(sortModel || []),
+										filterModel: JSON.stringify(filterModelWithGlobal || {}),
+									});
+									res = await fetch(`${ENDPOINTS.SSRM}&${qs.toString()}`, {
+										credentials: 'same-origin',
+									});
+								}
+
+								const data = await res.json().catch(() => ({ rows: [], lastRow: 0 }));
+								const rowsRaw = Array.isArray(data.rows) ? data.rows : [];
+								const rowsNorm = rowsRaw.map(normalizeCampaignRow);
+								ROOT_CACHE = { rowsRaw, rowsNorm };
+							}
+
+							// fatia local conforme solicitado pela store
+							const slice = ROOT_CACHE.rowsNorm.slice(
+								startRow,
+								Math.min(endRow, ROOT_CACHE.rowsNorm.length)
+							);
+							const totalCount = ROOT_CACHE.rowsNorm.length;
+
+							// calcula TOTAIS no front
+							const totals = computeClientTotals(ROOT_CACHE.rowsRaw);
+							const currency = getAppCurrency();
+							const locale = currency === 'USD' ? 'en-US' : 'pt-BR';
+							const nfCur = new Intl.NumberFormat(locale, { style: 'currency', currency });
+
+							const pinnedTotal = {
+								id: '__pinned_total__',
+								bc_name: 'TOTAL',
+								impressions: totals.impressions_sum ?? 0,
+								clicks: totals.clicks_sum ?? 0,
+								visitors: totals.visitors_sum ?? 0,
+								conversions: totals.conversions_sum ?? 0,
+								real_conversions: totals.real_conversions_sum ?? 0,
+								spent: totals.spent_sum ?? 0,
+								fb_revenue: totals.fb_revenue_sum ?? 0,
+								push_revenue: totals.push_revenue_sum ?? 0,
+								revenue: totals.revenue_sum ?? 0,
+								profit: totals.profit_sum ?? 0,
+								budget: totals.budget_sum ?? 0,
+								cpc: totals.cpc_total ?? 0,
+								cpa_fb: totals.cpa_fb_total ?? 0,
+								real_cpa: totals.real_cpa_total ?? 0,
+								mx: totals.mx_total ?? 0,
+								ctr: totals.ctr_total ?? 0,
+							};
+
+							for (const k of [
+								'spent',
+								'fb_revenue',
+								'push_revenue',
+								'revenue',
+								'profit',
+								'budget',
+								'cpc',
+								'cpa_fb',
+								'real_cpa',
+								'mx',
+							])
+								pinnedTotal[k] = nfCur.format(Number(pinnedTotal[k]) || 0);
+							for (const k of [
+								'impressions',
+								'clicks',
+								'visitors',
+								'conversions',
+								'real_conversions',
+							])
+								pinnedTotal[k] = intFmt.format(Number(pinnedTotal[k]) || 0);
+							if (typeof pinnedTotal.ctr === 'number')
+								pinnedTotal.ctr = (pinnedTotal.ctr * 100).toFixed(2) + '%';
+
+							// label (quantidade de campanhas)
+							pinnedTotal.__label = `CAMPAIGNS: ${intFmt.format(totalCount)}`;
+
+							// aplica pinned bottom row
+							try {
+								const targetApi = req.api ?? params.api;
+								if (targetApi?.setPinnedBottomRowData)
+									targetApi.setPinnedBottomRowData([pinnedTotal]);
+								else targetApi?.setGridOption?.('pinnedBottomRowData', [pinnedTotal]);
+							} catch (e) {
+								console.warn('Erro ao aplicar pinned bottom row:', e);
+							}
+
+							req.success({ rowData: slice, rowCount: totalCount });
+							return;
+						}
+
+						// =========================================
+						// Nível 1 — ADSETS (continua SSRM/DRILL)
+						// =========================================
+						if (groupKeys.length === 1) {
+							const campaignId = groupKeys[0];
 							const qs = new URLSearchParams({
+								campaign_id: campaignId,
+								period: DRILL.period,
 								startRow: String(startRow),
 								endRow: String(endRow),
 								sortModel: JSON.stringify(sortModel || []),
 								filterModel: JSON.stringify(filterModelWithGlobal || {}),
 							});
-							res = await fetch(`${ENDPOINTS.SSRM}&${qs.toString()}`, {
-								credentials: 'same-origin',
-							});
+							const data = await fetchJSON(`${DRILL_ENDPOINTS.ADSETS}?${qs.toString()}`);
+							const rows = (data.rows || []).map(normalizeAdsetRow);
+							req.success({ rowData: rows, rowCount: data.lastRow ?? rows.length });
+							return;
 						}
 
-						const data = await res.json().catch(() => ({ rows: [], lastRow: 0 }));
+						// =========================================
+						// Nível 2 — ADS (continua SSRM/DRILL)
+						// =========================================
+						if (groupKeys.length === 2) {
+							const adsetId = groupKeys[1];
+							const qs = new URLSearchParams({
+								adset_id: adsetId,
+								period: DRILL.period,
+								startRow: String(startRow),
+								endRow: String(endRow),
+								sortModel: JSON.stringify(sortModel || []),
+								filterModel: JSON.stringify(filterModelWithGlobal || {}),
+							});
+							const data = await fetchJSON(`${DRILL_ENDPOINTS.ADS}?${qs.toString()}`);
+							const rows = (data.rows || []).map(normalizeAdRow);
+							req.success({ rowData: rows, rowCount: data.lastRow ?? rows.length });
+							return;
+						}
 
-						// dataset que vamos renderizar
-						const rowsRaw = data.rows || [];
-						const rows = rowsRaw.map(normalizeCampaignRow);
-
-						// === TOTAIS NO CLIENTE ===
-						const totals = computeClientTotals(rowsRaw);
-
-						// monta linha pinada usando os totais do cliente
-						const pinnedTotal = {
-							id: '__pinned_total__',
-							bc_name: 'TOTAL',
-							impressions: totals.impressions_sum ?? 0,
-							clicks: totals.clicks_sum ?? 0,
-							visitors: totals.visitors_sum ?? 0,
-							conversions: totals.conversions_sum ?? 0,
-							real_conversions: totals.real_conversions_sum ?? 0,
-							spent: totals.spent_sum ?? 0,
-							fb_revenue: totals.fb_revenue_sum ?? 0,
-							push_revenue: totals.push_revenue_sum ?? 0,
-							revenue: totals.revenue_sum ?? 0,
-							profit: totals.profit_sum ?? 0,
-							budget: totals.budget_sum ?? 0,
-							cpc: totals.cpc_total ?? 0,
-							cpa_fb: totals.cpa_fb_total ?? 0,
-							real_cpa: totals.real_cpa_total ?? 0,
-							mx: totals.mx_total ?? 0,
-							ctr: totals.ctr_total ?? 0,
-						};
-
-						// formatação amigável da linha pinada
-						const currency = getAppCurrency();
-						const locale = currency === 'USD' ? 'en-US' : 'pt-BR';
-						const nfCur = new Intl.NumberFormat(locale, { style: 'currency', currency });
-
-						for (const k of [
-							'spent',
-							'fb_revenue',
-							'push_revenue',
-							'revenue',
-							'profit',
-							'budget',
-							'cpc',
-							'cpa_fb',
-							'real_cpa',
-							'mx',
-						])
-							pinnedTotal[k] = nfCur.format(Number(pinnedTotal[k]) || 0);
-
-						for (const k of [
-							'impressions',
-							'clicks',
-							'visitors',
-							'conversions',
-							'real_conversions',
-						])
-							pinnedTotal[k] = intFmt.format(Number(pinnedTotal[k]) || 0);
-
-						if (typeof pinnedTotal.ctr === 'number')
-							pinnedTotal.ctr = (pinnedTotal.ctr * 100).toFixed(2) + '%';
-
-						// contagem de campanhas (fallback se lastRow não vier)
-						const totalCampaigns =
-							typeof data.lastRow === 'number' && data.lastRow >= 0
-								? data.lastRow
-								: rowsRaw.length;
-
-						pinnedTotal.__label = `CAMPAIGNS: ${intFmt.format(totalCampaigns)}`;
-
-						// entrega pro Infinite (render primeiro)
-						dsParams.successCallback(rows, data.lastRow ?? rows.length);
-
-						// aplica a bottom row usando API nova (com fallback) e força repaint
-						applyPinnedBottom(params.api, pinnedTotal);
+						req.success({ rowData: [], rowCount: 0 });
 					} catch (e) {
-						console.error('[INFINITE] getRows failed:', e);
-						dsParams.failCallback();
+						console.error('[TREE SSRM] getRows failed:', e);
+						req.fail();
 					}
 				},
 			};
 
-			// pluga o datasource (API nova/antiga)
-			if (typeof params.api.setDatasource === 'function') params.api.setDatasource(dataSource);
-			else params.api.setGridOption?.('datasource', dataSource);
+			if (typeof params.api.setServerSideDatasource === 'function') {
+				params.api.setServerSideDatasource(dataSource);
+			} else {
+				params.api.setGridOption?.('serverSideDatasource', dataSource);
+			}
 
 			setTimeout(() => {
 				try {

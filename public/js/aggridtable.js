@@ -34,7 +34,7 @@
 /* =========================================
  * 1) Constantes & Config
  * =======================================*/
-const ENDPOINTS = { SSRM: '/api/ssrm/?clean=1' };
+const ENDPOINTS = { SSRM: '/api/ssrm/?clean=1&full=1' };
 const DRILL_ENDPOINTS = { ADSETS: '/api/adsets/', ADS: '/api/ads/' };
 const DRILL = { period: 'TODAY' };
 

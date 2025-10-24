@@ -339,13 +339,19 @@ function parseRequestPayload(req) {
 	let endRow = 200;
 	let sortModel = [];
 	let filterModel = {};
+	let mode = 'slice'; // 'slice' (default SSRM) | 'full'
+
+	const coerceFull = (v) => {
+		if (v == null) return null;
+		const s = String(v).toLowerCase();
+		return s === '1' || s === 'true' || s === 'yes';
+	};
 
 	return req
 		.json()
 		.catch(() => ({}))
 		.then((body) => {
 			if (body && typeof body === 'object' && Object.keys(body).length) {
-				// (mantidos por compat; ignorados no retorno Infinite)
 				startRow = Number.isFinite(body.startRow) ? body.startRow : startRow;
 				endRow = Number.isFinite(body.endRow) ? body.endRow : endRow;
 				sortModel = Array.isArray(body.sortModel) ? body.sortModel : sortModel;
@@ -354,6 +360,12 @@ function parseRequestPayload(req) {
 				if (body.campaign_id) url.searchParams.set('campaign_id', body.campaign_id);
 				if (body.adset_id) url.searchParams.set('adset_id', body.adset_id);
 				if (body.period) url.searchParams.set('period', body.period);
+
+				// 👇 modo
+				if (typeof body.mode === 'string')
+					mode = body.mode.toLowerCase() === 'full' ? 'full' : 'slice';
+				const fullFromBody = coerceFull(body.full);
+				if (fullFromBody === true) mode = 'full';
 			} else {
 				const sr = Number(url.searchParams.get('startRow'));
 				const er = Number(url.searchParams.get('endRow'));
@@ -367,8 +379,15 @@ function parseRequestPayload(req) {
 					const fm = JSON.parse(url.searchParams.get('filterModel') || '{}');
 					if (fm && typeof fm === 'object') filterModel = fm;
 				} catch {}
+
+				// 👇 modo via query
+				const qMode = (url.searchParams.get('mode') || '').toLowerCase();
+				if (qMode === 'full') mode = 'full';
+				const fullQS = coerceFull(url.searchParams.get('full'));
+				if (fullQS === true) mode = 'full';
 			}
-			return { startRow, endRow, sortModel, filterModel, url: url.toString() };
+
+			return { startRow, endRow, sortModel, filterModel, mode, url: url.toString() };
 		});
 }
 
@@ -440,7 +459,9 @@ async function adsets(req, env) {
 		const reqForBody = req.clone();
 		const reqForAssets = req.clone();
 
-		let { sortModel, filterModel, url } = await parseRequestPayload(reqForBody);
+		let { startRow, endRow, sortModel, filterModel, mode, url } = await parseRequestPayload(
+			reqForBody
+		);
 		filterModel = normalizeFilterKeys(filterModel);
 		const u = new URL(url);
 		const campaignId = u.searchParams.get('campaign_id') || (filterModel?.campaign_id?.filter ?? '');
@@ -455,14 +476,15 @@ async function adsets(req, env) {
 
 		let rows = filterByParentAndPeriod(full, { idKey: 'idroot', idValue: campaignId, period });
 		rows = overlayAdsetArray(rows);
-		rows = rows.map((r) => ({ ...r, campaign: stripHtml(r.name || '') })); // virtual p/ filtro "campaign"
+		rows = rows.map((r) => ({ ...r, campaign: stripHtml(r.name || '') }));
 		rows = applyFilters(rows, filterModel);
 		rows = applySort(rows, sortModel);
 
-		const totals = computeTotalsGeneric(rows); // opcional
+		const totals = computeTotalsGeneric(rows);
 
-		// INFINITE: retorna dataset inteiro (sem slice)
-		return new Response(JSON.stringify({ rows, lastRow: rows.length, totals }), {
+		const { outRows, lastRow } = sliceForMode(rows, startRow, endRow, mode);
+
+		return new Response(JSON.stringify({ mode, rows: outRows, lastRow, totals }), {
 			headers: { 'Content-Type': 'application/json' },
 		});
 	} catch (err) {
@@ -473,12 +495,23 @@ async function adsets(req, env) {
 	}
 }
 
+function sliceForMode(rows, startRow, endRow, mode) {
+	if (mode === 'full') {
+		return { outRows: rows, lastRow: rows.length };
+	}
+	const safeEnd = Math.min(Math.max(endRow, 0), rows.length);
+	const safeStart = Math.min(Math.max(startRow, 0), safeEnd);
+	return { outRows: rows.slice(safeStart, safeEnd), lastRow: rows.length };
+}
+
 async function ads(req, env) {
 	try {
 		const reqForBody = req.clone();
 		const reqForAssets = req.clone();
 
-		let { sortModel, filterModel, url } = await parseRequestPayload(reqForBody);
+		let { startRow, endRow, sortModel, filterModel, mode, url } = await parseRequestPayload(
+			reqForBody
+		);
 		filterModel = normalizeFilterKeys(filterModel);
 		const u = new URL(url);
 		const adsetId = u.searchParams.get('adset_id') || (filterModel?.adset_id?.filter ?? '');
@@ -497,9 +530,11 @@ async function ads(req, env) {
 		rows = applyFilters(rows, filterModel);
 		rows = applySort(rows, sortModel);
 
-		const totals = computeTotalsGeneric(rows); // opcional
+		const totals = computeTotalsGeneric(rows);
 
-		return new Response(JSON.stringify({ rows, lastRow: rows.length, totals }), {
+		const { outRows, lastRow } = sliceForMode(rows, startRow, endRow, mode);
+
+		return new Response(JSON.stringify({ mode, rows: outRows, lastRow, totals }), {
 			headers: { 'Content-Type': 'application/json' },
 		});
 	} catch (err) {
@@ -657,7 +692,9 @@ async function ssrm(req, env) {
 		const reqForBody = req.clone();
 		const reqForAssets = req.clone();
 
-		let { url, sortModel, filterModel } = await parseRequestPayload(reqForBody);
+		let { url, startRow, endRow, sortModel, filterModel, mode } = await parseRequestPayload(
+			reqForBody
+		);
 		filterModel = normalizeFilterKeys(filterModel);
 		const clean = new URL(url).searchParams.get('clean') === '1';
 
@@ -674,11 +711,11 @@ async function ssrm(req, env) {
 		rows = applyFilters(rows, filterModel);
 		rows = applySort(rows, sortModel);
 
-		// totals opcional (front pode recalcular)
 		const totals = computeTotalsRoot(rows);
 
-		// INFINITE: retorna dataset inteiro (sem slice)
-		return new Response(JSON.stringify({ rows, lastRow: rows.length, totals }), {
+		const { outRows, lastRow } = sliceForMode(rows, startRow, endRow, mode);
+
+		return new Response(JSON.stringify({ mode, rows: outRows, lastRow, totals }), {
 			headers: { 'Content-Type': 'application/json' },
 		});
 	} catch (err) {
