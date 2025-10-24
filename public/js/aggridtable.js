@@ -2383,7 +2383,7 @@ function makeGrid() {
 									: data?.totals?.campaigns_count ?? (data.rows || []).length;
 
 							// o valueGetter da Auto Group Column usa __label (junto com utm)
-							pinnedTotal.__label = `Campanhas: ${intFmt.format(totalCampaigns)}`;
+							pinnedTotal.__label = `CAMPAIGNS: ${intFmt.format(totalCampaigns)}`;
 
 							const rows = (data.rows || []).map(normalizeCampaignRow);
 
