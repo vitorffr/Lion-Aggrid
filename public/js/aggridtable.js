@@ -1315,7 +1315,7 @@ const columnDefs = [
 				cellEditor: CurrencyMaskEditor, // 👈 trocado
 				valueParser: parseCurrencyInput, // já usa parseCurrencyFlexible (ok com vírgula)
 				valueFormatter: currencyFormatter,
-				minWidth: 100,
+				minWidth: 120,
 				flex: 0.6,
 				cellClassRules: { 'ag-cell-loading': (p) => isCellLoading(p, 'budget') },
 				onCellValueChanged: async (p) => {
@@ -2084,7 +2084,7 @@ function makeGrid() {
 		sortable: false,
 		wrapText: true,
 		autoHeight: false,
-		minWidth: 270,
+		minWidth: 280,
 		pinned: 'left',
 		cellClass: (p) => ['camp-root', 'camp-child', 'camp-grand'][Math.min(p?.node?.level ?? 0, 2)],
 		tooltipValueGetter: (p) => {

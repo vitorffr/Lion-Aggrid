@@ -47,7 +47,7 @@ const DEV_FAKE_NETWORK_LATENCY_MS = 0;
 const MIN_SPINNER_MS = 500;
 
 // === Cache local do nível 0 (campanhas) - carrega tudo de uma vez ===
-let ROOT_CACHE = null; // { rowsRaw: [], rowsNorm: [] }
+let ROOT_CACHE = null; // { rowsRaw: [] }
 
 /* =========================================
  * 2) Estado Global
@@ -254,6 +254,169 @@ const intFormatter = (p) => {
 	const n = toNumberBR(p.value);
 	return n == null ? p.value ?? '' : intFmt.format(Math.round(n));
 };
+
+/* ==== FRONT sort/filter (raiz) ==== */
+function frontToNumberBR(v) {
+	if (v == null) return null;
+	if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+	const s = String(v).trim();
+	if (!s) return null;
+	const sign = s.includes('-') ? -1 : 1;
+	const only = s
+		.replace(/[^\d,.-]/g, '')
+		.replace(/\./g, '')
+		.replace(',', '.');
+	const n = Number(only);
+	return Number.isFinite(n) ? sign * n : null;
+}
+function frontToNumberFirst(s) {
+	if (s == null) return null;
+	const str = String(s);
+	const m = str.match(/-?\d{1,3}(?:\.\d{3})*,\d{2}/) || str.match(/-?\d+(?:\.\d+)?/);
+	if (!m) return null;
+	const clean = m[0].replace(/\./g, '').replace(',', '.');
+	const n = parseFloat(clean);
+	return Number.isFinite(n) ? n : null;
+}
+function frontApplySort(rows, sortModel) {
+	if (!Array.isArray(sortModel) || !sortModel.length) return rows;
+	const orderStatus = ['ACTIVE', 'PAUSED', 'DISABLED', 'CLOSED'];
+	return rows.slice().sort((a, b) => {
+		for (const s of sortModel) {
+			const { colId, sort } = s;
+			const dir = sort === 'desc' ? -1 : 1;
+			let av = a[colId],
+				bv = b[colId];
+
+			// status custom
+			if (colId === 'account_status' || colId === 'campaign_status' || colId === 'status') {
+				const ai = orderStatus.indexOf(String(av ?? '').toUpperCase());
+				const bi = orderStatus.indexOf(String(bv ?? '').toUpperCase());
+				const aIdx = ai === -1 ? Number.POSITIVE_INFINITY : ai;
+				const bIdx = bi === -1 ? Number.POSITIVE_INFINITY : bi;
+				const cmp = (aIdx - bIdx) * dir;
+				if (cmp !== 0) return cmp;
+				continue;
+			}
+
+			// revenue: pega primeiro número da string (ex.: "R$ 2.553,34 (R$ 341,69 | R$ 2.895,03)")
+			if (colId === 'revenue') {
+				const an = frontToNumberFirst(av);
+				const bn = frontToNumberFirst(bv);
+				if (an == null && bn == null) continue;
+				if (an == null) return -1 * dir;
+				if (bn == null) return 1 * dir;
+				if (an !== bn) return (an < bn ? -1 : 1) * dir;
+				continue;
+			}
+
+			// padrão: numérico se possível, senão texto
+			const an = frontToNumberBR(av);
+			const bn = frontToNumberBR(bv);
+			const bothNum = an != null && bn != null;
+			let cmp;
+			if (bothNum) cmp = an === bn ? 0 : an < bn ? -1 : 1;
+			else {
+				const as = String(av ?? '').toLowerCase();
+				const bs = String(bv ?? '').toLowerCase();
+				cmp = as.localeCompare(bs, 'pt-BR');
+			}
+			if (cmp !== 0) return cmp * dir;
+		}
+		return 0;
+	});
+}
+function frontApplyFilters(rows, filterModel) {
+	if (!filterModel || typeof filterModel !== 'object') return rows;
+
+	const globalFilter = String(filterModel._global?.filter || '')
+		.trim()
+		.toLowerCase();
+
+	const checks = Object.entries(filterModel)
+		.filter(([field]) => field !== '_global')
+		.map(([field, f]) => {
+			const ft = f.filterType || f.type || 'text';
+
+			// includes / excludes (lista)
+			if (ft === 'includes' && Array.isArray(f.values)) {
+				const set = new Set(f.values.map((v) => String(v).toLowerCase()));
+				return (r) => set.has(String(r[field] ?? '').toLowerCase());
+			}
+			if (ft === 'excludes' && Array.isArray(f.values)) {
+				const set = new Set(f.values.map((v) => String(v).toLowerCase()));
+				return (r) => !set.has(String(r[field] ?? '').toLowerCase());
+			}
+
+			// texto
+			if (ft === 'text') {
+				const comp = String(f.type || 'contains');
+				const needle = String(f.filter ?? '').toLowerCase();
+				if (!needle) return () => true;
+				return (r) => {
+					const val = String(r[field] ?? '').toLowerCase();
+					switch (comp) {
+						case 'equals':
+							return val === needle;
+						case 'notEqual':
+							return val !== needle;
+						case 'startsWith':
+							return val.startsWith(needle);
+						case 'endsWith':
+							return val.endsWith(needle);
+						case 'notContains':
+							return !val.includes(needle);
+						case 'contains':
+						default:
+							return val.includes(needle);
+					}
+				};
+			}
+
+			// number (inclui contains/notContains numéricos)
+			if (ft === 'number') {
+				const comp = String(f.type || 'equals');
+				const val = Number(f.filter);
+				return (r) => {
+					const n = frontToNumberBR(r[field]);
+					if (n == null) return false;
+					switch (comp) {
+						case 'equals':
+							return n === val;
+						case 'notEqual':
+							return n !== val;
+						case 'greaterThan':
+							return n > val;
+						case 'lessThan':
+							return n < val;
+						case 'greaterThanOrEqual':
+							return n >= val;
+						case 'lessThanOrEqual':
+							return n <= val;
+						case 'contains':
+							return String(n).includes(String(val));
+						case 'notContains':
+							return !String(n).includes(String(val));
+						default:
+							return true;
+					}
+				};
+			}
+
+			return () => true;
+		});
+
+	return rows.filter((r) => {
+		const globalMatch =
+			!globalFilter ||
+			Object.values(r).some((v) =>
+				String(v ?? '')
+					.toLowerCase()
+					.includes(globalFilter)
+			);
+		return globalMatch && checks.every((fn) => fn(r));
+	});
+}
 
 /** Cores fallback para badges (sem tailwind). */
 const FALLBACK_STYLE = {
@@ -1324,7 +1487,7 @@ const columnDefs = [
 				cellEditor: CurrencyMaskEditor,
 				valueParser: parseCurrencyInput,
 				valueFormatter: currencyFormatter,
-				minWidth: 100,
+				minWidth: 120,
 				flex: 0.6,
 				cellClassRules: { 'ag-cell-loading': (p) => isCellLoading(p, 'budget') },
 				onCellValueChanged: async (p) => {
@@ -2009,7 +2172,7 @@ function makeGrid() {
 		sortable: false,
 		wrapText: true,
 		autoHeight: false,
-		minWidth: 270,
+		minWidth: 280,
 		pinned: 'left',
 		cellClass: (p) => ['camp-root', 'camp-child', 'camp-grand'][Math.min(p?.node?.level ?? 0, 2)],
 		tooltipValueGetter: (p) => {
@@ -2213,53 +2376,37 @@ function makeGrid() {
 
 						// =========================================
 						// Nível 0 — CAMPANHAS
-						// -> Carrega TUDO uma única vez e fatia local
-						// -> Totais calculados no FRONT (ROOT_CACHE.rowsRaw)
+						// => FULL 1x em cache; filtro/sort no FRONT a cada getRows
 						// =========================================
 						if (groupKeys.length === 0) {
-							// carrega cache se necessário
 							if (!ROOT_CACHE) {
-								// pede tudo de uma vez (usa um endRow bem alto para compat)
-								const hardEnd = 1000000;
+								// Carrega dataset completo, SEM sort/filter (serão no front)
 								let res = await fetch(ENDPOINTS.SSRM, {
 									method: 'POST',
 									headers: { 'Content-Type': 'application/json' },
 									credentials: 'same-origin',
-									body: JSON.stringify({
-										startRow: 0,
-										endRow: hardEnd,
-										sortModel: sortModel || [],
-										filterModel: filterModelWithGlobal,
-									}),
+									body: JSON.stringify({ mode: 'full' }),
 								});
-
 								if (!res.ok) {
-									const qs = new URLSearchParams({
-										startRow: '0',
-										endRow: String(hardEnd),
-										sortModel: JSON.stringify(sortModel || []),
-										filterModel: JSON.stringify(filterModelWithGlobal || {}),
-									});
-									res = await fetch(`${ENDPOINTS.SSRM}&${qs.toString()}`, {
-										credentials: 'same-origin',
-									});
+									// Fallback GET
+									res = await fetch(ENDPOINTS.SSRM, { credentials: 'same-origin' });
 								}
-
-								const data = await res.json().catch(() => ({ rows: [], lastRow: 0 }));
+								const data = await res.json().catch(() => ({ rows: [] }));
 								const rowsRaw = Array.isArray(data.rows) ? data.rows : [];
-								const rowsNorm = rowsRaw.map(normalizeCampaignRow);
-								ROOT_CACHE = { rowsRaw, rowsNorm };
+								ROOT_CACHE = { rowsRaw };
 							}
 
-							// fatia local conforme solicitado pela store
-							const slice = ROOT_CACHE.rowsNorm.slice(
-								startRow,
-								Math.min(endRow, ROOT_CACHE.rowsNorm.length)
-							);
-							const totalCount = ROOT_CACHE.rowsNorm.length;
+							// Aplica filtros e ordenação no cliente
+							const all = ROOT_CACHE.rowsRaw;
+							const filtered = frontApplyFilters(all, filterModelWithGlobal);
+							const ordered = frontApplySort(filtered, sortModel || []);
+							const rowsNorm = ordered.map(normalizeCampaignRow);
 
-							// calcula TOTAIS no front
-							const totals = computeClientTotals(ROOT_CACHE.rowsRaw);
+							const totalCount = rowsNorm.length;
+							const slice = rowsNorm.slice(startRow, Math.min(endRow, totalCount));
+
+							// Totais (já respeitando filtros atuais)
+							const totals = computeClientTotals(ordered);
 							const currency = getAppCurrency();
 							const locale = currency === 'USD' ? 'en-US' : 'pt-BR';
 							const nfCur = new Intl.NumberFormat(locale, { style: 'currency', currency });
@@ -2283,6 +2430,7 @@ function makeGrid() {
 								real_cpa: totals.real_cpa_total ?? 0,
 								mx: totals.mx_total ?? 0,
 								ctr: totals.ctr_total ?? 0,
+								__label: `CAMPAIGNS: ${intFmt.format(totalCount)}`,
 							};
 
 							for (const k of [
@@ -2309,15 +2457,10 @@ function makeGrid() {
 							if (typeof pinnedTotal.ctr === 'number')
 								pinnedTotal.ctr = (pinnedTotal.ctr * 100).toFixed(2) + '%';
 
-							// label (quantidade de campanhas)
-							pinnedTotal.__label = `CAMPAIGNS: ${intFmt.format(totalCount)}`;
-
-							// aplica pinned bottom row
 							try {
 								const targetApi = req.api ?? params.api;
-								if (targetApi?.setPinnedBottomRowData)
-									targetApi.setPinnedBottomRowData([pinnedTotal]);
-								else targetApi?.setGridOption?.('pinnedBottomRowData', [pinnedTotal]);
+								targetApi?.setPinnedBottomRowData?.([pinnedTotal]) ||
+									targetApi?.setGridOption?.('pinnedBottomRowData', [pinnedTotal]);
 							} catch (e) {
 								console.warn('Erro ao aplicar pinned bottom row:', e);
 							}

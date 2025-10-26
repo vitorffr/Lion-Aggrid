@@ -326,7 +326,7 @@ async function loadAssetJSON(request, env, assetPath) {
 	throw new Error('ASSETS não configurado e DEV fallback desativado.');
 }
 async function loadDump(request, env) {
-	return loadAssetJSON(request, env, '/constants/clean-dump.json');
+	return loadAssetJSON(request, env, '/constants/outfinal.json');
 }
 
 /* ============================================================
