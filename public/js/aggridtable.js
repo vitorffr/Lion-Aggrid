@@ -1604,7 +1604,7 @@ function refreshSSRM(api) {
 		let t = null;
 		input.addEventListener('input', () => {
 			clearTimeout(t);
-			t = setTimeout(() => applyGlobalFilter(input.value.trim()), 250);
+			t = setTimeout(() => applyGlobalFilter(input.value.trim()), 400);
 		});
 		if (input.value) applyGlobalFilter(input.value.trim());
 	}
