@@ -305,6 +305,26 @@ function isPinnedOrTotal(params) {
 /* =========================================
  * 8) Utils de status/loading por célula
  * =======================================*/
+
+/* ===== Row Loading (linha inteira com spinner) ===== */
+function isRowLoading(p) {
+	return !!p?.data?.__rowLoading;
+}
+function setRowLoading(node, on) {
+	if (!node?.data) return;
+	node.data.__rowLoading = !!on;
+}
+function setRowLoadingById(api, rowNodeId, on) {
+	try {
+		const node = api?.getRowNode(rowNodeId);
+		if (!node) return;
+		setRowLoading(node, on);
+		// refresca todas as colunas para aplicar/remover classe ag-cell-loading
+		const cols = api.getColumns()?.map((c) => c.getColId()) || undefined;
+		api.refreshCells({ rowNodes: [node], columns: cols, force: true });
+	} catch {}
+}
+
 function isStatusActiveVal(v) {
 	return String(v ?? '').toUpperCase() === 'ACTIVE';
 }
@@ -981,7 +1001,26 @@ const defaultColDef = {
 	enablePivot: true,
 	enableValue: true,
 	suppressHeaderFilterButton: true,
+
+	// 👇 spinner visível só na célula do grupo quando a linha estiver carregando
+	cellClassRules: {
+		'ag-cell-loading': (p) => {
+			// loading de LINHA? aplica só na coluna de grupo (autoGroup)
+			if (isRowLoading(p)) {
+				const colId = p?.column?.getColId?.();
+				const isAutoGroup =
+					(typeof p.column?.isAutoRowGroupColumn === 'function' &&
+						p.column.isAutoRowGroupColumn()) ||
+					colId === 'campaign'; // seu autoGroupColumnDef usa colId: 'campaign'
+				return !!isAutoGroup;
+			}
+			// loading por CÉLULA (bid/budget/status) continua igual
+			const colId = p?.column?.getColId?.();
+			return colId ? isCellLoading(p, colId) : false;
+		},
+	},
 };
+
 function parseCurrencyInput(params) {
 	return parseCurrencyFlexible(params.newValue, getAppCurrency());
 }
@@ -2289,7 +2328,6 @@ function makeGrid() {
 
 			const dataSource = {
 				getRows: async (req) => {
-					// Substitua o método getRows pelo abaixo
 					try {
 						const {
 							startRow = 0,
@@ -2302,10 +2340,19 @@ function makeGrid() {
 						// monta filterModel com _global.filter (quick filter)
 						const filterModelWithGlobal = buildFilterModelWithGlobal(filterModel);
 
+						// referência de API para marcar/desmarcar loading na linha
+						const apiRef =
+							req.api ||
+							this?.gridApi ||
+							(globalThis.LionGrid && globalThis.LionGrid.api) ||
+							null;
+
 						// =========================
 						// Nível 0 => campanhas (SSRM)
 						// =========================
 						if (groupKeys.length === 0) {
+							const t0 = performance.now();
+
 							// POST principal
 							let res = await fetch(ENDPOINTS.SSRM, {
 								method: 'POST',
@@ -2333,8 +2380,10 @@ function makeGrid() {
 							}
 
 							const data = await res.json().catch(() => ({ rows: [], lastRow: 0 }));
-							const totals = data?.totals || {};
+							// garante spinner mínimo (coerência visual com drill)
+							await withMinSpinner(t0, MIN_SPINNER_MS);
 
+							const totals = data?.totals || {};
 							const pinnedTotal = {
 								id: '__pinned_total__',
 								bc_name: 'TOTAL',
@@ -2356,7 +2405,6 @@ function makeGrid() {
 								ctr: totals.ctr_total ?? 0,
 							};
 
-							// format totals com a moeda ativa
 							const currency = getAppCurrency();
 							const locale = currency === 'USD' ? 'en-US' : 'pt-BR';
 							const nfCur = new Intl.NumberFormat(locale, { style: 'currency', currency });
@@ -2387,23 +2435,16 @@ function makeGrid() {
 							if (typeof pinnedTotal.ctr === 'number')
 								pinnedTotal.ctr = (pinnedTotal.ctr * 100).toFixed(2) + '%';
 
-							// === NOVO: total de campanhas na linha pinada (coluna Campaign / __label)
 							const totalCampaigns =
 								typeof data.lastRow === 'number' && data.lastRow >= 0
 									? data.lastRow
 									: data?.totals?.campaigns_count ?? (data.rows || []).length;
-
-							// o valueGetter da Auto Group Column usa __label (junto com utm)
 							pinnedTotal.__label = `CAMPAIGNS: ${intFmt.format(totalCampaigns)}`;
 
 							const rows = (data.rows || []).map(normalizeCampaignRow);
 
 							try {
-								const api =
-									this?.gridApi ||
-									(globalThis.LionGrid && globalThis.LionGrid.api) ||
-									null;
-								const targetApi = api || (req.api ?? null);
+								const targetApi = apiRef || (req.api ?? null);
 								if (targetApi?.setPinnedBottomRowData)
 									targetApi.setPinnedBottomRowData([pinnedTotal]);
 								else req.api?.setGridOption?.('pinnedBottomRowData', [pinnedTotal]);
@@ -2419,38 +2460,78 @@ function makeGrid() {
 						// Nível 1 => adsets (DRILL)
 						// =========================
 						if (groupKeys.length === 1) {
+							const t0 = performance.now();
 							const campaignId = groupKeys[0];
-							const qs = new URLSearchParams({
-								campaign_id: campaignId,
-								period: DRILL.period,
-								startRow: String(startRow),
-								endRow: String(endRow),
-								sortModel: JSON.stringify(sortModel || []),
-								filterModel: JSON.stringify(filterModelWithGlobal || {}),
-							});
-							const data = await fetchJSON(`${DRILL_ENDPOINTS.ADSETS}?${qs.toString()}`);
-							const rows = (data.rows || []).map(normalizeAdsetRow);
-							req.success({ rowData: rows, rowCount: data.lastRow ?? rows.length });
-							return;
+
+							// ⚠️ marca a linha pai (campanha) como "loading"
+							const parentRowId = `c:${campaignId}`;
+							if (apiRef) setRowLoadingById(apiRef, parentRowId, true);
+
+							try {
+								const qs = new URLSearchParams({
+									campaign_id: campaignId,
+									period: DRILL.period,
+									startRow: String(startRow),
+									endRow: String(endRow),
+									sortModel: JSON.stringify(sortModel || []),
+									filterModel: JSON.stringify(filterModelWithGlobal || {}),
+								});
+								const data = await fetchJSON(
+									`${DRILL_ENDPOINTS.ADSETS}?${qs.toString()}`
+								);
+								// garante spinner mínimo na abertura do filho
+								await withMinSpinner(t0, MIN_SPINNER_MS);
+
+								const rows = (data.rows || []).map(normalizeAdsetRow);
+
+								// desmarca loading da linha pai
+								if (apiRef) setRowLoadingById(apiRef, parentRowId, false);
+
+								req.success({ rowData: rows, rowCount: data.lastRow ?? rows.length });
+								return;
+							} catch (e) {
+								// rollback do loading em caso de erro
+								if (apiRef) setRowLoadingById(apiRef, parentRowId, false);
+								throw e;
+							}
 						}
 
 						// =========================
 						// Nível 2 => ads (DRILL)
 						// =========================
 						if (groupKeys.length === 2) {
+							const t0 = performance.now();
 							const adsetId = groupKeys[1];
-							const qs = new URLSearchParams({
-								adset_id: adsetId,
-								period: DRILL.period,
-								startRow: String(startRow),
-								endRow: String(endRow),
-								sortModel: JSON.stringify(sortModel || []),
-								filterModel: JSON.stringify(filterModelWithGlobal || {}),
-							});
-							const data = await fetchJSON(`${DRILL_ENDPOINTS.ADS}?${qs.toString()}`);
-							const rows = (data.rows || []).map(normalizeAdRow);
-							req.success({ rowData: rows, rowCount: data.lastRow ?? rows.length });
-							return;
+
+							// ⚠️ marca a linha pai (adset) como "loading"
+							const parentRowId = `s:${adsetId}`;
+							if (apiRef) setRowLoadingById(apiRef, parentRowId, true);
+
+							try {
+								const qs = new URLSearchParams({
+									adset_id: adsetId,
+									period: DRILL.period,
+									startRow: String(startRow),
+									endRow: String(endRow),
+									sortModel: JSON.stringify(sortModel || []),
+									filterModel: JSON.stringify(filterModelWithGlobal || {}),
+								});
+								const data = await fetchJSON(`${DRILL_ENDPOINTS.ADS}?${qs.toString()}`);
+								// garante spinner mínimo na abertura do neto
+								await withMinSpinner(t0, MIN_SPINNER_MS);
+
+								const rows = (data.rows || []).map(normalizeAdRow);
+
+								// desmarca loading da linha pai
+								if (apiRef) setRowLoadingById(apiRef, parentRowId, false);
+
+								req.success({ rowData: rows, rowCount: data.lastRow ?? rows.length });
+								return;
+							} catch (e) {
+								// rollback do loading em caso de erro
+								if (apiRef) setRowLoadingById(apiRef, parentRowId, false);
+								throw e;
+							}
 						}
 
 						// fallback
