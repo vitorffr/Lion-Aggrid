@@ -4,7 +4,7 @@
 // e calcula os totals.
 //
 // Endpoints:
-// - POST/GET /api/ssrm/?clean=1
+// - POST/GET /api/ssrm/?clean=1[&totals=0]
 // - POST/GET /api/adsets/?campaign_id=...&period=TODAY|YESTERDAY
 // - POST/GET /api/ads/?adset_id=...&period=TODAY|YESTERDAY
 //
@@ -214,7 +214,7 @@ function applyFilters(rows, filterModel) {
 }
 
 /* ============================================================
- * 3) Agregadores (opcional; o front pode ignorar)
+ * 3) Agregadores
  * ============================================================ */
 const sum = (a, b) => (Number.isFinite(a) ? a : 0) + (Number.isFinite(b) ? b : 0);
 const safeDiv = (num, den) => (den > 0 ? num / den : 0);
@@ -287,17 +287,28 @@ function computeTotalsGeneric(rows) {
 }
 
 /* ============================================================
- * 4) Carregamento via ASSETS/public
+ * 4) Carregamento via ASSETS/public (GET forçado + cache)
  * ============================================================ */
+
+// cache simples por isolate
+globalThis.__LION_CACHE__ = globalThis.__LION_CACHE__ || new Map();
+globalThis.__LION_PROMISE__ = globalThis.__LION_PROMISE__ || new Map();
+
+// SEMPRE GET no binding de assets
+async function fetchAsset(env, assetPath) {
+	const url = new URL(assetPath, 'https://assets.local');
+	return env.ASSETS.fetch(
+		new Request(url, { method: 'GET', headers: { accept: 'application/json' } })
+	);
+}
+
+// JSON único por assets (GET). Mantém fallback dev opcional.
 async function loadAssetJSON(request, env, assetPath) {
-	globalThis.__LION_CACHE__ = globalThis.__LION_CACHE__ || new Map();
 	const cache = globalThis.__LION_CACHE__;
 	if (cache.has(assetPath)) return cache.get(assetPath);
 
-	const absolute = new URL(assetPath, 'https://assets.local');
-
 	if (env.ASSETS && typeof env.ASSETS.fetch === 'function') {
-		const res = await env.ASSETS.fetch(new Request(absolute.href, request));
+		const res = await fetchAsset(env, assetPath);
 		if (!res || !res.ok) {
 			const body = await res?.text?.().catch(() => '');
 			throw new Error(
@@ -311,7 +322,10 @@ async function loadAssetJSON(request, env, assetPath) {
 
 	if (globalThis.__DEV_ALLOW_HTTP_ASSETS__) {
 		const devUrl = new URL(assetPath, request.url);
-		const res2 = await fetch(devUrl.href);
+		const res2 = await fetch(devUrl.href, {
+			method: 'GET',
+			headers: { accept: 'application/json' },
+		});
 		if (!res2.ok) {
 			const body = await res2.text().catch(() => '');
 			throw new Error(
@@ -325,8 +339,62 @@ async function loadAssetJSON(request, env, assetPath) {
 
 	throw new Error('ASSETS não configurado e DEV fallback desativado.');
 }
+
+// Manifest → partes (decodifica por streaming para reduzir cópias)
+async function loadJoinedAssetJSON(request, env, manifestPath) {
+	const manRes = await fetchAsset(env, manifestPath);
+	if (!manRes.ok) throw new Error(`[ASSETS] ${manRes.status} ao ler manifest ${manifestPath}`);
+	const manifest = await manRes.json(); // { parts: [{file, size, sha256?}], ... }
+	if (!manifest || !Array.isArray(manifest.parts) || !manifest.parts.length) {
+		throw new Error(`Manifest inválido em ${manifestPath}`);
+	}
+
+	const baseDir = manifestPath.slice(0, manifestPath.lastIndexOf('/')) || '';
+	const decoder = new TextDecoder('utf-8');
+	const pieces = [];
+
+	for (const p of manifest.parts) {
+		const filePath = `${baseDir}/${p.file}`; // ex: /constants/teste.part00.json
+		const res = await fetchAsset(env, filePath);
+		if (!res.ok || !res.body) throw new Error(`Falha ao ler parte: ${p.file}`);
+
+		const reader = res.body.getReader();
+		while (true) {
+			const { value, done } = await reader.read();
+			if (done) break;
+			pieces.push(decoder.decode(value, { stream: true })); // decodifica aos poucos
+		}
+	}
+	pieces.push(decoder.decode()); // flush
+	const text = pieces.join('');
+	return JSON.parse(text);
+}
+
+// tenta manifest primeiro; se não houver, cai no JSON único
 async function loadDump(request, env) {
-	return loadAssetJSON(request, env, '/constants/outfinal.json');
+	const cache = globalThis.__LION_CACHE__;
+	const inflight = globalThis.__LION_PROMISE__;
+	const cacheKey = '__JOINED__/constants/teste';
+
+	if (cache.has(cacheKey)) return cache.get(cacheKey);
+	if (inflight.has(cacheKey)) return inflight.get(cacheKey);
+
+	const p = (async () => {
+		try {
+			const joined = await loadJoinedAssetJSON(request, env, '/constants/teste.manifest.json');
+			cache.set(cacheKey, joined);
+			return joined;
+		} catch {
+			const single = await loadAssetJSON(request, env, '/constants/teste.json');
+			cache.set(cacheKey, single);
+			return single;
+		} finally {
+			inflight.delete(cacheKey);
+		}
+	})();
+
+	inflight.set(cacheKey, p);
+	return p;
 }
 
 /* ============================================================
@@ -481,7 +549,6 @@ async function adsets(req, env) {
 		rows = applySort(rows, sortModel);
 
 		const totals = computeTotalsGeneric(rows);
-
 		const { outRows, lastRow } = sliceForMode(rows, startRow, endRow, mode);
 
 		return new Response(JSON.stringify({ mode, rows: outRows, lastRow, totals }), {
@@ -531,7 +598,6 @@ async function ads(req, env) {
 		rows = applySort(rows, sortModel);
 
 		const totals = computeTotalsGeneric(rows);
-
 		const { outRows, lastRow } = sliceForMode(rows, startRow, endRow, mode);
 
 		return new Response(JSON.stringify({ mode, rows: outRows, lastRow, totals }), {
@@ -687,6 +753,15 @@ async function updateCampaignBudget(req, env) {
 /* ============================================================
  * 11) /api/ssrm/ (root) — FULL DATASET
  * ============================================================ */
+
+// heurística simples pra fast-path
+function hasFilters(fm) {
+	if (!fm || typeof fm !== 'object') return false;
+	const hasGlobal = !!String(fm._global?.filter || '').trim();
+	const keys = Object.keys(fm).filter((k) => k !== '_global');
+	return hasGlobal || keys.length > 0;
+}
+
 async function ssrm(req, env) {
 	try {
 		const reqForBody = req.clone();
@@ -696,13 +771,40 @@ async function ssrm(req, env) {
 			reqForBody
 		);
 		filterModel = normalizeFilterKeys(filterModel);
-		const clean = new URL(url).searchParams.get('clean') === '1';
+		const u = new URL(url);
+		const clean = u.searchParams.get('clean') === '1';
+		const skipTotals = (u.searchParams.get('totals') ?? '').toString() === '0';
 
 		const full = await loadDump(reqForAssets, env);
 		if (!Array.isArray(full)) throw new Error('Dump JSON inválido (esperado array).');
 
-		let rows = overlayCampaignArray(clean ? full.map(cleanRow) : full);
+		// FAST-PATH: sem sort e sem filtros e não-full → fatia antes de mapear tudo
+		const wantFast = mode !== 'full' && !sortModel?.length && !hasFilters(filterModel);
+		if (wantFast) {
+			const totalLen = full.length;
+			const safeEnd = Math.min(Math.max(endRow, 0), totalLen);
+			const safeStart = Math.min(Math.max(startRow, 0), safeEnd);
+			const outRows = full.slice(safeStart, safeEnd).map((r) => {
+				const rr = clean ? cleanRow(r) : r;
+				const over = overlayCampaign(rr);
+				return {
+					...over,
+					campaign: `${stripHtml(over.campaign_name || '')} ${String(
+						over.utm_campaign || ''
+					)}`.trim(),
+				};
+			});
+			return new Response(
+				JSON.stringify({ mode, rows: outRows, lastRow: totalLen, totals: null }),
+				{
+					headers: { 'Content-Type': 'application/json' },
+				}
+			);
+		}
 
+		// caminho completo
+		let rows = clean ? full.map(cleanRow) : full;
+		rows = overlayCampaignArray(rows);
 		rows = rows.map((r) => ({
 			...r,
 			campaign: `${stripHtml(r.campaign_name || '')} ${String(r.utm_campaign || '')}`.trim(),
@@ -711,8 +813,7 @@ async function ssrm(req, env) {
 		rows = applyFilters(rows, filterModel);
 		rows = applySort(rows, sortModel);
 
-		const totals = computeTotalsRoot(rows);
-
+		const totals = skipTotals ? null : computeTotalsRoot(rows);
 		const { outRows, lastRow } = sliceForMode(rows, startRow, endRow, mode);
 
 		return new Response(JSON.stringify({ mode, rows: outRows, lastRow, totals }), {
