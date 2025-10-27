@@ -247,12 +247,59 @@ function computeTotalsRoot(rows) {
 	return totals;
 }
 
-function computeTotalsGeneric(rows) {
+// Versão para fast-path: inclui overlay sem materializar um array temporário
+function computeTotalsRootOverlay(rows) {
+	let impressions = 0;
+	let clicks = 0;
+	let visitors = 0;
+	let conversions = 0;
+	let real_conversions = 0;
+	let spent = 0;
+	let fb_revenue = 0;
+	let push_revenue = 0;
+	let profit = 0;
+	let budget = 0;
+
+	const add = (n) => (Number.isFinite(n) ? n : 0);
+
+	for (let i = 0; i < rows.length; i++) {
+		const r = overlayCampaign(rows[i]); // aplica overlay em memória
+		impressions += add(toNumberBR(r.impressions));
+		clicks += add(toNumberBR(r.clicks));
+		visitors += add(toNumberBR(r.visitors));
+		conversions += add(toNumberBR(r.conversions));
+		real_conversions += add(toNumberBR(r.real_conversions));
+		spent += add(toNumberBR(r.spent));
+		fb_revenue += add(toNumberBR(r.fb_revenue));
+		push_revenue += add(toNumberBR(r.push_revenue));
+		profit += add(toNumberBR(r.profit));
+		budget += add(toNumberBR(r.budget));
+	}
+
 	const totals = {};
-	const maybeSum = (key, outKey = `${key}_sum`) => {
-		if (hasSomeField(rows, key)) totals[outKey] = sumField(rows, key);
-	};
-	[
+	totals.impressions_sum = impressions;
+	totals.clicks_sum = clicks;
+	totals.visitors_sum = visitors;
+	totals.conversions_sum = conversions;
+	totals.real_conversions_sum = real_conversions;
+	totals.spent_sum = spent;
+	totals.fb_revenue_sum = fb_revenue;
+	totals.push_revenue_sum = push_revenue;
+	totals.revenue_sum = fb_revenue + push_revenue;
+	totals.profit_sum = profit;
+	totals.budget_sum = budget;
+
+	totals.cpc_total = safeDiv(spent, clicks);
+	totals.cpa_fb_total = safeDiv(spent, conversions);
+	totals.real_cpa_total = safeDiv(spent, real_conversions);
+	totals.ctr_total = safeDiv(clicks, impressions);
+	totals.mx_total = safeDiv(totals.revenue_sum, spent);
+
+	return totals;
+}
+
+function computeTotalsGeneric(rows) {
+	const KEYS = [
 		'impressions',
 		'clicks',
 		'visitors',
@@ -264,12 +311,96 @@ function computeTotalsGeneric(rows) {
 		'fb_revenue',
 		'push_revenue',
 		'revenue',
-	].forEach((f) => maybeSum(f));
-	if (totals.revenue_sum == null) {
-		const fb = totals.fb_revenue_sum ?? 0;
-		const pr = totals.push_revenue_sum ?? 0;
-		totals.revenue_sum = fb + pr;
+	];
+
+	// Acumuladores + flags de “existe ao menos 1 valor numérico”
+	const sum = Object.create(null);
+	const seen = Object.create(null);
+	for (const k of KEYS) {
+		sum[k] = 0;
+		seen[k] = false;
 	}
+
+	// Uma única varredura
+	for (let i = 0; i < rows.length; i++) {
+		const r = rows[i];
+		let n;
+
+		n = toNumberBR(r.impressions);
+		if (Number.isFinite(n)) {
+			sum.impressions += n;
+			seen.impressions = true;
+		}
+
+		n = toNumberBR(r.clicks);
+		if (Number.isFinite(n)) {
+			sum.clicks += n;
+			seen.clicks = true;
+		}
+
+		n = toNumberBR(r.visitors);
+		if (Number.isFinite(n)) {
+			sum.visitors += n;
+			seen.visitors = true;
+		}
+
+		n = toNumberBR(r.conversions);
+		if (Number.isFinite(n)) {
+			sum.conversions += n;
+			seen.conversions = true;
+		}
+
+		n = toNumberBR(r.real_conversions);
+		if (Number.isFinite(n)) {
+			sum.real_conversions += n;
+			seen.real_conversions = true;
+		}
+
+		n = toNumberBR(r.spent);
+		if (Number.isFinite(n)) {
+			sum.spent += n;
+			seen.spent = true;
+		}
+
+		n = toNumberBR(r.budget);
+		if (Number.isFinite(n)) {
+			sum.budget += n;
+			seen.budget = true;
+		}
+
+		n = toNumberBR(r.profit);
+		if (Number.isFinite(n)) {
+			sum.profit += n;
+			seen.profit = true;
+		}
+
+		n = toNumberBR(r.fb_revenue);
+		if (Number.isFinite(n)) {
+			sum.fb_revenue += n;
+			seen.fb_revenue = true;
+		}
+
+		n = toNumberBR(r.push_revenue);
+		if (Number.isFinite(n)) {
+			sum.push_revenue += n;
+			seen.push_revenue = true;
+		}
+
+		n = toNumberBR(r.revenue);
+		if (Number.isFinite(n)) {
+			sum.revenue += n;
+			seen.revenue = true;
+		}
+	}
+
+	const totals = {};
+	for (const k of KEYS) if (seen[k]) totals[`${k}_sum`] = sum[k];
+
+	// revenue somada se não veio pronta
+	if (totals.revenue_sum == null) {
+		totals.revenue_sum = (totals.fb_revenue_sum ?? 0) + (totals.push_revenue_sum ?? 0);
+	}
+
 	const clicks = totals.clicks_sum ?? 0;
 	const impressions = totals.impressions_sum ?? 0;
 	const conversions = totals.conversions_sum ?? 0;
@@ -283,6 +414,7 @@ function computeTotalsGeneric(rows) {
 	totals.ctr_total = safeDiv(clicks, impressions);
 	totals.epc_total = safeDiv(revenue, clicks);
 	totals.mx_total = safeDiv(revenue, spent);
+
 	return totals;
 }
 
@@ -784,6 +916,12 @@ async function ssrm(req, env) {
 			const totalLen = full.length;
 			const safeEnd = Math.min(Math.max(endRow, 0), totalLen);
 			const safeStart = Math.min(Math.max(startRow, 0), safeEnd);
+
+			// calcula totals mesmo no fast-path (a menos que totals=0) e considerando overlay
+			const totals = skipTotals
+				? null
+				: computeTotalsRootOverlay(clean ? full.map(cleanRow) : full);
+
 			const outRows = full.slice(safeStart, safeEnd).map((r) => {
 				const rr = clean ? cleanRow(r) : r;
 				const over = overlayCampaign(rr);
@@ -794,12 +932,10 @@ async function ssrm(req, env) {
 					)}`.trim(),
 				};
 			});
-			return new Response(
-				JSON.stringify({ mode, rows: outRows, lastRow: totalLen, totals: null }),
-				{
-					headers: { 'Content-Type': 'application/json' },
-				}
-			);
+
+			return new Response(JSON.stringify({ mode, rows: outRows, lastRow: totalLen, totals }), {
+				headers: { 'Content-Type': 'application/json' },
+			});
 		}
 
 		// caminho completo
