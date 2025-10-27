@@ -1742,6 +1742,20 @@ const columnDefs = [
 			},
 		],
 	},
+	{
+		headerName: 'Adsets',
+		groupId: 'grp-adsets',
+		marryChildren: true,
+		openByDefault: true,
+		children: [
+			{
+				headerName: 'CTR',
+				field: 'ctr',
+				minWidth: 70,
+				filter: 'agNumberColumnFilter',
+			},
+		],
+	},
 ];
 
 /* =========================================

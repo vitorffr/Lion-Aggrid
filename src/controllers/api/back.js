@@ -918,9 +918,7 @@ async function ssrm(req, env) {
 			const safeStart = Math.min(Math.max(startRow, 0), safeEnd);
 
 			// calcula totals mesmo no fast-path (a menos que totals=0) e considerando overlay
-			const totals = skipTotals
-				? null
-				: computeTotalsRootOverlay(clean ? full.map(cleanRow) : full);
+			const totals = skipTotals ? null : computeTotalsRootOverlay(full);
 
 			const outRows = full.slice(safeStart, safeEnd).map((r) => {
 				const rr = clean ? cleanRow(r) : r;

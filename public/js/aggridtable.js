@@ -1259,6 +1259,7 @@ const columnDefs = [
 			},
 		],
 	},
+
 	{
 		headerName: 'Operation & Setup',
 		groupId: 'grp-op',
@@ -1401,7 +1402,6 @@ const columnDefs = [
 					}
 				},
 			},
-
 			{
 				headerName: 'Ads',
 				field: '_ads',
@@ -1539,6 +1539,20 @@ const columnDefs = [
 				valueFormatter: currencyFormatter,
 				minWidth: 95,
 				flex: 0.8,
+			},
+		],
+	},
+	{
+		headerName: 'Adsets',
+		groupId: 'grp-adsets',
+		marryChildren: true,
+		openByDefault: true,
+		children: [
+			{
+				headerName: 'CTR',
+				field: 'ctr',
+				minWidth: 70,
+				filter: 'agNumberColumnFilter',
 			},
 		],
 	},
