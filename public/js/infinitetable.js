@@ -1449,9 +1449,8 @@ const columnDefs = [
 				headerName: 'BM',
 				field: 'bc_name',
 				valueGetter: (p) => stripHtml(p.data?.bc_name),
-				minWidth: 100,
+				minWidth: 110,
 				flex: 1.0,
-				autoHeight: true,
 				wrapText: true,
 				cellStyle: (p) =>
 					p?.node?.level === 0 ? { fontSize: '13px', lineHeight: '1.6' } : null,
@@ -1462,7 +1461,6 @@ const columnDefs = [
 				field: 'account_name',
 				valueGetter: (p) => stripHtml(p.data?.account_name),
 				minWidth: 100,
-				autoHeight: true,
 				flex: 1.3,
 				wrapText: true,
 				cellStyle: (p) =>
@@ -1722,7 +1720,6 @@ const columnDefs = [
 				flex: 1.0,
 				pinned: 'right',
 				wrapText: true,
-				autoHeight: false,
 				cellRenderer: revenueCellRenderer,
 				tooltipValueGetter: (p) => p.data?.revenue || '',
 			},
@@ -2206,7 +2203,6 @@ function makeGrid() {
 		floatingFilter: true,
 		sortable: false,
 		wrapText: true,
-		autoHeight: false,
 		minWidth: 280,
 		pinned: 'left',
 		cellClass: (p) => ['camp-root', 'camp-child', 'camp-grand'][Math.min(p?.node?.level ?? 0, 2)],
@@ -2289,7 +2285,7 @@ function makeGrid() {
 			},
 		},
 
-		rowHeight: 60,
+		rowHeight: 78,
 		animateRows: true,
 		sideBar: { toolPanels: ['columns', 'filters'], defaultToolPanel: null, position: 'right' },
 		theme: createAgTheme(),

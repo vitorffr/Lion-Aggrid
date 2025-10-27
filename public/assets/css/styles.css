@@ -1,13 +1,54 @@
 /* pill arrastável dentro da célula */
 /* empilha texto do header e ícones em coluna */
 /* direto no alvo */
-div[role='gridcell'][comp-id='251'][col-id='ag-Grid-AutoColumn']
+/* 1) Centraliza verticalmente o conteúdo do gridcell alvo */
+#lionGrid.ag-theme-quartz
+	.ag-floating-bottom
+	.ag-pinned-left-floating-bottom
+	[role='gridcell'][col-id='ag-Grid-AutoColumn']
+	> .ag-cell-wrapper {
+	display: flex !important;
+	align-items: center !important;
+	height: 100% !important;
+}
+
+/* 2) Estiliza o texto “CAMPAIGNS: …” dentro do eValue */
+#lionGrid.ag-theme-quartz
+	.ag-floating-bottom
+	.ag-pinned-left-floating-bottom
+	[role='gridcell'][col-id='ag-Grid-AutoColumn']
 	.ag-row-group-leaf-indent
-	> span:nth-child(4) {
+	[data-ref='eValue']
+	> span {
+	display: inline-flex !important;
+	align-items: center !important;
 	font-size: 14px !important;
-	align-self: center;
-	justify-self: center; /* ok deixar, mas em flex não tem efeito */
-	line-height: 32.5px; /* precisa de unidade */
+	line-height: 32.5px !important;
+}
+
+/* 1) Faz o wrapper da célula ocupar 100% e alinhar verticalmente */
+#lionGrid.ag-theme-quartz.ag-theme-quartz
+	.ag-floating-bottom
+	.ag-pinned-left-floating-bottom.ag-pinned-left-floating-bottom
+	.ag-row.ag-row-pinned.ag-row-level-0.ag-row-first
+	.ag-cell.ag-cell-auto-height.ag-cell-wrap-text.camp-root[col-id='ag-Grid-AutoColumn']
+	> .ag-cell-wrapper {
+	display: flex !important;
+	font-size: 14px !important;
+
+	align-items: center !important;
+	height: 100% !important;
+}
+
+/* 2) Garante que o “grupo” interno também centra seu conteúdo */
+#lionGrid.ag-theme-quartz.ag-theme-quartz
+	.ag-floating-bottom
+	.ag-pinned-left-floating-bottom.ag-pinned-left-floating-bottom
+	.ag-row.ag-row-pinned.ag-row-level-0.ag-row-first
+	.ag-cell.ag-cell-auto-height.ag-cell-wrap-text.camp-root[col-id='ag-Grid-AutoColumn']
+	.ag-row-group-leaf-indent {
+	display: inline-flex !important;
+	align-items: center !important;
 }
 
 /* === estilo do dropdown igual ao input padrão do header === */
