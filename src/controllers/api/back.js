@@ -65,6 +65,47 @@ function toNumberFirst(s) {
 }
 
 /* ============================================================
+ * 1.1) Índice de busca (__search)
+ *  - Mantém compatibilidade: mesma semântica do filtro global anterior,
+ *    só que pré-computado e cacheado no Worker.
+ * ============================================================ */
+function buildSearchIndex(row) {
+	// Indexa apenas primitivos úteis (string/number) já "flattened"
+	// e com stripHtml para remover tags. Tudo em lowercase.
+	const parts = [];
+	for (const k in row) {
+		const v = row[k];
+		if (v == null) continue;
+		if (typeof v === 'string') parts.push(stripHtml(v));
+		else if (typeof v === 'number') parts.push(String(v));
+	}
+	return parts.join(' ').toLowerCase();
+}
+function ensureSearchIndexRow(r) {
+	if (!r) return r;
+	if (r.__search == null) {
+		try {
+			// define sem enumerar pra não poluir Object.keys/values
+			Object.defineProperty(r, '__search', {
+				value: buildSearchIndex(r),
+				writable: true,
+				configurable: true,
+				enumerable: false,
+			});
+		} catch {
+			// fallback se defineProperty falhar
+			r.__search = buildSearchIndex(r);
+		}
+	}
+	return r;
+}
+function ensureSearchIndexArray(rows) {
+	if (!Array.isArray(rows)) return rows;
+	for (let i = 0; i < rows.length; i++) ensureSearchIndexRow(rows[i]);
+	return rows;
+}
+
+/* ============================================================
  * 2) Sort & Filter
  * ============================================================ */
 function applySort(rows, sortModel) {
@@ -202,13 +243,17 @@ function applyFilters(rows, filterModel) {
 		});
 
 	return rows.filter((r) => {
+		// 🔵 Global filter otimizado: usa __search (pré-computado).
+		// Mantém compat pelo conteúdo (mesmo "join" que o antigo fazia).
 		const globalMatch =
 			!globalFilter ||
-			Object.values(r).some((v) =>
-				String(v ?? '')
-					.toLowerCase()
-					.includes(globalFilter)
-			);
+			String(
+				r.__search != null
+					? r.__search
+					: // lazy build caso alguma linha não tivesse índice ainda
+					  (r.__search = buildSearchIndex(r))
+			).includes(globalFilter);
+
 		return globalMatch && checks.every((fn) => fn(r));
 	});
 }
@@ -448,6 +493,10 @@ async function loadAssetJSON(request, env, assetPath) {
 			);
 		}
 		const json = await res.json();
+
+		// 🔵 indexa 1x e guarda no cache com __search
+		if (Array.isArray(json)) ensureSearchIndexArray(json);
+
 		cache.set(assetPath, json);
 		return json;
 	}
@@ -465,6 +514,10 @@ async function loadAssetJSON(request, env, assetPath) {
 			);
 		}
 		const json = await res2.json();
+
+		// 🔵 indexa 1x e guarda no cache com __search
+		if (Array.isArray(json)) ensureSearchIndexArray(json);
+
 		cache.set(assetPath, json);
 		return json;
 	}
@@ -499,7 +552,12 @@ async function loadJoinedAssetJSON(request, env, manifestPath) {
 	}
 	pieces.push(decoder.decode()); // flush
 	const text = pieces.join('');
-	return JSON.parse(text);
+	const json = JSON.parse(text);
+
+	// 🔵 indexa 1x
+	if (Array.isArray(json)) ensureSearchIndexArray(json);
+
+	return json;
 }
 
 // tenta manifest primeiro; se não houver, cai no JSON único
@@ -674,6 +732,8 @@ async function adsets(req, env) {
 		const full = await loadAssetJSON(reqForAssets, env, '/constants/adsets.json');
 		if (!Array.isArray(full)) throw new Error('adsets.json inválido (esperado array).');
 
+		// full já vem indexado pelo cache loader; overlay pode alterar campos visíveis,
+		// mas __search é usado só em filtro global (não muda no overlay).
 		let rows = filterByParentAndPeriod(full, { idKey: 'idroot', idValue: campaignId, period });
 		rows = overlayAdsetArray(rows);
 		rows = rows.map((r) => ({ ...r, campaign: stripHtml(r.name || '') }));
