@@ -337,6 +337,37 @@ function frontApplyFilters(rows, filterModel) {
 		.filter(([field]) => field !== '_global')
 		.map(([field, f]) => {
 			const ft = f.filterType || f.type || 'text';
+			const isCampaignCol =
+				field === 'campaign' ||
+				field === 'ag-Grid-AutoColumn' ||
+				field.startsWith('ag-Grid-AutoColumn');
+
+			// CAMPANHA (nome + UTM)
+			if (isCampaignCol) {
+				const comp = String(f.type || 'contains');
+				const needle = String(f.filter ?? '').toLowerCase();
+				if (!needle) return () => true;
+				return (r) => {
+					const name = String(r.__label || r.campaign_name || '').toLowerCase();
+					const utm = String(r.utm_campaign || '').toLowerCase();
+					const combined = (name + ' ' + utm).trim();
+					switch (comp) {
+						case 'equals':
+							return combined === needle;
+						case 'notEqual':
+							return combined !== needle;
+						case 'startsWith':
+							return combined.startsWith(needle);
+						case 'endsWith':
+							return combined.endsWith(needle);
+						case 'notContains':
+							return !combined.includes(needle);
+						case 'contains':
+						default:
+							return combined.includes(needle);
+					}
+				};
+			}
 
 			// includes / excludes (lista)
 			if (ft === 'includes' && Array.isArray(f.values)) {
@@ -348,7 +379,7 @@ function frontApplyFilters(rows, filterModel) {
 				return (r) => !set.has(String(r[field] ?? '').toLowerCase());
 			}
 
-			// texto
+			// texto (genérico)
 			if (ft === 'text') {
 				const comp = String(f.type || 'contains');
 				const needle = String(f.filter ?? '').toLowerCase();
@@ -373,7 +404,7 @@ function frontApplyFilters(rows, filterModel) {
 				};
 			}
 
-			// number (inclui contains/notContains numéricos)
+			// number
 			if (ft === 'number') {
 				const comp = String(f.type || 'equals');
 				const val = Number(f.filter);
@@ -2108,13 +2139,17 @@ function togglePinnedColsFromCheckbox(silent = false) {
  * 19) Normalizadores (TreeData)
  * =======================================*/
 function normalizeCampaignRow(r) {
+	const label = stripHtml(r.campaign_name || '(sem nome)');
+	const utm = String(r.utm_campaign || r.id || '');
 	return {
 		__nodeType: 'campaign',
-		__groupKey: String(r.utm_campaign || r.id || ''),
-		__label: stripHtml(r.campaign_name || '(sem nome)'),
+		__groupKey: utm,
+		__label: label,
+		campaign: (label + ' ' + utm).trim(), // campo materializado
 		...r,
 	};
 }
+
 function normalizeAdsetRow(r) {
 	return {
 		__nodeType: 'adset',
@@ -2394,6 +2429,8 @@ function makeGrid() {
 								const data = await res.json().catch(() => ({ rows: [] }));
 								const rowsRaw = Array.isArray(data.rows) ? data.rows : [];
 								ROOT_CACHE = { rowsRaw };
+								// dentro do getRows, nível raiz (groupKeys.length === 0)
+								console.debug('filterModel keys:', Object.keys(filterModel || {}));
 							}
 
 							// Aplica filtros e ordenação no cliente

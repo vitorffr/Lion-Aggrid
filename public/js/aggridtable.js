@@ -2084,7 +2084,7 @@ function makeGrid() {
 		sortable: false,
 		wrapText: true,
 		autoHeight: false,
-		minWidth: 280,
+		minWidth: 310,
 		pinned: 'left',
 		cellClass: (p) => ['camp-root', 'camp-child', 'camp-grand'][Math.min(p?.node?.level ?? 0, 2)],
 		tooltipValueGetter: (p) => {
