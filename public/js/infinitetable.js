@@ -207,6 +207,7 @@ function showToast(msg, type = 'info') {
   font-size:12px; line-height:1;
 }
 .ag-cell:hover .lion-editable-ok{ opacity:1 }
+
 .lion-editable-err{
   display:inline-flex; align-items:center;
   margin-left:6px;
@@ -216,6 +217,25 @@ function showToast(msg, type = 'info') {
   color:#ef4444; /* vermelho */
 }
 .ag-cell:hover .lion-editable-err{ opacity:1 }
+/* célula em erro */
+.ag-cell.lion-cell-error{
+  background: rgba(239, 68, 68, 0.12);           /* vermelho suave */
+  box-shadow: inset 0 0 0 1px rgba(239,68,68,.35);
+  transition: background .2s ease, box-shadow .2s ease;
+}
+
+/* deixa o valor em foco mais evidente no erro (opcional) */
+.ag-cell.lion-cell-error .lion-editable-val{
+  color: #ef4444;
+  font-weight: 600;
+}
+
+/* se quiser que o hover não “apague” o vermelho (opcional) */
+.ag-cell.lion-cell-error.ag-cell-focus,
+.ag-cell.lion-cell-error:hover{
+  background: rgba(239, 68, 68, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(239,68,68,.5);
+}
 
 `;
 	const el = document.createElement('style');
@@ -1750,7 +1770,11 @@ const columnDefs = [
 				cellRenderer: EditableMoneyCellRenderer, // 👈 ADICIONE ISTO
 
 				flex: 0.6,
-				cellClassRules: { 'ag-cell-loading': (p) => isCellLoading(p, 'budget') },
+
+				cellClassRules: {
+					'ag-cell-loading': (p) => isCellLoading(p, 'budget'),
+					'lion-cell-error': (p) => isCellError(p, 'budget'),
+				},
 				onCellValueChanged: async (p) => {
 					try {
 						if (shouldSuppressCellChange(p, 'budget')) return;
@@ -1817,7 +1841,10 @@ const columnDefs = [
 				valueFormatter: currencyFormatter,
 				minWidth: 80,
 				flex: 0.6,
-				cellClassRules: { 'ag-cell-loading': (p) => isCellLoading(p, 'bid') },
+				cellClassRules: {
+					'ag-cell-loading': (p) => isCellLoading(p, 'bid'),
+					'lion-cell-error': (p) => isCellError(p, 'bid'), // 👈 AQUI
+				},
 				onCellValueChanged: async (p) => {
 					try {
 						if (shouldSuppressCellChange(p, 'bid')) return;
