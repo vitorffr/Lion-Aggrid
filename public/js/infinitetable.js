@@ -634,7 +634,7 @@ function isCellLoading(p, colId) {
 	return !!p?.data?.__loading?.[colId];
 }
 /** Marca a célula como "acabou de salvar" e volta ao normal após ms. */
-function markCellJustSaved(node, colId, ms = 14000) {
+function markCellJustSaved(node, colId, ms = 60000) {
 	if (!node?.data) return;
 	node.data.__justSaved = node.data.__justSaved || {};
 	node.data.__justSaved[colId] = true;
@@ -652,7 +652,7 @@ function isCellJustSaved(p, colId) {
 	return !!p?.data?.__justSaved?.[colId];
 }
 /** Marca a célula como "erro ao salvar" e limpa após ms (default 14s). */
-function markCellError(node, colId, ms = 14000) {
+function markCellError(node, colId, ms = 60000) {
 	if (!node?.data) return;
 	node.data.__err = node.data.__err || {};
 	node.data.__err[colId] = true;
