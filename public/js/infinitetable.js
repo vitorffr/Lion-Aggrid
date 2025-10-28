@@ -975,7 +975,7 @@ StatusSliderRenderer.prototype.init = function (p) {
 		moved = false;
 
 	// ===== DEBOUNCE de clique x duplo clique =====
-	const CLICK_DELAY_MS = 350;
+	const CLICK_DELAY_MS = 300;
 	let clickTimer = null;
 
 	const scheduleOpenMenu = () => {
