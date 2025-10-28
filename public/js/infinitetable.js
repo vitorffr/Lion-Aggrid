@@ -207,6 +207,15 @@ function showToast(msg, type = 'info') {
   font-size:12px; line-height:1;
 }
 .ag-cell:hover .lion-editable-ok{ opacity:1 }
+.lion-editable-err{
+  display:inline-flex; align-items:center;
+  margin-left:6px;
+  opacity:.95;
+  pointer-events:none;
+  font-size:12px; line-height:1;
+  color:#ef4444; /* vermelho */
+}
+.ag-cell:hover .lion-editable-err{ opacity:1 }
 
 `;
 	const el = document.createElement('style');
@@ -622,6 +631,33 @@ function markCellJustSaved(node, colId, ms = 14000) {
 function isCellJustSaved(p, colId) {
 	return !!p?.data?.__justSaved?.[colId];
 }
+/** Marca a célula como "erro ao salvar" e limpa após ms (default 14s). */
+function markCellError(node, colId, ms = 14000) {
+	if (!node?.data) return;
+	node.data.__err = node.data.__err || {};
+	node.data.__err[colId] = true;
+	const api = globalThis.LionGrid?.api;
+	api?.refreshCells?.({ rowNodes: [node], columns: [colId] });
+	setTimeout(() => {
+		try {
+			if (!node?.data?.__err) return;
+			delete node.data.__err[colId];
+			api?.refreshCells?.({ rowNodes: [node], columns: [colId] });
+		} catch {}
+	}, ms);
+}
+function clearCellError(node, colId) {
+	try {
+		if (!node?.data?.__err) return;
+		delete node.data.__err[colId];
+		const api = globalThis.LionGrid?.api;
+		api?.refreshCells?.({ rowNodes: [node], columns: [colId] });
+	} catch {}
+}
+function isCellError(p, colId) {
+	return !!p?.data?.__err?.[colId];
+}
+
 /* =========================================
  * 9) Renderers
  * =======================================*/
@@ -747,14 +783,20 @@ EditableMoneyCellRenderer.prototype.init = function (p) {
 	const ok = document.createElement('i');
 	ok.className = 'lion-editable-ok ki-duotone ki-check';
 
+	// 👇 novo: X vermelho
+	const err = document.createElement('i');
+	err.className = 'lion-editable-err ki-duotone ki-cross'; // se preferir: ki-cross-circle
+
 	wrap.appendChild(valueEl);
 	wrap.appendChild(pen);
 	wrap.appendChild(ok);
+	wrap.appendChild(err);
 
 	this.eGui = wrap;
 	this.valueEl = valueEl;
 	this.pen = pen;
 	this.ok = ok;
+	this.err = err;
 
 	this.updateVisibility();
 };
@@ -778,16 +820,17 @@ EditableMoneyCellRenderer.prototype.updateVisibility = function () {
 	const isEditable = typeof editableProp === 'function' ? !!editableProp(p) : !!editableProp;
 	const loading = isCellLoading(p, this.colId);
 	const showBase = isEditable && level === 0 && !loading && !isPinnedOrTotal(p);
+
 	const justSaved = isCellJustSaved(p, this.colId);
+	const hasError = isCellError(p, this.colId);
 
-	// alterna ícones: se acabou de salvar, mostra ✓; senão mostra lápis
-	this.ok.style.display = showBase && justSaved ? 'inline-flex' : 'none';
-	this.pen.style.display = showBase && !justSaved ? 'inline-flex' : 'none';
+	// prioridade: ERRO > ✓ > lápis
+	this.err.style.display = showBase && hasError ? 'inline-flex' : 'none';
+	this.ok.style.display = showBase && !hasError && justSaved ? 'inline-flex' : 'none';
+	this.pen.style.display = showBase && !hasError && !justSaved ? 'inline-flex' : 'none';
 };
 
-EditableMoneyCellRenderer.prototype.destroy = function () {
-	/* nada */
-};
+EditableMoneyCellRenderer.prototype.destroy = function () {};
 
 /* ======= Campaign Status Slider Renderer (otimizado) ======= */
 function StatusSliderRenderer() {}
@@ -1719,30 +1762,42 @@ const columnDefs = [
 						const oldN = parseCurrencyFlexible(p.oldValue, currency);
 						const newN = parseCurrencyFlexible(p.newValue, currency);
 						if (Number.isFinite(oldN) && Number.isFinite(newN) && oldN === newN) return;
+
 						if (!Number.isFinite(newN) || newN < 0) {
 							setCellSilently(p, 'budget', p.oldValue);
+							markCellError(p.node, 'budget'); // 👈 erro: input inválido
 							showToast('Budget inválido', 'danger');
+							nudgeRenderer(p, 'budget');
 							return;
 						}
+
 						setCellLoading(p.node, 'budget', true);
 						p.api.refreshCells({ rowNodes: [p.node], columns: ['budget'] });
+
 						const okTest = await toggleFeature('budget', { id, value: newN });
 						if (!okTest) {
 							setCellSilently(p, 'budget', p.oldValue);
+							markCellError(p.node, 'budget'); // 👈 erro: pré-check falhou
+							nudgeRenderer(p, 'bid'); // 👈 col certa
+
 							p.api.refreshCells({ rowNodes: [p.node], columns: ['budget'] });
 							return;
 						}
-						await updateCampaignBudgetBackend(id, newN);
-						setCellSilently(p, 'budget', newN);
-						p.api.refreshCells({ rowNodes: [p.node], columns: ['budget'] });
 
+						await updateCampaignBudgetBackend(id, newN);
+
+						setCellSilently(p, 'budget', newN);
+						clearCellError(p.node, 'budget'); // 👈 sucesso: limpa erro
 						p.api.refreshCells({ rowNodes: [p.node], columns: ['budget'] });
-						markCellJustSaved(p.node, 'budget'); // 👈 ADICIONE ESTA LINHA
+						markCellJustSaved(p.node, 'budget');
 						nudgeRenderer(p, 'budget');
 
 						showToast('Budget atualizado', 'success');
 					} catch (e) {
 						setCellSilently(p, 'budget', p.oldValue);
+						markCellError(p.node, 'budget'); // 👈 erro: exceção no backend
+						nudgeRenderer(p, 'bid'); // 👈 col certa
+
 						showToast(`Erro ao salvar Budget: ${e?.message || e}`, 'danger');
 					} finally {
 						setCellLoading(p.node, 'budget', false);
@@ -1774,30 +1829,44 @@ const columnDefs = [
 						const oldN = parseCurrencyFlexible(p.oldValue, currency);
 						const newN = parseCurrencyFlexible(p.newValue, currency);
 						if (Number.isFinite(oldN) && Number.isFinite(newN) && oldN === newN) return;
+
 						if (!Number.isFinite(newN) || newN < 0) {
 							setCellSilently(p, 'bid', p.oldValue);
+							markCellError(p.node, 'bid'); // 👈 erro: input inválido
+							nudgeRenderer(p, 'bid'); // 👈 col certa
+
 							showToast('Bid inválido', 'danger');
+							nudgeRenderer(p, 'bid'); // 👈 col certa
 							return;
 						}
+
 						setCellLoading(p.node, 'bid', true);
 						p.api.refreshCells({ rowNodes: [p.node], columns: ['bid'] });
+
 						const okTest = await toggleFeature('bid', { id, value: newN });
 						if (!okTest) {
 							setCellSilently(p, 'bid', p.oldValue);
+							markCellError(p.node, 'bid'); // 👈 erro: pré-check falhou
+							nudgeRenderer(p, 'bid'); // 👈 col certa
+
 							p.api.refreshCells({ rowNodes: [p.node], columns: ['bid'] });
 							return;
 						}
 
 						await updateCampaignBidBackend(id, newN);
-						setCellSilently(p, 'bid', newN);
-						p.api.refreshCells({ rowNodes: [p.node], columns: ['bid'] });
 
-						markCellJustSaved(p.node, 'bid'); // 👈 ADICIONE ESTA LINHA
-						nudgeRenderer(p, 'budget');
+						setCellSilently(p, 'bid', newN);
+						clearCellError(p.node, 'bid'); // 👈 sucesso: limpa erro
+						p.api.refreshCells({ rowNodes: [p.node], columns: ['bid'] });
+						markCellJustSaved(p.node, 'bid');
+						nudgeRenderer(p, 'bid'); // 👈 col certa
 
 						showToast('Bid atualizado', 'success');
 					} catch (e) {
 						setCellSilently(p, 'bid', p.oldValue);
+						markCellError(p.node, 'bid'); // 👈 erro: exceção no backend
+						nudgeRenderer(p, 'bid'); // 👈 col certa
+
 						showToast(`Erro ao salvar Bid: ${e?.message || e}`, 'danger');
 					} finally {
 						setCellLoading(p.node, 'bid', false);
