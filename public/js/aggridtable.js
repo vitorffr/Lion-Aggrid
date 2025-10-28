@@ -350,12 +350,40 @@ function isPinnedOrTotal(params) {
 /* =========================================
  * 8) Utils de status/loading por célula
  * =======================================*/
+// 👇 drop-in p/ usar no lugar onde você chamava redrawRows
+function blurLikeClickElsewhere(p) {
+	const api = p.api;
+	const rowIdx = p.node.rowIndex;
+	const colId = p.column.getColId();
+
+	// 1) “Clique fora”: encerra edição (commit) — igual blur
+	api.stopEditing(false);
+
+	// 2) Escolhe uma coluna vizinha segura (qualquer uma ≠ a atual e ≠ campaign_status)
+	const allCols = (api.getAllDisplayedColumns?.() || []).map((c) => c.getColId());
+	const neighborColId = allCols.find((id) => id !== colId && id !== 'campaign_status') || colId;
+
+	// 3) Move o foco rapidamente para a vizinha (simula click fora)
+	api.setFocusedCell(rowIdx, neighborColId);
+
+	// 4) (Opcional) volta o foco e refresca somente a célula alterada
+	setTimeout(() => {
+		api.setFocusedCell(rowIdx, colId);
+		api.refreshCells({
+			rowNodes: [p.node],
+			columns: [colId],
+			force: true,
+			suppressFlash: true,
+		});
+	}, 0);
+}
+
 function nudgeRenderer(p, colId) {
 	// encerra a edição (gera blur/commit do editor)
 	p.api.stopEditing(false);
 	// força re-render só da célula alvo
 	p.api.refreshCells({ rowNodes: [p.node], columns: [colId], force: true });
-	p.api.redrawRows({ rowNodes: [p.node] });
+	blurLikeClickElsewhere(p);
 }
 
 /* ===== Row Loading (linha inteira com spinner) ===== */
