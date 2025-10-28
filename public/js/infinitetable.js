@@ -46,6 +46,10 @@ const GRID_STATE_IGNORE_ON_RESTORE = ['pagination', 'scroll', 'rowSelection', 'f
 const DEV_FAKE_NETWORK_LATENCY_MS = 0;
 const MIN_SPINNER_MS = 500;
 
+// NEW — knobs só do drilldown:
+const DRILL_MIN_SPINNER_MS = 900; // mínimo que o spinner fica visível ao abrir filhos
+const DRILL_FAKE_NETWORK_MS = 0; // latência fake extra (ex.: 800 ou 1200)
+
 // === Cache local do nível 0 (campanhas) - carrega tudo de uma vez ===
 let ROOT_CACHE = null; // { rowsRaw: [] }
 
@@ -1773,6 +1777,12 @@ function refreshSSRM(api) {
 		api.onFilterChanged();
 	}
 }
+function setParentRowLoading(api, parentId, on) {
+	if (!api || !parentId) return;
+	const node = api.getRowNode(parentId);
+	if (!node || !node.data) return;
+	node.data.__rowLoading = !!on;
+}
 
 /* =========================================
  * 15) Global Quick Filter (IIFE)
@@ -2220,6 +2230,10 @@ function makeGrid() {
 		minWidth: 280,
 		pinned: 'left',
 		cellClass: (p) => ['camp-root', 'camp-child', 'camp-grand'][Math.min(p?.node?.level ?? 0, 2)],
+		cellClassRules: {
+			// aplica classe só na célula da coluna de grupo quando o PAI estiver em loading
+			'ag-cell-loading': (p) => !!p?.data?.__rowLoading,
+		},
 		tooltipValueGetter: (p) => {
 			const d = p.data || {};
 			if (p?.node?.level === 0) {
@@ -2520,7 +2534,12 @@ function makeGrid() {
 						// Nível 1 — ADSETS (continua SSRM/DRILL)
 						// =========================================
 						if (groupKeys.length === 1) {
+							const t0 = performance.now(); // NEW
 							const campaignId = groupKeys[0];
+							const parentId = `c:${campaignId}`; // NEW
+							const apiTarget = req.api ?? params.api; // já usado acima
+							setParentRowLoading(apiTarget, parentId, true); // NEW
+
 							const qs = new URLSearchParams({
 								campaign_id: campaignId,
 								period: DRILL.period,
@@ -2529,9 +2548,20 @@ function makeGrid() {
 								sortModel: JSON.stringify(sortModel || []),
 								filterModel: JSON.stringify(filterModelWithGlobal || {}),
 							});
+
+							// NEW — latência fake opcional
+							if (DRILL_FAKE_NETWORK_MS > 0) await sleep(DRILL_FAKE_NETWORK_MS);
+
 							const data = await fetchJSON(`${DRILL_ENDPOINTS.ADSETS}?${qs.toString()}`);
 							const rows = (data.rows || []).map(normalizeAdsetRow);
+
+							// NEW — garante spinner mínimo
+							await withMinSpinner(t0, DRILL_MIN_SPINNER_MS);
+
 							req.success({ rowData: rows, rowCount: data.lastRow ?? rows.length });
+
+							// NEW — desliga loading do pai
+							setParentRowLoading(apiTarget, parentId, false);
 							return;
 						}
 
@@ -2539,7 +2569,12 @@ function makeGrid() {
 						// Nível 2 — ADS (continua SSRM/DRILL)
 						// =========================================
 						if (groupKeys.length === 2) {
+							const t0 = performance.now(); // NEW
 							const adsetId = groupKeys[1];
+							const parentId = `s:${adsetId}`; // NEW
+							const apiTarget = req.api ?? params.api; // NEW
+							setParentRowLoading(apiTarget, parentId, true); // NEW
+
 							const qs = new URLSearchParams({
 								adset_id: adsetId,
 								period: DRILL.period,
@@ -2548,9 +2583,20 @@ function makeGrid() {
 								sortModel: JSON.stringify(sortModel || []),
 								filterModel: JSON.stringify(filterModelWithGlobal || {}),
 							});
+
+							// NEW — latência fake opcional
+							if (DRILL_FAKE_NETWORK_MS > 0) await sleep(DRILL_FAKE_NETWORK_MS);
+
 							const data = await fetchJSON(`${DRILL_ENDPOINTS.ADS}?${qs.toString()}`);
 							const rows = (data.rows || []).map(normalizeAdRow);
+
+							// NEW — garante spinner mínimo
+							await withMinSpinner(t0, DRILL_MIN_SPINNER_MS);
+
 							req.success({ rowData: rows, rowCount: data.lastRow ?? rows.length });
+
+							// NEW — desliga loading do pai
+							setParentRowLoading(apiTarget, parentId, false);
 							return;
 						}
 
