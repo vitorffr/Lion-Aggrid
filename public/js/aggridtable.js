@@ -417,28 +417,22 @@ function isCellJustSaved(p, colId) {
 	return !!p?.data?.__justSaved?.[colId];
 }
 /** Marca a célula como "erro ao salvar" e limpa após ms (default 60s). */
+function clearCellError(node, colId) {
+	if (!node?.data?.__err) return;
+	delete node.data.__err[colId];
+	const api = globalThis.LionGrid?.api;
+	api?.refreshCells?.({ rowNodes: [node], columns: [colId], force: true, suppressFlash: true });
+}
+
 function markCellError(node, colId, ms = 60000) {
 	if (!node?.data) return;
 	node.data.__err = node.data.__err || {};
 	node.data.__err[colId] = true;
 	const api = globalThis.LionGrid?.api;
-	api?.refreshCells?.({ rowNodes: [node], columns: [colId] });
-	setTimeout(() => {
-		try {
-			if (!node?.data?.__err) return;
-			delete node.data.__err[colId];
-			api?.refreshCells?.({ rowNodes: [node], columns: [colId] });
-		} catch {}
-	}, ms);
+	api?.refreshCells?.({ rowNodes: [node], columns: [colId], force: true, suppressFlash: true });
+	setTimeout(() => clearCellError(node, colId), ms);
 }
-function clearCellError(node, colId) {
-	try {
-		if (!node?.data?.__err) return;
-		delete node.data.__err[colId];
-		const api = globalThis.LionGrid?.api;
-		api?.refreshCells?.({ rowNodes: [node], columns: [colId] });
-	} catch {}
-}
+
 function isCellError(p, colId) {
 	return !!p?.data?.__err?.[colId];
 }
