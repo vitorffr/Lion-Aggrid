@@ -191,6 +191,23 @@ function showToast(msg, type = 'info') {
 .lion-status-menu__item:hover { background: rgba(255,255,255,.06); }
 .lion-status-menu__item.is-active::before { content:"●"; font-size:10px; line-height:1; }
 @keyframes lion-spin { to { transform: rotate(360deg); } }
+.lion-editable-pen{
+  display:inline-flex; align-items:center;
+  margin-left:6px;
+  opacity:.45;
+  pointer-events:none; /* não rouba clique (entra em edição normal) */
+  font-size:12px; line-height:1;
+}
+.ag-cell:hover .lion-editable-pen{ opacity:.85 }
+.lion-editable-ok{
+  display:inline-flex; align-items:center;
+  margin-left:6px;
+  opacity:.9;
+  pointer-events:none;
+  font-size:12px; line-height:1;
+}
+.ag-cell:hover .lion-editable-ok{ opacity:1 }
+
 `;
 	const el = document.createElement('style');
 	el.id = 'lion-loading-styles';
@@ -559,6 +576,13 @@ function computeClientTotals(rows) {
 /* =========================================
  * 8) Utils de status/loading por célula
  * =======================================*/
+function nudgeRenderer(p, colId) {
+	// encerra a edição (gera blur/commit do editor)
+	p.api.stopEditing(false);
+	// força re-render só da célula alvo
+	p.api.refreshCells({ rowNodes: [p.node], columns: [colId], force: true });
+	p.api.redrawRows({ rowNodes: [p.node] });
+}
 function isStatusActiveVal(v) {
 	return String(v ?? '').toUpperCase() === 'ACTIVE';
 }
@@ -580,7 +604,24 @@ function setCellLoading(node, colId, on) {
 function isCellLoading(p, colId) {
 	return !!p?.data?.__loading?.[colId];
 }
-
+/** Marca a célula como "acabou de salvar" e volta ao normal após ms. */
+function markCellJustSaved(node, colId, ms = 14000) {
+	if (!node?.data) return;
+	node.data.__justSaved = node.data.__justSaved || {};
+	node.data.__justSaved[colId] = true;
+	const api = globalThis.LionGrid?.api;
+	api?.refreshCells?.({ rowNodes: [node], columns: [colId] });
+	setTimeout(() => {
+		try {
+			if (!node?.data?.__justSaved) return;
+			delete node.data.__justSaved[colId];
+			api?.refreshCells?.({ rowNodes: [node], columns: [colId] });
+		} catch {}
+	}, ms);
+}
+function isCellJustSaved(p, colId) {
+	return !!p?.data?.__justSaved?.[colId];
+}
 /* =========================================
  * 9) Renderers
  * =======================================*/
@@ -682,20 +723,71 @@ function revenueCellRenderer(p) {
 	const totalEl = document.createElement('span');
 	totalEl.textContent = total || '';
 	wrap.appendChild(totalEl);
-	if (parts.length === 2) {
-		const aEl = document.createElement('span');
-		aEl.textContent = `(${REVENUE_LABELS[0] || 'A'}: ${parts[0]})`;
-		aEl.style.fontSize = '11px';
-		aEl.style.opacity = '0.75';
-		const bEl = document.createElement('span');
-		bEl.textContent = `(${REVENUE_LABELS[1] || 'B'}: ${parts[1]})`;
-		bEl.style.fontSize = '11px';
-		bEl.style.opacity = '0.75';
-		wrap.appendChild(aEl);
-		wrap.appendChild(bEl);
-	}
+
 	return wrap;
 }
+function EditableMoneyCellRenderer() {}
+
+EditableMoneyCellRenderer.prototype.init = function (p) {
+	this.p = p;
+	this.colId = p?.column?.getColId?.() || '';
+
+	const wrap = document.createElement('span');
+	wrap.style.display = 'inline-flex';
+	wrap.style.alignItems = 'center';
+	wrap.style.gap = '4px';
+
+	const valueEl = document.createElement('span');
+	valueEl.className = 'lion-editable-val';
+	valueEl.textContent = p.valueFormatted != null ? String(p.valueFormatted) : String(p.value ?? '');
+
+	const pen = document.createElement('i');
+	pen.className = 'lion-editable-pen ki-duotone ki-pencil';
+
+	const ok = document.createElement('i');
+	ok.className = 'lion-editable-ok ki-duotone ki-check';
+
+	wrap.appendChild(valueEl);
+	wrap.appendChild(pen);
+	wrap.appendChild(ok);
+
+	this.eGui = wrap;
+	this.valueEl = valueEl;
+	this.pen = pen;
+	this.ok = ok;
+
+	this.updateVisibility();
+};
+
+EditableMoneyCellRenderer.prototype.getGui = function () {
+	return this.eGui;
+};
+
+EditableMoneyCellRenderer.prototype.refresh = function (p) {
+	this.p = p;
+	this.valueEl.textContent =
+		p.valueFormatted != null ? String(p.valueFormatted) : String(p.value ?? '');
+	this.updateVisibility();
+	return true;
+};
+
+EditableMoneyCellRenderer.prototype.updateVisibility = function () {
+	const p = this.p || {};
+	const level = p?.node?.level ?? -1;
+	const editableProp = p.colDef?.editable;
+	const isEditable = typeof editableProp === 'function' ? !!editableProp(p) : !!editableProp;
+	const loading = isCellLoading(p, this.colId);
+	const showBase = isEditable && level === 0 && !loading && !isPinnedOrTotal(p);
+	const justSaved = isCellJustSaved(p, this.colId);
+
+	// alterna ícones: se acabou de salvar, mostra ✓; senão mostra lápis
+	this.ok.style.display = showBase && justSaved ? 'inline-flex' : 'none';
+	this.pen.style.display = showBase && !justSaved ? 'inline-flex' : 'none';
+};
+
+EditableMoneyCellRenderer.prototype.destroy = function () {
+	/* nada */
+};
 
 /* ======= Campaign Status Slider Renderer (otimizado) ======= */
 function StatusSliderRenderer() {}
@@ -783,8 +875,9 @@ StatusSliderRenderer.prototype.init = function (p) {
 	root.append(fill, label, knob);
 	this.eGui = root;
 
-	let trackLenPx = 0,
-		rafToken = null;
+	let trackLenPx = 0;
+	let rafToken = null;
+
 	const computeTrackLen = () => {
 		const pad = parseFloat(getComputedStyle(root).paddingLeft || '0');
 		const knobW = knob.clientWidth || 0;
@@ -881,6 +974,24 @@ StatusSliderRenderer.prototype.init = function (p) {
 		startOn = false,
 		moved = false;
 
+	// ===== DEBOUNCE de clique x duplo clique =====
+	const CLICK_DELAY_MS = 350;
+	let clickTimer = null;
+
+	const scheduleOpenMenu = () => {
+		clearTimeout(clickTimer);
+		clickTimer = setTimeout(() => {
+			clickTimer = null;
+			openMenu();
+		}, CLICK_DELAY_MS);
+	};
+	const cancelScheduledMenu = () => {
+		if (clickTimer) {
+			clearTimeout(clickTimer);
+			clickTimer = null;
+		}
+	};
+
 	const onPointerMove = (x) => {
 		if (!dragging || rafToken) return;
 		rafToken = requestAnimationFrame(() => {
@@ -907,9 +1018,10 @@ StatusSliderRenderer.prototype.init = function (p) {
 		dragging = false;
 		detachWindowListeners();
 		if (!moved) {
+			// Tratar como um "single click" com debounce:
 			ev?.preventDefault?.();
 			ev?.stopPropagation?.();
-			openMenu();
+			scheduleOpenMenu();
 			return;
 		}
 		const pct = parseFloat(fill.style.width) / 100;
@@ -939,27 +1051,38 @@ StatusSliderRenderer.prototype.init = function (p) {
 	root.addEventListener('mousedown', (e) => beginDrag(e.clientX, e));
 	root.addEventListener('touchstart', (e) => beginDrag(e.touches[0].clientX, e), { passive: false });
 
+	// Clique simples -> agenda menu; o dblclick abaixo cancela essa agenda
 	root.addEventListener('click', (e) => {
 		e.preventDefault();
 		e.stopPropagation();
+		if (dragging) return; // ignorar se veio de drag
+		if (isCellLoading({ data: p.node?.data }, colId)) return;
+		scheduleOpenMenu();
 	});
+
+	// Teclado abre menu imediato
 	root.addEventListener('keydown', (e) => {
 		if (e.code === 'Space' || e.code === 'Enter') {
 			e.preventDefault();
 			e.stopPropagation();
+			cancelScheduledMenu();
 			openMenu();
 		}
 	});
+
+	// Duplo clique -> troca status e cancela o menu agendado
 	root.addEventListener('dblclick', (e) => {
 		e.preventDefault();
 		e.stopPropagation();
 		if (isCellLoading({ data: p.node?.data }, colId)) return;
+		cancelScheduledMenu();
 		const cur = getVal();
 		const prevOn = cur === 'ACTIVE';
 		const next = prevOn ? 'PAUSED' : 'ACTIVE';
 		this._userInteracted = true;
 		commit(next, prevOn);
 	});
+
 	const openMenu = () => {
 		if (isCellLoading({ data: p.node?.data }, colId)) return;
 		const cur = getVal();
@@ -981,6 +1104,7 @@ StatusSliderRenderer.prototype.init = function (p) {
 	this._cleanup = () => {
 		LionStatusMenu.close();
 		detachWindowListeners();
+		cancelScheduledMenu();
 		if (rafToken) cancelAnimationFrame(rafToken);
 	};
 };
@@ -1188,7 +1312,7 @@ function createAgTheme() {
 	return themeQuartz.withPart(iconSetMaterial).withParams({
 		browserColorScheme: 'dark',
 		backgroundColor: '#0C0C0D',
-		foregroundColor: '#BBBEC9',
+		foregroundColor: '#f7f9ffff',
 		headerBackgroundColor: '#141414',
 		headerTextColor: '#FFFFFF',
 		accentColor: '#15BDE8',
@@ -1200,7 +1324,6 @@ function createAgTheme() {
 		spacing: 6,
 	});
 }
-const LION_CENTER_EXCLUDES = new Set(['profile_name']);
 
 /* =========================================
  * 13) Colunas (defaultColDef, defs)
@@ -1210,7 +1333,7 @@ const defaultColDef = {
 	filter: 'agTextColumnFilter',
 	floatingFilter: true,
 	resizable: true,
-	cellClass: (p) => (LION_CENTER_EXCLUDES.has(p.column.getColId()) ? null : 'lion-center-cell'),
+	cellClass: (p) => 'lion-center-cell',
 	wrapHeaderText: true,
 	autoHeaderHeight: true,
 	enableRowGroup: true,
@@ -1517,10 +1640,12 @@ const columnDefs = [
 				headerName: 'Budget',
 				field: 'budget',
 				editable: (p) => p.node?.level === 0 && !isCellLoading(p, 'budget'),
-				cellEditor: CurrencyMaskEditor,
-				valueParser: parseCurrencyInput,
+				cellEditor: CurrencyMaskEditor, // 👈 trocado
+				valueParser: parseCurrencyInput, // já usa parseCurrencyFlexible (ok com vírgula)
 				valueFormatter: currencyFormatter,
 				minWidth: 120,
+				cellRenderer: EditableMoneyCellRenderer, // 👈 ADICIONE ISTO
+
 				flex: 0.6,
 				cellClassRules: { 'ag-cell-loading': (p) => isCellLoading(p, 'budget') },
 				onCellValueChanged: async (p) => {
@@ -1550,6 +1675,11 @@ const columnDefs = [
 						await updateCampaignBudgetBackend(id, newN);
 						setCellSilently(p, 'budget', newN);
 						p.api.refreshCells({ rowNodes: [p.node], columns: ['budget'] });
+
+						p.api.refreshCells({ rowNodes: [p.node], columns: ['budget'] });
+						markCellJustSaved(p.node, 'budget'); // 👈 ADICIONE ESTA LINHA
+						nudgeRenderer(p, 'budget');
+
 						showToast('Budget atualizado', 'success');
 					} catch (e) {
 						setCellSilently(p, 'budget', p.oldValue);
@@ -1560,14 +1690,17 @@ const columnDefs = [
 					}
 				},
 			},
+
 			{
 				headerName: 'Bid',
 				field: 'bid',
+				cellRenderer: EditableMoneyCellRenderer, // 👈 ADICIONE ISTO
+
 				editable: (p) => p.node?.level === 0 && !isCellLoading(p, 'bid'),
-				cellEditor: CurrencyMaskEditor,
-				valueParser: parseCurrencyInput,
+				cellEditor: CurrencyMaskEditor, // 👈 trocado
+				valueParser: parseCurrencyInput, // já usa parseCurrencyFlexible (ok com vírgula)
 				valueFormatter: currencyFormatter,
-				minWidth: 70,
+				minWidth: 80,
 				flex: 0.6,
 				cellClassRules: { 'ag-cell-loading': (p) => isCellLoading(p, 'bid') },
 				onCellValueChanged: async (p) => {
@@ -1594,9 +1727,14 @@ const columnDefs = [
 							p.api.refreshCells({ rowNodes: [p.node], columns: ['bid'] });
 							return;
 						}
+
 						await updateCampaignBidBackend(id, newN);
 						setCellSilently(p, 'bid', newN);
 						p.api.refreshCells({ rowNodes: [p.node], columns: ['bid'] });
+
+						markCellJustSaved(p.node, 'bid'); // 👈 ADICIONE ESTA LINHA
+						nudgeRenderer(p, 'budget');
+
 						showToast('Bid atualizado', 'success');
 					} catch (e) {
 						setCellSilently(p, 'bid', p.oldValue);
@@ -2278,6 +2416,89 @@ function makeGrid() {
 			return (name + ' ' + utm).trim();
 		},
 	};
+	// ===== [1] Medidor offscreen (singleton) =====
+	const _rowHeightMeasure = (() => {
+		let box = null;
+		return {
+			ensure() {
+				if (box) return box;
+				box = document.createElement('div');
+				box.id = 'lion-rowheight-measurer';
+				Object.assign(box.style, {
+					position: 'absolute',
+					left: '-99999px',
+					top: '-99999px',
+					visibility: 'hidden',
+					whiteSpace: 'normal',
+					wordBreak: 'break-word',
+					overflowWrap: 'anywhere',
+					lineHeight: '1.25',
+					fontFamily: 'IBM Plex Sans, system-ui, sans-serif',
+					fontSize: '14px',
+					padding: '0',
+					margin: '0',
+					border: '0',
+				});
+				document.body.appendChild(box);
+				return box;
+			},
+			measure(text, widthPx) {
+				const el = this.ensure();
+				el.style.width = Math.max(0, widthPx) + 'px';
+				el.textContent = text || '';
+				// scrollHeight retorna a altura “necessária”
+				return el.scrollHeight || 0;
+			},
+		};
+	})();
+
+	// ===== [2] Largura útil da coluna autoGroup =====
+	function getAutoGroupContentWidth(api) {
+		try {
+			const col =
+				api.getColumn('campaign') ||
+				api.getDisplayedCenterColumns().find((c) => c.getColId?.() === 'campaign');
+			if (!col) return 300;
+			const comp = api.getDisplayedColAfter ? api.getDisplayedColAfter(col) : null; // só p/ forçar layout
+			const colW = col.getActualWidth();
+			// padding interno do renderer (aprox) + ícones (seta/checkbox)
+			const padding = 16; // padding horizontal interno (left+right)
+			const iconArea = 28; // seta/checkbox/margens
+			return Math.max(40, colW - padding - iconArea);
+		} catch {
+			return 300;
+		}
+	}
+
+	// ===== [3] Texto que realmente aparece na célula (2 linhas possíveis) =====
+	function getCampaignCellText(p) {
+		const d = p?.data || {};
+		if ((p?.node?.level ?? 0) !== 0) {
+			// filhos/netos: só o label
+			return String(d.__label || '');
+		}
+		const label = String(d.__label || '');
+		const utm = String(d.utm_campaign || '');
+		// O innerRenderer mostra “label” na 1ª linha e “utm” (se houver) na 2ª.
+		return utm ? `${label}\n${utm}` : label;
+	}
+
+	// ===== [4] Cache simples por rowId + largura =====
+	const _rowHCache = new Map(); // key -> height
+	function _cacheKey(p, width) {
+		const id =
+			p?.node?.id ||
+			(p?.node?.data?.__nodeType === 'campaign'
+				? `c:${p?.node?.data?.__groupKey}`
+				: p?.node?.data?.__nodeType === 'adset'
+				? `s:${p?.node?.data?.__groupKey}`
+				: p?.node?.data?.id || Math.random());
+		return id + '|' + Math.round(width);
+	}
+
+	// ===== [5] getRowHeight dinâmico por nº de linhas =====
+	const BASE_ROW_MIN = 50; // altura mínima p/ qualquer linha
+	const VERT_PAD = 12; // padding vertical total dentro da célula (ajuste fino)
 
 	const gridOptions = {
 		floatingFiltersHeight: 35,
@@ -2313,7 +2534,39 @@ function makeGrid() {
 			},
 		},
 
-		rowHeight: 78,
+		rowHeight: BASE_ROW_MIN,
+		getRowHeight: (p) => {
+			// Só precisa medir de verdade a coluna "Campaign". As outras usam 1 linha.
+			const w = getAutoGroupContentWidth(p.api);
+			const key = _cacheKey(p, w);
+			if (_rowHCache.has(key)) return _rowHCache.get(key);
+
+			const text = getCampaignCellText(p);
+			// mede a altura necessária para renderizar esse texto com a largura atual
+			const textH = _rowHeightMeasure.measure(text, w);
+			// soma padding e garante mínimo
+			const h = Math.max(BASE_ROW_MIN, textH + VERT_PAD);
+
+			_rowHCache.set(key, h);
+			return h;
+		},
+
+		onGridSizeChanged() {
+			_rowHCache.clear();
+			gridOptions.api?.resetRowHeights();
+		},
+		onColumnResized() {
+			_rowHCache.clear();
+			gridOptions.api?.resetRowHeights();
+		},
+		onFirstDataRendered() {
+			_rowHCache.clear();
+			gridOptions.api?.resetRowHeights();
+		},
+		onRowGroupOpened() {
+			_rowHCache.clear();
+			gridOptions.api?.resetRowHeights();
+		},
 		animateRows: true,
 		sideBar: { toolPanels: ['columns', 'filters'], defaultToolPanel: null, position: 'right' },
 		theme: createAgTheme(),

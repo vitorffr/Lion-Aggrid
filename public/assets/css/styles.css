@@ -1,4 +1,50 @@
 /* pill arrastável dentro da célula */
+
+/* célula que foi alterada recentemente */
+.ag-cell.lion-cell-changed {
+	position: relative; /* para posicionar o badge */
+	/* opcional: leve destaque de fundo */
+	/* background: linear-gradient(90deg, rgba(34,197,94,.08), transparent); */
+}
+
+/* o "check" */
+.ag-cell.lion-cell-changed::after {
+	content: '✓';
+	position: absolute;
+	right: 6px;
+	top: 6px;
+	font-size: 11px;
+	line-height: 16px;
+	width: 16px;
+	height: 16px;
+	border-radius: 999px;
+	text-align: center;
+	background: #22c55e;
+	color: #fff;
+	box-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
+	pointer-events: none;
+}
+
+/* Centraliza verticalmente a célula da autoGroup 'campaign' */
+#lionGrid .ag-cell[col-id='ag-Grid-AutoColumn'] > .ag-cell-wrapper {
+	display: flex !important;
+	align-items: center !important;
+	height: 100% !important; /* ocupa a altura da row */
+}
+
+/* O bloco do grupo também precisa ser flex e sem padding extra */
+#lionGrid .ag-cell[col-id='ag-Grid-AutoColumn'] .ag-row-group {
+	display: inline-flex !important;
+	align-items: center !important;
+}
+
+#lionGrid .ag-cell[col-id='ag-Grid-AutoColumn'] .ag-group-value {
+	display: flex !important;
+	align-items: center !important;
+	padding: 0 !important; /* mata aquele padding que puxa pra cima/baixo */
+	line-height: normal !important;
+}
+
 /* empilha texto do header e ícones em coluna */
 /* direto no alvo */
 /* 1) Centraliza verticalmente o conteúdo do gridcell alvo */
