@@ -234,7 +234,7 @@
 /* vars globais (default = sem nudge) */
 :root {
 	--paused-nudge-x: 2px; /* + direita / - esquerda */
-	--paused-nudge-y: 0px; /* + baixo / - cima    */
+	--paused-nudge-y: 0.5px; /* + baixo / - cima    */
 }
 
 /* aplica o nudge SOMENTE quando estiver PAUSED (aria-checked="false") */
@@ -282,6 +282,9 @@
 	width: 0%;
 	transition: width 140ms ease;
 }
+.ag-status-pill[aria-checked='true'] .ag-status-label {
+	transform: translateY(0.5px) !important;
+}
 
 .ag-status-label {
 	position: absolute;
@@ -289,14 +292,11 @@
 	display: flex;
 	align-items: center;
 	justify-content: center;
-
 	/* reserva espaço igual pros lados (metade do knob + padding da pill) */
 	padding-inline: var(--label-pad);
-
 	letter-spacing: 0.6px;
 	z-index: 1;
 	pointer-events: none;
-
 	/* melhora o render da fonte e evita “meio pixel” */
 	-webkit-font-smoothing: antialiased;
 	-moz-osx-font-smoothing: grayscale;
