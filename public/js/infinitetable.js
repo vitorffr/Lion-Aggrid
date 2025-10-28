@@ -794,6 +794,9 @@ function StatusSliderRenderer() {}
 const LionStatusMenu = (() => {
 	let el = null,
 		onPick = null;
+	let _isOpen = false,
+		_anchor = null;
+
 	function ensure() {
 		if (el) return el;
 		el = document.createElement('div');
@@ -802,22 +805,30 @@ const LionStatusMenu = (() => {
 		document.body.appendChild(el);
 		return el;
 	}
-	function close() {
-		if (!el) return;
-		el.style.display = 'none';
-		onPick = null;
-		document.removeEventListener('mousedown', onDocClose, true);
-		window.removeEventListener('blur', close, true);
-	}
+
 	function onDocClose(ev) {
 		if (!el) return;
+
+		// 1) Clique dentro do MENU? não fecha.
 		if (ev.target === el || el.contains(ev.target)) return;
+
+		// 2) Clique no ANCHOR (o slider) ou dentro dele? deixe o handler do anchor decidir (toggle).
+		const anchor = _anchor;
+		if (anchor && (ev.target === anchor || anchor.contains(ev.target))) {
+			return;
+		}
+
+		// 3) Qualquer outro lugar: fecha.
 		close();
 	}
-	function open({ left, top, width, current, pick }) {
+
+	function open({ left, top, width, current, pick, anchor = null }) {
 		const host = ensure();
 		host.innerHTML = '';
 		onPick = pick;
+		_anchor = anchor;
+		_isOpen = true;
+
 		['ACTIVE', 'PAUSED'].forEach((st) => {
 			const item = document.createElement('div');
 			item.className = 'lion-status-menu__item' + (current === st ? ' is-active' : '');
@@ -825,21 +836,46 @@ const LionStatusMenu = (() => {
 			item.addEventListener('mousedown', (e) => e.preventDefault());
 			item.addEventListener('click', (e) => {
 				e.preventDefault();
-				if (onPick) onPick(st);
-				close();
+				try {
+					onPick && onPick(st);
+				} finally {
+					close();
+				}
 			});
 			host.appendChild(item);
 		});
+
 		const menuW = 180;
 		host.style.left = `${Math.max(8, left + (width - menuW) / 2)}px`;
 		host.style.top = `${top + 6}px`;
+		host.style.width = `${menuW}px`;
 		host.style.display = 'block';
+
+		// listeners de fechar (usar capture pra fechar antes do click em outro lugar)
 		setTimeout(() => {
 			document.addEventListener('mousedown', onDocClose, true);
 			window.addEventListener('blur', close, true);
 		}, 0);
 	}
-	return { open, close };
+
+	function close() {
+		if (!el) return;
+		el.style.display = 'none';
+		onPick = null;
+		_isOpen = false;
+		_anchor = null;
+		document.removeEventListener('mousedown', onDocClose, true);
+		window.removeEventListener('blur', close, true);
+	}
+
+	function isOpen() {
+		return _isOpen;
+	}
+	function getAnchor() {
+		return _anchor;
+	}
+
+	return { open, close, isOpen, getAnchor };
 })();
 
 StatusSliderRenderer.prototype.init = function (p) {
@@ -975,7 +1011,7 @@ StatusSliderRenderer.prototype.init = function (p) {
 		moved = false;
 
 	// ===== DEBOUNCE de clique x duplo clique =====
-	const CLICK_DELAY_MS = 300;
+	const CLICK_DELAY_MS = 280;
 	let clickTimer = null;
 
 	const scheduleOpenMenu = () => {
@@ -1055,8 +1091,19 @@ StatusSliderRenderer.prototype.init = function (p) {
 	root.addEventListener('click', (e) => {
 		e.preventDefault();
 		e.stopPropagation();
-		if (dragging) return; // ignorar se veio de drag
+		if (dragging) return;
 		if (isCellLoading({ data: p.node?.data }, colId)) return;
+
+		// mata qualquer agendamento pendente para evitar reabrir logo após fechar
+		cancelScheduledMenu();
+
+		if (LionStatusMenu.isOpen() && LionStatusMenu.getAnchor() === root) {
+			// já está aberto neste anchor -> fecha (toggle-off)
+			LionStatusMenu.close();
+			return;
+		}
+
+		// estava fechado -> abre (toggle-on) com debounce de single click
 		scheduleOpenMenu();
 	});
 
@@ -1065,8 +1112,12 @@ StatusSliderRenderer.prototype.init = function (p) {
 		if (e.code === 'Space' || e.code === 'Enter') {
 			e.preventDefault();
 			e.stopPropagation();
-			cancelScheduledMenu();
-			openMenu();
+			if (LionStatusMenu.isOpen() && LionStatusMenu.getAnchor() === root) {
+				LionStatusMenu.close();
+			} else {
+				cancelScheduledMenu();
+				openMenu(); // teclado abre imediato
+			}
 		}
 	});
 
@@ -1075,7 +1126,8 @@ StatusSliderRenderer.prototype.init = function (p) {
 		e.preventDefault();
 		e.stopPropagation();
 		if (isCellLoading({ data: p.node?.data }, colId)) return;
-		cancelScheduledMenu();
+		cancelScheduledMenu(); // impede abrir menu
+		LionStatusMenu.close(); // se por acaso estiver aberto
 		const cur = getVal();
 		const prevOn = cur === 'ACTIVE';
 		const next = prevOn ? 'PAUSED' : 'ACTIVE';
@@ -1087,11 +1139,19 @@ StatusSliderRenderer.prototype.init = function (p) {
 		if (isCellLoading({ data: p.node?.data }, colId)) return;
 		const cur = getVal();
 		const rect = root.getBoundingClientRect();
+
+		// se já estiver aberto neste mesmo anchor, apenas fecha (toggle imediato)
+		if (LionStatusMenu.isOpen() && LionStatusMenu.getAnchor() === root) {
+			LionStatusMenu.close();
+			return;
+		}
+
 		LionStatusMenu.open({
 			left: rect.left,
 			top: rect.bottom,
 			width: rect.width,
 			current: cur,
+			anchor: root, // 👈 importantíssimo
 			pick: async (st) => {
 				if (st === cur) return;
 				this._userInteracted = true;
