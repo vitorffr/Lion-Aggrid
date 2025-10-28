@@ -1,0 +1,90 @@
+<link
+  rel="stylesheet"
+  type="text/css"
+  href="https://cdn.jsdelivr.net/npm/toastify-js/src/toastify.min.css"
+/>
+
+<div id="kv-page-root" class="kt-container-fluid py-6">
+  <!-- Separador superior -->
+  <div class="border-b border-border mb-4"></div>
+
+  <!-- Header -->
+  <div class="flex flex-col gap-3">
+    <div class="flex items-center justify-between">
+      <div>
+        <h1 class="text-2xl font-semibold leading-tight">Lion Table</h1>
+        <p class="text-sm text-muted-foreground">
+          Infinite AG Grid table: drill-down, filters, and totals.
+        </p>
+      </div>
+<div class="flex items-center gap-3">
+
+  <!-- Meus presets -->
+  <select id="presetUserSelect" class="kt-select min-w-[180px]" title="Meus presets">
+    <option value="">User Presets</option>
+  </select>
+<button id="btnSaveAsPreset"   class="kt-btn kt-btn-sm" title="Add new preset">
+  <i class="ki-filled ki-abstract-10 text-base" aria-hidden="true"></i>
+  <span class="sr-only">Save preset</span>
+</button>
+
+<button id="btnDeletePreset"   class="kt-btn kt-btn-sm" title="Delete actual preset">
+  <i class="ki-filled ki-trash text-base" aria-hidden="true"></i>
+  <span class="sr-only">Delete preset</span>
+</button>
+
+<button id="btnDownloadPreset" class="kt-btn kt-btn-sm" title="Download preset in JSON format">
+  Download
+  <i class="ki-filled ki-cloud-download text-base" aria-hidden="true"></i>
+</button>
+
+<button id="btnUploadPreset"   class="kt-btn kt-btn-sm" title="Upload preset in JSON format">
+  Upload
+  <i class="ki-filled ki-cloud-add text-base" aria-hidden="true"></i>
+</button>
+
+  <input id="presetFileInput" type="file" accept="application/json"
+         class="hidden" aria-hidden="true" />
+
+  <span class="mx-2 opacity-50 select-none">|</span>
+  <!-- State (sessionStorage) -->
+
+  <button id="btnResetLayout" class="kt-btn kt-btn-sm" title="Reset to Default">Reset</button>
+
+  <span class="mx-2 opacity-50 select-none">|</span>
+<div class="kt-input">
+          <i class="ki-filled ki-magnifier"></i>
+          <input
+            id="quickFilter"
+            placeholder="Filter All"
+            type="text"
+            aria-label="Filter All"
+          />
+          <span class="kt-badge kt-badge-outline -me-1.5">⌘ K</span>
+        </div>
+
+  <label class="inline-flex items-center gap-2 select-none" title="Toggle column sizing mode">
+    <input id="colSizeModeToggle" type="checkbox" class="kt-checkbox" />
+  <span class="text whitespace-nowrap">Auto size</span>
+  </label>
+
+        <label class="inline-flex items-center gap-2 select-none" title="Pin/Unpin Columns">
+        <input id="pinToggle" type="checkbox" class="kt-checkbox" />
+        <span class="text">Pinned</span>
+      </label>
+      
+    </div>
+    </div>
+    <!-- Separador fino -->
+    <div class="border-b border-border"></div>
+  </div>
+  <!-- Grid -->
+  <div
+    id="lionGrid"
+    class="ag-theme-quartz w-full rounded-lg border border-border mt-4 overflow-hidden"
+    style="height: 73vh"
+  ></div>
+
+  <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/toastify-js"></script>
+  <script type="module" src="/public/js/infinitetable.js"></script>
+</div>

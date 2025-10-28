@@ -1,14 +1,237 @@
-/* public/js/lion-grid.js */
+/* public/js/lion-grid.js
+ *
+ * Lion Grid — AG Grid (TreeData + SSRM)
+ * -------------------------------------
+ * - NÃO remove nada: apenas reordenação e documentação.
+ * - Mesma API pública (globalThis.LionGrid), mesmos endpoints e renderers.
+ * - Comentários JSDoc adicionados para funções-chave.
+ *
+ * Estrutura:
+ *  1) Constantes & Config
+ *  2) Estado Global (moeda / quick filter)
+ *  3) Utilidades (sleep/spinner, parsing, edição silenciosa)
+ *  4) Toast
+ *  5) CSS de Loading (IIFE)
+ *  6) AG Grid: acesso + licença (IIFE)
+ *  7) Helpers/Formatters (HTML/numérico/moedas, badges)
+ *  8) Utils de status/loading por célula
+ *  9) Renderers (status pill, chips, profile, revenue)
+ * 10) Backend API (update*, fetchJSON, toggleFeature)
+ * 11) Modal simples (KTUI-like)
+ * 12) Tema (createAgTheme)
+ * 13) Colunas (defaultColDef, defs)
+ * 14) SSRM refresh compat
+ * 15) Global Quick Filter (IIFE)
+ * 16) State (load/apply saved)
+ * 17) Toggle de colunas pinadas (getSelectionColId/togglePinnedColsFromCheckbox)
+ * 18) Toolbar (presets, tamanho colunas, binds) (IIFE)
+ * 19) Normalizadores (tree)
+ * 20) Clipboard
+ * 21) Grid (makeGrid)
+ * 22) Page module (mount)
+ */
 
-function getAgGrid() {
-	const AG = globalThis.agGrid;
-	if (!AG) {
-		throw new Error('AG Grid UMD não carregado. Verifique a ORDEM dos scripts e o path do CDN.');
-	}
-	return AG;
+/* =========================================
+ * 1) Constantes & Config
+ * =======================================*/
+const ENDPOINTS = { SSRM: '/api/ssrm/?clean=1' };
+const DRILL_ENDPOINTS = { ADSETS: '/api/adsets/', ADS: '/api/ads/' };
+const DRILL = { period: 'TODAY' };
+
+/* ========= Grid State (sessionStorage) ========= */
+const GRID_STATE_KEY = 'lion.aggrid.state.v1';
+const GRID_STATE_IGNORE_ON_RESTORE = ['pagination', 'scroll', 'rowSelection', 'focusedCell'];
+
+// === Fake network & min spinner ===
+const DEV_FAKE_NETWORK_LATENCY_MS = 0;
+const MIN_SPINNER_MS = 500;
+
+/* =========================================
+ * 2) Estado Global
+ * =======================================*/
+// Moeda global da aplicação
+let LION_CURRENCY = 'BRL'; // 'BRL' | 'USD'
+
+// 🔍 QUICK FILTER global (vai em filterModel._global.filter)
+let GLOBAL_QUICK_FILTER = ''; // alimentado pelo #quickFilter
+
+/**
+ * Altera a moeda da aplicação em runtime.
+ * @param {'USD'|'BRL'} mode
+ */
+function setLionCurrency(mode) {
+	const m = String(mode || '').toUpperCase();
+	if (m === 'USD' || m === 'BRL') LION_CURRENCY = m;
+	else console.warn('[Currency] modo inválido:', mode);
+}
+function getAppCurrency() {
+	return LION_CURRENCY;
 }
 
-// Aplica licença Enterprise antes de criar a grid
+/* =========================================
+ * 3) Utilidades (tempo/edição/parsing)
+ * =======================================*/
+/**
+ * Sleep async
+ * @param {number} ms
+ */
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Garante spinner mínimo num fluxo async.
+ * @param {number} startMs performance.now() no início
+ * @param {number} minMs   ms mínimo de spinner
+ */
+async function withMinSpinner(startMs, minMs) {
+	const elapsed = performance.now() - startMs;
+	if (elapsed < minMs) await sleep(minMs - elapsed);
+}
+
+/**
+ * Parser tolerante a BRL/USD (string → number)
+ * @param {string|number|null} value
+ * @param {'USD'|'BRL'} [mode]
+ * @returns {number|null}
+ */
+function parseCurrencyFlexible(value, mode = getAppCurrency()) {
+	if (value == null || value === '') return null;
+	if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+	let s = String(value).trim();
+	s = s.replace(/[^\d.,\-+]/g, '');
+	if (!s) return null;
+	const lastDot = s.lastIndexOf('.');
+	const lastComma = s.lastIndexOf(',');
+	const hasSep = lastDot !== -1 || lastComma !== -1;
+	let normalized;
+	if (!hasSep) {
+		normalized = s.replace(/[^\d\-+]/g, '');
+	} else {
+		const decSep = lastDot > lastComma ? '.' : ',';
+		const i = s.lastIndexOf(decSep);
+		const intPart = s.slice(0, i).replace(/[^\d\-+]/g, '');
+		const fracPart = s.slice(i + 1).replace(/[^\d]/g, '');
+		normalized = intPart + (fracPart ? '.' + fracPart : '');
+	}
+	const n = parseFloat(normalized);
+	return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Marca que o próximo setDataValue para a célula NÃO deve disparar onCellValueChanged.
+ * @param {*} p params do AG Grid
+ * @param {string} colId
+ */
+function shouldSuppressCellChange(p, colId) {
+	const key = `__suppress_${colId}`;
+	if (p?.data?.[key]) {
+		p.data[key] = false;
+		return true;
+	}
+	return false;
+}
+
+/**
+ * Faz update de célula sem disparar handlers de edição.
+ * @param {*} p params do AG Grid
+ * @param {string} colId
+ * @param {*} value
+ */
+function setCellSilently(p, colId, value) {
+	const key = `__suppress_${colId}`;
+	if (p?.data) p.data[key] = true;
+	p.node.setDataValue(colId, value);
+}
+
+/* =========================================
+ * 4) Toast (fallback console)
+ * =======================================*/
+/**
+ * Toast simples (Toastify)
+ * @param {string} msg
+ * @param {'info'|'success'|'warning'|'danger'} [type]
+ */
+function showToast(msg, type = 'info') {
+	const colors = {
+		info: 'linear-gradient(90deg,#06b6d4,#3b82f6)',
+		success: 'linear-gradient(90deg,#22c55e,#16a34a)',
+		warning: 'linear-gradient(90deg,#f59e0b,#eab308)',
+		danger: 'linear-gradient(90deg,#ef4444,#dc2626)',
+	};
+	if (globalThis.Toastify) {
+		Toastify({
+			text: msg,
+			duration: 2200,
+			close: true,
+			gravity: 'bottom',
+			position: 'right',
+			stopOnFocus: true,
+			backgroundColor: colors[type] || colors.info,
+		}).showToast();
+	} else {
+		console.log(`[Toast] ${msg}`);
+	}
+}
+
+/* =========================================
+ * 5) CSS de Loading (injeção automática)
+ * =======================================*/
+(function ensureLoadingStyles() {
+	if (document.getElementById('lion-loading-styles')) return;
+	const css = `
+.ag-cell.ag-cell-loading * { visibility: hidden !important; }
+.ag-cell.ag-cell-loading::after {
+  content:""; position:absolute; left:50%; top:50%; width:14px; height:14px;
+  margin-left:-7px; margin-top:-7px; border-radius:50%; border:2px solid #9ca3af;
+  border-top-color:transparent; animation: lion-spin .8s linear infinite; z-index:2; pointer-events:none;
+}
+.lion-status-menu { position:absolute; min-width:160px; padding:6px 0; background:#111; color:#eee; border:1px solid rgba(255,255,255,.08); border-radius:8px; box-shadow:0 10px 30px rgba(0,0,0,.35); z-index:99999; }
+.lion-status-menu__item { padding:8px 12px; font-size:12px; cursor:pointer; display:flex; align-items:center; gap:8px; }
+.lion-status-menu__item:hover { background: rgba(255,255,255,.06); }
+.lion-status-menu__item.is-active::before { content:"●"; font-size:10px; line-height:1; }
+@keyframes lion-spin { to { transform: rotate(360deg); } }
+.lion-editable-pen{
+  display:inline-flex; align-items:center;
+  margin-left:6px;
+  opacity:.45;
+  pointer-events:none; /* não rouba clique (entra em edição normal) */
+  font-size:12px; line-height:1;
+}
+.ag-cell:hover .lion-editable-pen{ opacity:.85 }
+.lion-editable-ok{
+  display:inline-flex; align-items:center;
+  margin-left:6px;
+  opacity:.9;
+  pointer-events:none;
+  font-size:12px; line-height:1;
+}
+.ag-cell:hover .lion-editable-ok{ opacity:1 }
+.lion-editable-err{
+  display:inline-flex; align-items:center;
+  margin-left:6px;
+  opacity:.95;
+  pointer-events:none;
+  font-size:12px; line-height:1;
+  color:#ef4444; /* vermelho */
+}
+.ag-cell:hover .lion-editable-err{ opacity:1 }
+
+`;
+	const el = document.createElement('style');
+	el.id = 'lion-loading-styles';
+	el.textContent = css;
+	document.head.appendChild(el);
+})();
+
+/* =========================================
+ * 6) AG Grid: acesso + licença
+ * =======================================*/
+/** Obtém objeto global do AG Grid (UMD). */
+function getAgGrid() {
+	const AG = globalThis.agGrid;
+	if (!AG)
+		throw new Error('AG Grid UMD não carregado. Verifique a ORDEM dos scripts e o path do CDN.');
+	return AG;
+}
 (function applyAgGridLicense() {
 	try {
 		const AG = getAgGrid();
@@ -18,37 +241,9 @@ function getAgGrid() {
 	} catch {}
 })();
 
-// ==================== Helpers ====================
-async function fetchJSON(url, options = {}) {
-	const { timeout = 12000, ...rest } = options;
-	const ctrl = new AbortController();
-	const to = setTimeout(() => ctrl.abort(), timeout);
-	try {
-		const res = await fetch(url, {
-			signal: ctrl.signal,
-			headers: { 'Content-Type': 'application/json' },
-			...rest,
-		});
-		const type = res.headers.get('content-type') || '';
-		const isJSON = type.includes('application/json');
-		const body = isJSON ? await res.json() : await res.text();
-		if (!res.ok) {
-			const message = isJSON
-				? body?.error || body?.message || res.statusText
-				: typeof body === 'string'
-				? body
-				: res.statusText;
-			const err = new Error(message);
-			err.status = res.status;
-			err.payload = body;
-			throw err;
-		}
-		return body;
-	} finally {
-		clearTimeout(to);
-	}
-}
-
+/* =========================================
+ * 7) Helpers/Formatters (HTML/numérico/moedas, badges)
+ * =======================================*/
 const stripHtml = (s) =>
 	typeof s === 'string'
 		? s
@@ -63,7 +258,6 @@ const strongText = (s) => {
 	return stripHtml(m ? m[1] : s);
 };
 
-// "R$ 1.618,65" -> 1618.65  | "-" -> null
 const toNumberBR = (s) => {
 	if (s == null) return null;
 	if (typeof s === 'number') return s;
@@ -78,33 +272,931 @@ const toNumberBR = (s) => {
 const brlFmt = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 const intFmt = new Intl.NumberFormat('pt-BR');
 
-const currencyFormatter = (p) => {
-	const n = toNumberBR(p.value);
-	return n == null ? p.value ?? '' : brlFmt.format(n);
-};
+/** Formatter de moeda dinâmico (BRL/USD) para AG Grid. */
+function currencyFormatter(p) {
+	const currency = getAppCurrency();
+	const locale = currency === 'USD' ? 'en-US' : 'pt-BR';
+	let n = typeof p.value === 'number' ? p.value : parseCurrencyFlexible(p.value, currency);
+	if (!Number.isFinite(n)) return p.value ?? '';
+	return new Intl.NumberFormat(locale, { style: 'currency', currency }).format(n);
+}
 const intFormatter = (p) => {
 	const n = toNumberBR(p.value);
 	return n == null ? p.value ?? '' : intFmt.format(Math.round(n));
 };
 
-// Renderers no front (sem HTML vindo do back)
-const statusRenderer = (p) => {
-	const txt = strongText(p.value || '');
+/** Cores fallback para badges (sem tailwind). */
+const FALLBACK_STYLE = {
+	success: { bg: '#22c55e', fg: '#ffffff' },
+	primary: { bg: '#3b82f6', fg: '#ffffff' },
+	danger: { bg: '#dc2626', fg: '#ffffff' },
+	warning: { bg: '#eab308', fg: '#111111' },
+	info: { bg: '#06b6d4', fg: '#ffffff' },
+	secondary: { bg: '#334155', fg: '#ffffff' },
+	light: { bg: '#e5e7eb', fg: '#111111' },
+	dark: { bg: '#1f2937', fg: '#ffffff' },
+};
+function renderBadgeNode(label, colorKey) {
+	const fb = FALLBACK_STYLE[colorKey] || FALLBACK_STYLE.secondary;
 	const span = document.createElement('span');
-	const active = String(txt).toUpperCase() === 'ACTIVE';
-	span.className = 'badge ' + (active ? 'badge--success' : 'badge--secondary');
-	span.textContent = txt || '-';
+	span.textContent = label;
+	span.style.display = 'inline-block';
+	span.style.padding = '2px 8px';
+	span.style.borderRadius = '999px';
+	span.style.fontSize = '12px';
+	span.style.fontWeight = '600';
+	span.style.lineHeight = '1.4';
+	span.style.backgroundColor = fb.bg;
+	span.style.color = fb.fg;
 	return span;
+}
+function renderBadge(label, colorKey) {
+	return renderBadgeNode(label, colorKey).outerHTML;
+}
+function pickStatusColor(raw) {
+	const s = String(raw || '')
+		.trim()
+		.toLowerCase();
+	return s === 'active' ? 'success' : 'secondary';
+}
+function isPinnedOrTotal(params) {
+	return (
+		params?.node?.rowPinned === 'bottom' ||
+		params?.node?.rowPinned === 'top' ||
+		params?.data?.__nodeType === 'total' ||
+		params?.node?.group === true
+	);
+}
+
+/* =========================================
+ * 8) Utils de status/loading por célula
+ * =======================================*/
+function nudgeRenderer(p, colId) {
+	// encerra a edição (gera blur/commit do editor)
+	p.api.stopEditing(false);
+	// força re-render só da célula alvo
+	p.api.refreshCells({ rowNodes: [p.node], columns: [colId], force: true });
+	p.api.redrawRows({ rowNodes: [p.node] });
+}
+
+/* ===== Row Loading (linha inteira com spinner) ===== */
+function isRowLoading(p) {
+	return !!p?.data?.__rowLoading;
+}
+function setRowLoading(node, on) {
+	if (!node?.data) return;
+	node.data.__rowLoading = !!on;
+}
+function setRowLoadingById(api, rowNodeId, on) {
+	try {
+		const node = api?.getRowNode(rowNodeId);
+		if (!node) return;
+		setRowLoading(node, on);
+		// refresca todas as colunas para aplicar/remover classe ag-cell-loading
+		const cols = api.getColumns()?.map((c) => c.getColId()) || undefined;
+		api.refreshCells({ rowNodes: [node], columns: cols, force: true });
+	} catch {}
+}
+
+function isStatusActiveVal(v) {
+	return String(v ?? '').toUpperCase() === 'ACTIVE';
+}
+function getRowStatusValue(p) {
+	return p?.data?.campaign_status ?? p?.data?.status ?? p?.value ?? '';
+}
+function setRowStatus(data, on) {
+	const next = on ? 'ACTIVE' : 'PAUSED';
+	if (data) {
+		if ('campaign_status' in data) data.campaign_status = next;
+		if ('status' in data) data.status = next;
+	}
+}
+function setCellLoading(node, colId, on) {
+	if (!node?.data) return;
+	node.data.__loading = node.data.__loading || {};
+	node.data.__loading[colId] = !!on;
+}
+function isCellLoading(p, colId) {
+	return !!p?.data?.__loading?.[colId];
+}
+/** Marca a célula como "acabou de salvar" e volta ao normal após ms. */
+function markCellJustSaved(node, colId, ms = 14000) {
+	if (!node?.data) return;
+	node.data.__justSaved = node.data.__justSaved || {};
+	node.data.__justSaved[colId] = true;
+	const api = globalThis.LionGrid?.api;
+	api?.refreshCells?.({ rowNodes: [node], columns: [colId] });
+	setTimeout(() => {
+		try {
+			if (!node?.data?.__justSaved) return;
+			delete node.data.__justSaved[colId];
+			api?.refreshCells?.({ rowNodes: [node], columns: [colId] });
+		} catch {}
+	}, ms);
+}
+function isCellJustSaved(p, colId) {
+	return !!p?.data?.__justSaved?.[colId];
+}
+/** Marca a célula como "erro ao salvar" e limpa após ms (default 14s). */
+function markCellError(node, colId, ms = 14000) {
+	if (!node?.data) return;
+	node.data.__err = node.data.__err || {};
+	node.data.__err[colId] = true;
+	const api = globalThis.LionGrid?.api;
+	api?.refreshCells?.({ rowNodes: [node], columns: [colId] });
+	setTimeout(() => {
+		try {
+			if (!node?.data?.__err) return;
+			delete node.data.__err[colId];
+			api?.refreshCells?.({ rowNodes: [node], columns: [colId] });
+		} catch {}
+	}, ms);
+}
+function clearCellError(node, colId) {
+	try {
+		if (!node?.data?.__err) return;
+		delete node.data.__err[colId];
+		const api = globalThis.LionGrid?.api;
+		api?.refreshCells?.({ rowNodes: [node], columns: [colId] });
+	} catch {}
+}
+function isCellError(p, colId) {
+	return !!p?.data?.__err?.[colId];
+}
+
+/* =========================================
+ * 9) Renderers
+ * =======================================*/
+/** Renderer de status (Account Status) em forma de 'pill'. */
+function statusPillRenderer(p) {
+	const raw = p.value ?? '';
+	if (isPinnedOrTotal(p) || !raw) {
+		const span = document.createElement('span');
+		span.textContent = stripHtml(raw) || '';
+		return span;
+	}
+	const labelClean = (strongText(raw) || stripHtml(raw) || '').trim();
+	const labelUp = labelClean.toUpperCase();
+	if (/^\s*INATIVA\s+PAGAMENTO\s*$/i.test(labelClean)) {
+		const el = document.createElement('span');
+		el.className = 'lion-badge--inativa-pagamento';
+		el.textContent = 'INATIVA\nPAGAMENTO';
+		return el;
+	}
+	if (labelUp === 'ACTIVE') {
+		const el = document.createElement('span');
+		el.className = 'lion-badge--active';
+		el.textContent = 'ACTIVE';
+		return el;
+	}
+	const color = pickStatusColor(labelUp);
+	return renderBadgeNode(labelUp, color);
+}
+
+/** Badge "X/Y" com cor baseada na fração. */
+function pickChipColorFromFraction(value) {
+	const txt = stripHtml(value ?? '').trim();
+	const m = txt.match(/^(\d+)\s*\/\s*(\d+)$/);
+	if (!m) return { label: txt || '—', color: 'secondary' };
+	const current = Number(m[1]);
+	const total = Number(m[2]);
+	if (!Number.isFinite(current) || !Number.isFinite(total) || total <= 0)
+		return { label: `${current}/${total}`, color: 'secondary' };
+	if (current <= 1) return { label: `${current}/${total}`, color: 'success' };
+	const ratio = current / total;
+	if (ratio > 0.5) return { label: `${current}/${total}`, color: 'danger' };
+	return { label: `${current}/${total}`, color: 'warning' };
+}
+function chipFractionBadgeRenderer(p) {
+	if (isPinnedOrTotal(p) || !p.value) {
+		const span = document.createElement('span');
+		span.textContent = stripHtml(p.value) || '';
+		return span;
+	}
+	const { label, color } = pickChipColorFromFraction(p.value);
+	const host = document.createElement('span');
+	host.innerHTML = renderBadge(label, color);
+	return host.firstElementChild;
+}
+
+/** Renderer do nome do perfil (2 linhas: nome / meta). */
+function profileCellRenderer(params) {
+	const raw = String(params?.value ?? '').trim();
+	if (!raw) return '';
+	const idx = raw.lastIndexOf(' - ');
+	const name = idx > -1 ? raw.slice(0, idx).trim() : raw;
+	const meta = idx > -1 ? raw.slice(idx + 3).trim() : '';
+	const wrap = document.createElement('span');
+	wrap.style.display = 'inline-flex';
+	wrap.style.flexDirection = 'column';
+	wrap.style.lineHeight = '1.2';
+	const nameEl = document.createElement('span');
+	nameEl.textContent = name;
+	nameEl.style.fontWeight = '500';
+	wrap.appendChild(nameEl);
+	if (meta) {
+		const metaEl = document.createElement('span');
+		metaEl.textContent = meta;
+		metaEl.style.fontSize = '10px';
+		metaEl.style.opacity = '0.65';
+		metaEl.style.letterSpacing = '0.2px';
+		wrap.appendChild(metaEl);
+	}
+	return wrap;
+}
+
+/** Renderer de Revenue (total + partes A/B). */
+const REVENUE_LABELS = ['A', 'B'];
+function parseRevenue(raw) {
+	const txt = stripHtml(raw ?? '').trim();
+	const m = txt.match(/^(.*?)\s*\(\s*(.*?)\s*\|\s*(.*?)\s*\)\s*$/);
+	if (!m) return { total: txt, parts: [] };
+	return { total: m[1].trim(), parts: [m[2].trim(), m[3].trim()] };
+}
+function revenueCellRenderer(p) {
+	const raw = p.value ?? p.data?.revenue ?? '';
+	if (isPinnedOrTotal(p) || !raw) {
+		const span = document.createElement('span');
+		span.textContent = stripHtml(raw) || '';
+		return span;
+	}
+	const { total, parts } = parseRevenue(raw);
+	const wrap = document.createElement('span');
+	wrap.style.display = 'inline-flex';
+	wrap.style.flexDirection = 'column';
+	wrap.style.lineHeight = '1.15';
+	wrap.style.gap = '2px';
+	const totalEl = document.createElement('span');
+	totalEl.textContent = total || '';
+	wrap.appendChild(totalEl);
+	if (parts.length === 2) {
+	}
+	return wrap;
+}
+/** Renderer p/ células editáveis de dinheiro: valor + ícone de lápis (KTUI). */
+/** Renderer p/ células editáveis de dinheiro: valor + lápis / check. */
+function EditableMoneyCellRenderer() {}
+
+EditableMoneyCellRenderer.prototype.init = function (p) {
+	this.p = p;
+	this.colId = p?.column?.getColId?.() || '';
+
+	const wrap = document.createElement('span');
+	wrap.style.display = 'inline-flex';
+	wrap.style.alignItems = 'center';
+	wrap.style.gap = '4px';
+
+	const valueEl = document.createElement('span');
+	valueEl.className = 'lion-editable-val';
+	valueEl.textContent = p.valueFormatted != null ? String(p.valueFormatted) : String(p.value ?? '');
+
+	const pen = document.createElement('i');
+	pen.className = 'lion-editable-pen ki-duotone ki-pencil';
+
+	const ok = document.createElement('i');
+	ok.className = 'lion-editable-ok ki-duotone ki-check';
+
+	// 👇 novo: X vermelho
+	const err = document.createElement('i');
+	err.className = 'lion-editable-err ki-duotone ki-cross'; // se preferir: ki-cross-circle
+
+	wrap.appendChild(valueEl);
+	wrap.appendChild(pen);
+	wrap.appendChild(ok);
+	wrap.appendChild(err);
+
+	this.eGui = wrap;
+	this.valueEl = valueEl;
+	this.pen = pen;
+	this.ok = ok;
+	this.err = err;
+
+	this.updateVisibility();
 };
 
-// ==================== Tema (opcional) ====================
+EditableMoneyCellRenderer.prototype.getGui = function () {
+	return this.eGui;
+};
+
+EditableMoneyCellRenderer.prototype.refresh = function (p) {
+	this.p = p;
+	this.valueEl.textContent =
+		p.valueFormatted != null ? String(p.valueFormatted) : String(p.value ?? '');
+	this.updateVisibility();
+	return true;
+};
+
+EditableMoneyCellRenderer.prototype.updateVisibility = function () {
+	const p = this.p || {};
+	const level = p?.node?.level ?? -1;
+	const editableProp = p.colDef?.editable;
+	const isEditable = typeof editableProp === 'function' ? !!editableProp(p) : !!editableProp;
+	const loading = isCellLoading(p, this.colId);
+	const showBase = isEditable && level === 0 && !loading && !isPinnedOrTotal(p);
+
+	const justSaved = isCellJustSaved(p, this.colId);
+	const hasError = isCellError(p, this.colId);
+
+	// prioridade: ERRO > ✓ > lápis
+	this.err.style.display = showBase && hasError ? 'inline-flex' : 'none';
+	this.ok.style.display = showBase && !hasError && justSaved ? 'inline-flex' : 'none';
+	this.pen.style.display = showBase && !hasError && !justSaved ? 'inline-flex' : 'none';
+};
+
+EditableMoneyCellRenderer.prototype.destroy = function () {};
+
+/* ======= Campaign Status Slider Renderer (otimizado) ======= */
+function StatusSliderRenderer() {}
+const LionStatusMenu = (() => {
+	let el = null,
+		onPick = null;
+	let _isOpen = false,
+		_anchor = null;
+
+	function ensure() {
+		if (el) return el;
+		el = document.createElement('div');
+		el.className = 'lion-status-menu';
+		el.style.display = 'none';
+		document.body.appendChild(el);
+		return el;
+	}
+
+	function onDocClose(ev) {
+		if (!el) return;
+
+		// 1) Clique dentro do MENU? não fecha.
+		if (ev.target === el || el.contains(ev.target)) return;
+
+		// 2) Clique no ANCHOR (o slider) ou dentro dele? deixe o handler do anchor decidir (toggle).
+		const anchor = _anchor;
+		if (anchor && (ev.target === anchor || anchor.contains(ev.target))) {
+			return;
+		}
+
+		// 3) Qualquer outro lugar: fecha.
+		close();
+	}
+
+	function open({ left, top, width, current, pick, anchor = null }) {
+		const host = ensure();
+		host.innerHTML = '';
+		onPick = pick;
+		_anchor = anchor;
+		_isOpen = true;
+
+		['ACTIVE', 'PAUSED'].forEach((st) => {
+			const item = document.createElement('div');
+			item.className = 'lion-status-menu__item' + (current === st ? ' is-active' : '');
+			item.textContent = st;
+			item.addEventListener('mousedown', (e) => e.preventDefault());
+			item.addEventListener('click', (e) => {
+				e.preventDefault();
+				try {
+					onPick && onPick(st);
+				} finally {
+					close();
+				}
+			});
+			host.appendChild(item);
+		});
+
+		const menuW = 180;
+		host.style.left = `${Math.max(8, left + (width - menuW) / 2)}px`;
+		host.style.top = `${top + 6}px`;
+		host.style.width = `${menuW}px`;
+		host.style.display = 'block';
+
+		// listeners de fechar (usar capture pra fechar antes do click em outro lugar)
+		setTimeout(() => {
+			document.addEventListener('mousedown', onDocClose, true);
+			window.addEventListener('blur', close, true);
+		}, 0);
+	}
+
+	function close() {
+		if (!el) return;
+		el.style.display = 'none';
+		onPick = null;
+		_isOpen = false;
+		_anchor = null;
+		document.removeEventListener('mousedown', onDocClose, true);
+		window.removeEventListener('blur', close, true);
+	}
+
+	function isOpen() {
+		return _isOpen;
+	}
+	function getAnchor() {
+		return _anchor;
+	}
+
+	return { open, close, isOpen, getAnchor };
+})();
+
+StatusSliderRenderer.prototype.init = function (p) {
+	this.p = p;
+	const cfg = p.colDef?.cellRendererParams || {};
+	const interactive = new Set(Array.isArray(cfg.interactiveLevels) ? cfg.interactiveLevels : [0]);
+	const smallKnob = !!cfg.smallKnob;
+	const level = p?.node?.level ?? 0;
+	const colId = p.column.getColId();
+
+	const getVal = () =>
+		String(p.data?.campaign_status ?? p.data?.status ?? p.value ?? '').toUpperCase();
+	const isOnVal = () => getVal() === 'ACTIVE';
+
+	if (isPinnedOrTotal(p) || !interactive.has(level)) {
+		this.eGui = document.createElement('span');
+		this.eGui.textContent = strongText(String(p.value ?? ''));
+		return;
+	}
+
+	const root = document.createElement('div');
+	root.className = 'ag-status-pill';
+	root.setAttribute('role', 'switch');
+	root.setAttribute('tabindex', '0');
+
+	const fill = document.createElement('div');
+	fill.className = 'ag-status-fill';
+	const knob = document.createElement('div');
+	knob.className = 'ag-status-knob';
+	if (smallKnob) knob.classList.add('ag-status-knob--sm');
+	const label = document.createElement('div');
+	label.className = 'ag-status-label';
+	root.append(fill, label, knob);
+	this.eGui = root;
+
+	let trackLenPx = 0;
+	let rafToken = null;
+
+	const computeTrackLen = () => {
+		const pad = parseFloat(getComputedStyle(root).paddingLeft || '0');
+		const knobW = knob.clientWidth || 0;
+		const edgeGap = parseFloat(getComputedStyle(root).getPropertyValue('--edge-gap') || '0');
+		const travel = root.clientWidth - 2 * pad - 2 * edgeGap - knobW;
+		return Math.max(0, travel);
+	};
+	const setProgress = (pct01) => {
+		const pct = Math.max(0, Math.min(1, pct01));
+		fill.style.width = pct * 100 + '%';
+		knob.style.transform = `translateX(${pct * trackLenPx}px)`;
+		const on = pct >= 0.5;
+		label.textContent = on ? 'ACTIVE' : 'PAUSED';
+		root.setAttribute('aria-checked', String(on));
+	};
+
+	requestAnimationFrame(() => {
+		trackLenPx = computeTrackLen();
+		setProgress(isOnVal() ? 1 : 0);
+	});
+
+	const setCellBusy = (on) => {
+		setCellLoading(p.node, colId, !!on);
+		p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
+	};
+
+	const commit = async (nextOrString, prevOn) => {
+		const nextVal =
+			typeof nextOrString === 'string'
+				? nextOrString.toUpperCase()
+				: nextOrString
+				? 'ACTIVE'
+				: 'PAUSED';
+
+		const level = p.node?.level ?? 0;
+		const id =
+			level === 0
+				? String(p.data?.id ?? p.data?.utm_campaign ?? '')
+				: String(p.data?.id ?? '') || '';
+
+		if (!id) return;
+
+		const scope = level === 2 ? 'ad' : level === 1 ? 'adset' : 'campaign';
+
+		setCellBusy(true);
+		try {
+			const okTest = await toggleFeature('status', { scope, id, value: nextVal });
+			if (!okTest) {
+				const rollbackVal = prevOn ? 'ACTIVE' : 'PAUSED';
+				if (p.data) {
+					if ('campaign_status' in p.data) p.data.campaign_status = rollbackVal;
+					if ('status' in p.data) p.data.status = rollbackVal;
+				}
+				setProgress(prevOn ? 1 : 0);
+				p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
+				return;
+			}
+
+			if (p.data) {
+				if ('campaign_status' in p.data) p.data.campaign_status = nextVal;
+				if ('status' in p.data) p.data.status = nextVal;
+			}
+			setProgress(nextVal === 'ACTIVE' ? 1 : 0);
+			p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
+
+			try {
+				if (scope === 'ad') await updateAdStatusBackend(id, nextVal);
+				else if (scope === 'adset') await updateAdsetStatusBackend(id, nextVal);
+				else await updateCampaignStatusBackend(id, nextVal);
+
+				if (this._userInteracted) {
+					const scopeLabel = scope === 'ad' ? 'Ad' : scope === 'adset' ? 'Adset' : 'Campanha';
+					const msg = nextVal === 'ACTIVE' ? `${scopeLabel} ativado` : `${scopeLabel} pausado`;
+					showToast(msg, 'success');
+				}
+			} catch (e) {
+				const rollbackVal = prevOn ? 'ACTIVE' : 'PAUSED';
+				if (p.data) {
+					if ('campaign_status' in p.data) p.data.campaign_status = rollbackVal;
+					if ('status' in p.data) p.data.status = rollbackVal;
+				}
+				setProgress(prevOn ? 1 : 0);
+				p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
+				showToast(`Falha ao salvar status: ${e?.message || e}`, 'danger');
+			}
+		} finally {
+			setCellBusy(false);
+		}
+	};
+
+	const MOVE_THRESHOLD = 6;
+	let dragging = false,
+		startX = 0,
+		startOn = false,
+		moved = false;
+
+	// ===== DEBOUNCE de clique x duplo clique =====
+	const CLICK_DELAY_MS = 300;
+	let clickTimer = null;
+
+	const scheduleOpenMenu = () => {
+		clearTimeout(clickTimer);
+		clickTimer = setTimeout(() => {
+			clickTimer = null;
+			openMenu();
+		}, CLICK_DELAY_MS);
+	};
+	const cancelScheduledMenu = () => {
+		if (clickTimer) {
+			clearTimeout(clickTimer);
+			clickTimer = null;
+		}
+	};
+
+	const onPointerMove = (x) => {
+		if (!dragging || rafToken) return;
+		rafToken = requestAnimationFrame(() => {
+			rafToken = null;
+			const dx = x - startX;
+			if (!moved && Math.abs(dx) > MOVE_THRESHOLD) moved = true;
+			if (!moved) return;
+			const p0 = startOn ? 1 : 0;
+			const pgr = p0 + dx / Math.max(1, trackLenPx);
+			setProgress(pgr);
+		});
+	};
+	const detachWindowListeners = () => {
+		window.removeEventListener('mousemove', onMouseMove);
+		window.removeEventListener('mouseup', onMouseUp);
+		window.removeEventListener('touchmove', onTouchMove, { passive: true });
+		window.removeEventListener('touchend', onTouchEnd);
+	};
+	const onMouseMove = (e) => onPointerMove(e.clientX);
+	const onTouchMove = (e) => onPointerMove(e.touches[0].clientX);
+
+	const endDrag = (x, ev) => {
+		if (!dragging) return;
+		dragging = false;
+		detachWindowListeners();
+		if (!moved) {
+			// Tratar como um "single click" com debounce:
+			ev?.preventDefault?.();
+			ev?.stopPropagation?.();
+			scheduleOpenMenu();
+			return;
+		}
+		const pct = parseFloat(fill.style.width) / 100;
+		const finalOn = pct >= 0.5;
+		if (finalOn !== startOn) commit(finalOn, startOn);
+		else setProgress(startOn ? 1 : 0);
+		ev?.preventDefault?.();
+		ev?.stopPropagation?.();
+	};
+	const onMouseUp = (e) => endDrag(e.clientX, e);
+	const onTouchEnd = (e) => endDrag(e.changedTouches[0].clientX, e);
+
+	const beginDrag = (x, ev) => {
+		this._userInteracted = true;
+		dragging = true;
+		moved = false;
+		startX = x;
+		startOn = root.getAttribute('aria-checked') === 'true';
+		trackLenPx = computeTrackLen();
+		window.addEventListener('mousemove', onMouseMove);
+		window.addEventListener('mouseup', onMouseUp);
+		window.addEventListener('touchmove', onTouchMove, { passive: true });
+		window.addEventListener('touchend', onTouchEnd);
+		ev?.preventDefault?.();
+		ev?.stopPropagation?.();
+	};
+	root.addEventListener('mousedown', (e) => beginDrag(e.clientX, e));
+	root.addEventListener('touchstart', (e) => beginDrag(e.touches[0].clientX, e), { passive: false });
+
+	// Clique simples -> agenda menu; o dblclick abaixo cancela essa agenda
+	root.addEventListener('click', (e) => {
+		e.preventDefault();
+		e.stopPropagation();
+		if (dragging) return;
+		if (isCellLoading({ data: p.node?.data }, colId)) return;
+
+		// mata qualquer agendamento pendente para evitar reabrir logo após fechar
+		cancelScheduledMenu();
+
+		if (LionStatusMenu.isOpen() && LionStatusMenu.getAnchor() === root) {
+			// já está aberto neste anchor -> fecha (toggle-off)
+			LionStatusMenu.close();
+			return;
+		}
+
+		// estava fechado -> abre (toggle-on) com debounce de single click
+		scheduleOpenMenu();
+	});
+
+	// Teclado abre menu imediato
+	root.addEventListener('keydown', (e) => {
+		if (e.code === 'Space' || e.code === 'Enter') {
+			e.preventDefault();
+			e.stopPropagation();
+			if (LionStatusMenu.isOpen() && LionStatusMenu.getAnchor() === root) {
+				LionStatusMenu.close();
+			} else {
+				cancelScheduledMenu();
+				openMenu(); // teclado abre imediato
+			}
+		}
+	});
+
+	// Duplo clique -> troca status e cancela o menu agendado
+	root.addEventListener('dblclick', (e) => {
+		e.preventDefault();
+		e.stopPropagation();
+		if (isCellLoading({ data: p.node?.data }, colId)) return;
+		cancelScheduledMenu(); // impede abrir menu
+		LionStatusMenu.close(); // se por acaso estiver aberto
+		const cur = getVal();
+		const prevOn = cur === 'ACTIVE';
+		const next = prevOn ? 'PAUSED' : 'ACTIVE';
+		this._userInteracted = true;
+		commit(next, prevOn);
+	});
+
+	const openMenu = () => {
+		if (isCellLoading({ data: p.node?.data }, colId)) return;
+		const cur = getVal();
+		const rect = root.getBoundingClientRect();
+
+		// se já estiver aberto neste mesmo anchor, apenas fecha (toggle imediato)
+		if (LionStatusMenu.isOpen() && LionStatusMenu.getAnchor() === root) {
+			LionStatusMenu.close();
+			return;
+		}
+
+		LionStatusMenu.open({
+			left: rect.left,
+			top: rect.bottom,
+			width: rect.width,
+			current: cur,
+			anchor: root, // 👈 importantíssimo
+			pick: async (st) => {
+				if (st === cur) return;
+				this._userInteracted = true;
+				const prevOn = cur === 'ACTIVE';
+				await commit(st, prevOn);
+			},
+		});
+	};
+
+	this._cleanup = () => {
+		LionStatusMenu.close();
+		detachWindowListeners();
+		cancelScheduledMenu();
+		if (rafToken) cancelAnimationFrame(rafToken);
+	};
+};
+
+StatusSliderRenderer.prototype.getGui = function () {
+	return this.eGui;
+};
+StatusSliderRenderer.prototype.refresh = function (p) {
+	const cfg = p.colDef?.cellRendererParams || {};
+	const interactive = new Set(Array.isArray(cfg.interactiveLevels) ? cfg.interactiveLevels : [0]);
+	const level = p?.node?.level ?? 0;
+	if (!this.eGui || isPinnedOrTotal(p) || !interactive.has(level)) return false;
+
+	const raw = String(p.data?.campaign_status ?? p.data?.status ?? p.value ?? '').toUpperCase();
+	const isOn = raw === 'ACTIVE';
+	const fill = this.eGui.querySelector('.ag-status-fill');
+	const knob = this.eGui.querySelector('.ag-status-knob');
+	const label = this.eGui.querySelector('.ag-status-label');
+	const cs = getComputedStyle(this.eGui);
+	const pad = parseFloat(cs.paddingLeft || '0');
+	const edgeGap = parseFloat(cs.getPropertyValue('--edge-gap') || '0');
+	const rectW = this.eGui.getBoundingClientRect().width;
+	const kRectW = this.eGui.querySelector('.ag-status-knob').getBoundingClientRect().width || 0;
+	const trackLenPx = Math.max(0, rectW - 2 * pad - 2 * edgeGap - kRectW);
+
+	requestAnimationFrame(() => {
+		fill.style.width = (isOn ? 100 : 0) + '%';
+		const onNudge = parseFloat(cs.getPropertyValue('--knob-on-nudge') || '0') || 0;
+		const offNudge = parseFloat(cs.getPropertyValue('--knob-off-nudge') || '0') || 0;
+		const nudgePx = isOn ? onNudge : offNudge;
+		let x = (isOn ? 1 : 0) * trackLenPx;
+		knob.style.transform = `translateX(${x + nudgePx}px)`;
+		label.textContent = isOn ? 'ACTIVE' : 'PAUSED';
+		this.eGui.setAttribute('aria-checked', String(isOn));
+	});
+	LionStatusMenu.close();
+	return true;
+};
+StatusSliderRenderer.prototype.destroy = function () {
+	this._cleanup?.();
+};
+
+/* =========================================
+ * 10) Backend API (update*, fetchJSON, toggleFeature)
+ * =======================================*/
+// (observação: mantidos nomes/assinaturas originais)
+
+async function updateAdStatusBackend(id, status) {
+	const t0 = performance.now();
+	if (DEV_FAKE_NETWORK_LATENCY_MS > 0) await sleep(DEV_FAKE_NETWORK_LATENCY_MS);
+	const res = await fetch(`/api/ads/${encodeURIComponent(id)}/status/`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		credentials: 'same-origin',
+		body: JSON.stringify({ status }),
+	});
+	const data = await res.json().catch(() => ({}));
+	if (!res.ok || data?.ok === false) throw new Error(data?.error || 'Ad status update failed');
+	await withMinSpinner(t0, MIN_SPINNER_MS);
+	return data;
+}
+
+async function updateAdsetStatusBackend(id, status) {
+	const t0 = performance.now();
+	if (DEV_FAKE_NETWORK_LATENCY_MS > 0) await sleep(DEV_FAKE_NETWORK_LATENCY_MS);
+	const res = await fetch(`/api/adsets/${encodeURIComponent(id)}/status/`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		credentials: 'same-origin',
+		body: JSON.stringify({ status }),
+	});
+	const data = await res.json().catch(() => ({}));
+	if (!res.ok || data?.ok === false) throw new Error(data?.error || 'Adset status update failed');
+	await withMinSpinner(t0, MIN_SPINNER_MS);
+	return data;
+}
+async function updateCampaignStatusBackend(id, status) {
+	const t0 = performance.now();
+	if (DEV_FAKE_NETWORK_LATENCY_MS > 0) await sleep(DEV_FAKE_NETWORK_LATENCY_MS);
+	const res = await fetch(`/api/campaigns/${encodeURIComponent(id)}/status/`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		credentials: 'same-origin',
+		body: JSON.stringify({ status }),
+	});
+	const data = await res.json().catch(() => ({}));
+	if (!res.ok || data?.ok === false) throw new Error(data?.error || 'Status update failed');
+	await withMinSpinner(t0, MIN_SPINNER_MS);
+	return data;
+}
+async function updateCampaignBudgetBackend(id, budgetNumber) {
+	const t0 = performance.now();
+	if (DEV_FAKE_NETWORK_LATENCY_MS > 0) await sleep(DEV_FAKE_NETWORK_LATENCY_MS);
+	const res = await fetch(`/api/campaigns/${encodeURIComponent(id)}/budget/`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		credentials: 'same-origin',
+		body: JSON.stringify({ budget: budgetNumber }),
+	});
+	const data = await res.json().catch(() => ({}));
+	if (!res.ok || data?.ok === false) throw new Error(data?.error || 'Budget update failed');
+	await withMinSpinner(t0, MIN_SPINNER_MS);
+	return data;
+}
+async function updateCampaignBidBackend(id, bidNumber) {
+	const t0 = performance.now();
+	if (DEV_FAKE_NETWORK_LATENCY_MS > 0) await sleep(DEV_FAKE_NETWORK_LATENCY_MS);
+	const res = await fetch(`/api/campaigns/${encodeURIComponent(id)}/bid/`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		credentials: 'same-origin',
+		body: JSON.stringify({ bid: bidNumber }),
+	});
+	const data = await res.json().catch(() => ({}));
+	if (!res.ok || data?.ok === false) throw new Error(data?.error || 'Bid update failed');
+	await withMinSpinner(t0, MIN_SPINNER_MS);
+	return data;
+}
+
+/** GET/POST JSON com tratamento de erro comum. */
+async function fetchJSON(url, opts) {
+	const res = await fetch(url, {
+		headers: { 'Content-Type': 'application/json' },
+		credentials: 'same-origin',
+		...opts,
+	});
+	let data;
+	try {
+		data = await res.json();
+	} catch {
+		data = {};
+	}
+	if (!res.ok) throw new Error(data?.error || res.statusText || 'Request failed');
+	return data;
+}
+
+/** Toggle fake de feature para modo DEV/teste. */
+async function toggleFeature(feature, value) {
+	const res = await fetch('/api/dev/test-toggle/', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		credentials: 'same-origin',
+		body: JSON.stringify({ feature, value }),
+	});
+	const data = await res.json();
+	if (res.ok && data.ok) {
+		showToast(data.message || 'Aplicado', 'success');
+		return true;
+	}
+	const msg = data?.error || `Erro (${res.status})`;
+	showToast(msg, 'danger');
+	return false;
+}
+
+/* =========================================
+ * 11) Modal simples (KTUI-like)
+ * =======================================*/
+function ensureKtModalDom() {
+	if (document.getElementById('lionKtModal')) return;
+	const tpl = document.createElement('div');
+	tpl.innerHTML = `
+<div class="kt-modal hidden" data-kt-modal="true" id="lionKtModal" aria-hidden="true">
+  <div class="kt-modal-content max-w-[420px] top-[10%]">
+    <div class="kt-modal-header">
+      <h3 class="kt-modal-title">Detalhes</h3>
+      <button type="button" class="kt-modal-close" aria-label="Close" data-kt-modal-dismiss="#lionKtModal">✕</button>
+    </div>
+    <div class="kt-modal-body">
+      <pre class="whitespace-pre-wrap text-sm"></pre>
+    </div>
+  </div>
+</div>`;
+	document.body.appendChild(tpl.firstElementChild);
+	document
+		.querySelector('[data-kt-modal-dismiss="#lionKtModal"]')
+		?.addEventListener('click', () => closeKTModal('#lionKtModal'));
+	document.getElementById('lionKtModal')?.addEventListener('click', (e) => {
+		if (e.target.id === 'lionKtModal') closeKTModal('#lionKtModal');
+	});
+}
+function openKTModal(selector = '#lionKtModal') {
+	const el = document.querySelector(selector);
+	if (!el) return;
+	el.style.display = 'block';
+	el.classList.add('kt-modal--open');
+	el.classList.remove('hidden');
+	el.removeAttribute('aria-hidden');
+}
+function closeKTModal(selector = '#lionKtModal') {
+	const el = document.querySelector(selector);
+	if (!el) return;
+	el.style.display = 'none';
+	el.classList.remove('kt-modal--open');
+	el.classList.add('hidden');
+	el.setAttribute('aria-hidden', 'true');
+}
+function showKTModal({ title = 'Detalhes', content = '' } = {}) {
+	ensureKtModalDom();
+	const modal = document.querySelector('#lionKtModal');
+	if (!modal) return;
+	modal.querySelector('.kt-modal-title').textContent = title;
+	modal.querySelector('.kt-modal-body > pre').textContent = content;
+	openKTModal('#lionKtModal');
+}
+
+/* =========================================
+ * 12) Tema (AG Grid Quartz)
+ * =======================================*/
 function createAgTheme() {
 	const AG = getAgGrid();
 	const { themeQuartz, iconSetMaterial } = AG;
+	if (!themeQuartz || !iconSetMaterial) return undefined;
 	return themeQuartz.withPart(iconSetMaterial).withParams({
 		browserColorScheme: 'dark',
 		backgroundColor: '#0C0C0D',
-		foregroundColor: '#BBBEC9',
+		foregroundColor: '#f7f9ffff',
 		headerBackgroundColor: '#141414',
 		headerTextColor: '#FFFFFF',
 		accentColor: '#15BDE8',
@@ -117,7 +1209,1177 @@ function createAgTheme() {
 	});
 }
 
-// ==================== Grid ====================
+/* =========================================
+ * 13) Colunas (defaultColDef, defs)
+ * =======================================*/
+const defaultColDef = {
+	sortable: true,
+	filter: 'agTextColumnFilter',
+	floatingFilter: true,
+	resizable: true,
+	cellClass: (p) => 'lion-center-cell',
+	wrapHeaderText: true,
+	autoHeaderHeight: true,
+	enableRowGroup: true,
+	enablePivot: true,
+	enableValue: true,
+	suppressHeaderFilterButton: true,
+
+	// 👇 spinner visível só na célula do grupo quando a linha estiver carregando
+	cellClassRules: {
+		'ag-cell-loading': (p) => {
+			// loading de LINHA? aplica só na coluna de grupo (autoGroup)
+			if (isRowLoading(p)) {
+				const colId = p?.column?.getColId?.();
+				const isAutoGroup =
+					(typeof p.column?.isAutoRowGroupColumn === 'function' &&
+						p.column.isAutoRowGroupColumn()) ||
+					colId === 'campaign'; // seu autoGroupColumnDef usa colId: 'campaign'
+				return !!isAutoGroup;
+			}
+			// loading por CÉLULA (bid/budget/status) continua igual
+			const colId = p?.column?.getColId?.();
+			return colId ? isCellLoading(p, colId) : false;
+		},
+	},
+};
+
+function parseCurrencyInput(params) {
+	return parseCurrencyFlexible(params.newValue, getAppCurrency());
+}
+function isPinnedOrGroup(params) {
+	return params?.node?.rowPinned || params?.node?.group;
+}
+// === Floating Filter: Campaign Status (ALL limpa, aplica TEXT equals) ===
+function CampaignStatusFloatingFilter() {}
+CampaignStatusFloatingFilter.prototype.init = function (params) {
+	this.params = params;
+
+	const wrap = document.createElement('div');
+	wrap.style.display = 'flex';
+	wrap.style.alignItems = 'center';
+	wrap.style.height = '100%';
+	wrap.style.padding = '0 6px';
+
+	const sel = document.createElement('select');
+	sel.className = 'ag-input-field-input ag-text-field-input lion-ff-select--inputlike';
+	sel.style.width = '100%';
+	sel.style.height = '28px';
+	sel.style.fontSize = '12px';
+	sel.style.padding = '2px 8px';
+	sel.style.boxSizing = 'border-box';
+
+	// "" => limpa (ALL)
+	[
+		['', 'ALL'],
+		['ACTIVE', 'ACTIVE'],
+		['PAUSED', 'PAUSED'],
+	].forEach(([v, t]) => {
+		const o = document.createElement('option');
+		o.value = v;
+		o.textContent = t;
+		sel.appendChild(o);
+	});
+
+	const applyFromModel = (model) => {
+		if (!model) {
+			sel.value = '';
+			return;
+		}
+		const v = String(model.filter ?? '').toUpperCase();
+		sel.value = v === 'ACTIVE' || v === 'PAUSED' ? v : '';
+	};
+	applyFromModel(params.parentModel);
+
+	const applyTextEquals = (val) => {
+		params.parentFilterInstance((parent) => {
+			if (!val) parent.setModel(null); // 👈 ALL limpa
+			else parent.setModel({ filterType: 'text', type: 'equals', filter: val });
+			if (typeof parent.onBtApply === 'function') parent.onBtApply();
+			params.api.onFilterChanged();
+		});
+	};
+
+	sel.addEventListener('change', () => {
+		const v = sel.value ? String(sel.value).toUpperCase() : '';
+		applyTextEquals(v);
+	});
+
+	wrap.appendChild(sel);
+	this.eGui = wrap;
+	this.sel = sel;
+};
+CampaignStatusFloatingFilter.prototype.getGui = function () {
+	return this.eGui;
+};
+CampaignStatusFloatingFilter.prototype.onParentModelChanged = function (parentModel) {
+	if (!this.sel) return;
+	if (!parentModel) {
+		this.sel.value = '';
+		return;
+	} // 👈 mantém ALL quando limpar por fora
+	const v = String(parentModel.filter ?? '').toUpperCase();
+	this.sel.value = v === 'ACTIVE' || v === 'PAUSED' ? v : '';
+};
+
+// === Floating Filter: Account Status (ALL limpa, aplica TEXT equals) ===
+function AccountStatusFloatingFilter() {}
+AccountStatusFloatingFilter.prototype.init = function (params) {
+	this.params = params;
+
+	const wrap = document.createElement('div');
+	wrap.style.display = 'flex';
+	wrap.style.alignItems = 'center';
+	wrap.style.height = '100%';
+	wrap.style.padding = '0 6px';
+
+	const sel = document.createElement('select');
+	sel.className = 'ag-input-field-input ag-text-field-input lion-ff-select--inputlike';
+	sel.style.width = '100%';
+	sel.style.height = '28px';
+	sel.style.fontSize = '12px';
+	sel.style.padding = '2px 8px';
+	sel.style.boxSizing = 'border-box';
+
+	[
+		['', 'ALL'],
+		['ACTIVE', 'ACTIVE'],
+		['INATIVA PAGAMENTO', 'INATIVA PAGAMENTO'],
+	].forEach(([v, t]) => {
+		const o = document.createElement('option');
+		o.value = v;
+		o.textContent = t;
+		sel.appendChild(o);
+	});
+
+	const applyFromModel = (model) => {
+		if (!model) {
+			sel.value = '';
+			return;
+		}
+		const v = String(model.filter ?? '').toUpperCase();
+		sel.value = v === 'ACTIVE' || v === 'INATIVA PAGAMENTO' ? v : '';
+	};
+	applyFromModel(params.parentModel);
+
+	const applyTextEquals = (val) => {
+		params.parentFilterInstance((parent) => {
+			if (!val) parent.setModel(null); // 👈 ALL limpa
+			else parent.setModel({ filterType: 'text', type: 'equals', filter: val });
+			if (typeof parent.onBtApply === 'function') parent.onBtApply();
+			params.api.onFilterChanged();
+		});
+	};
+
+	sel.addEventListener('change', () => {
+		const v = sel.value ? String(sel.value).toUpperCase() : '';
+		applyTextEquals(v);
+	});
+
+	wrap.appendChild(sel);
+	this.eGui = wrap;
+	this.sel = sel;
+};
+AccountStatusFloatingFilter.prototype.getGui = function () {
+	return this.eGui;
+};
+AccountStatusFloatingFilter.prototype.onParentModelChanged = function (parentModel) {
+	if (!this.sel) return;
+	if (!parentModel) {
+		this.sel.value = '';
+		return;
+	} // 👈 mantém ALL quando limpar por fora
+	const v = String(parentModel.filter ?? '').toUpperCase();
+	this.sel.value = v === 'ACTIVE' || v === 'INATIVA PAGAMENTO' ? v : '';
+};
+// === CurrencyMaskEditor (pt-BR money mask: 1.234,56) ===
+function CurrencyMaskEditor() {}
+
+CurrencyMaskEditor.prototype.init = function (params) {
+	this.params = params;
+	const startNumber =
+		typeof params.value === 'number'
+			? params.value
+			: parseCurrencyFlexible(params.value, getAppCurrency());
+
+	this.input = document.createElement('input');
+	this.input.type = 'text';
+	this.input.className = 'ag-input-field-input ag-text-field-input';
+	this.input.style.width = '100%';
+	this.input.style.height = '100%';
+	this.input.style.boxSizing = 'border-box';
+	this.input.style.padding = '2px 6px';
+	this.input.autocomplete = 'off';
+	this.input.inputMode = 'numeric';
+
+	const fmt = (n) => {
+		if (n == null || !Number.isFinite(n)) return '';
+		return new Intl.NumberFormat('pt-BR', {
+			minimumFractionDigits: 2,
+			maximumFractionDigits: 2,
+		}).format(n);
+	};
+
+	const asNumberFromDigits = (digits) => {
+		if (!digits) return null;
+		const intCents = parseInt(digits, 10);
+		if (!Number.isFinite(intCents)) return null;
+		return intCents / 100;
+	};
+
+	const formatFromRawInput = () => {
+		// mantém só dígitos, interpreta como centavos
+		const raw = (this.input.value || '').replace(/\D+/g, '');
+		const n = asNumberFromDigits(raw);
+		this.input.value = n == null ? '' : fmt(n);
+	};
+
+	// seed inicial
+	this.input.value = fmt(startNumber);
+
+	// máscara em tempo real
+	this.onInput = () => {
+		const selEnd = this.input.selectionEnd;
+		formatFromRawInput();
+		// joga o cursor pro fim pra não ficar pulando
+		this.input.setSelectionRange(this.input.value.length, this.input.value.length);
+	};
+
+	this.input.addEventListener('input', this.onInput);
+
+	// Enter/Tab confirmam; Esc cancela
+	this.onKeyDown = (e) => {
+		if (e.key === 'Enter' || e.key === 'Tab') {
+			// deixa ag-Grid encerrar a edição normalmente
+		} else if (e.key === 'Escape') {
+			// devolve valor original formatado
+			this.input.value = fmt(startNumber);
+		}
+	};
+	this.input.addEventListener('keydown', this.onKeyDown);
+};
+
+CurrencyMaskEditor.prototype.getGui = function () {
+	return this.input;
+};
+CurrencyMaskEditor.prototype.afterGuiAttached = function () {
+	this.input.focus();
+	// seleciona tudo pra facilitar digitação direta
+	this.input.select();
+};
+CurrencyMaskEditor.prototype.getValue = function () {
+	// devolve string "1.234,56" — teu valueParser (parseCurrencyFlexible) já trata isso
+	return this.input.value;
+};
+CurrencyMaskEditor.prototype.destroy = function () {
+	this.input?.removeEventListener?.('input', this.onInput);
+	this.input?.removeEventListener?.('keydown', this.onKeyDown);
+};
+CurrencyMaskEditor.prototype.isPopup = function () {
+	return false;
+};
+
+/* ======= ColumnDefs ======= */
+const columnDefs = [
+	{
+		headerName: 'Profile',
+		field: 'profile_name',
+		valueGetter: (p) => stripHtml(p.data?.profile_name),
+		minWidth: 110,
+		flex: 1.2,
+		cellRenderer: profileCellRenderer,
+		pinned: 'left',
+		tooltipValueGetter: (p) => p.value || '',
+	},
+	{
+		headerName: 'Identification',
+		groupId: 'grp-id',
+		marryChildren: true,
+		openByDefault: true,
+		children: [
+			{
+				headerName: 'BM',
+				field: 'bc_name',
+				valueGetter: (p) => stripHtml(p.data?.bc_name),
+				minWidth: 110,
+				flex: 1.0,
+				wrapText: true,
+				cellStyle: (p) =>
+					p?.node?.level === 0 ? { fontSize: '13px', lineHeight: '1.6' } : null,
+				tooltipValueGetter: (p) => p.value || '',
+			},
+			{
+				headerName: 'Account',
+				field: 'account_name',
+				valueGetter: (p) => stripHtml(p.data?.account_name),
+				minWidth: 100,
+				flex: 1.3,
+				wrapText: true,
+				cellStyle: (p) =>
+					p?.node?.level === 0 ? { fontSize: '13px', lineHeight: '1.6' } : null,
+				tooltipValueGetter: (p) => p.value || '',
+			},
+		],
+	},
+
+	{
+		headerName: 'Operation & Setup',
+		groupId: 'grp-op',
+		marryChildren: true,
+		openByDefault: true,
+		children: [
+			// 👉 na definição da coluna "Account Status", acrescente:
+			{
+				headerName: 'Account Status',
+				field: 'account_status',
+				minWidth: 110,
+				flex: 0.7,
+				cellRenderer: statusPillRenderer,
+
+				// + floating filter como dropdown estilizado, aplicando TEXT equals
+				filter: 'agTextColumnFilter',
+				floatingFilter: true,
+				floatingFilterComponent: AccountStatusFloatingFilter,
+				floatingFilterComponentParams: { suppressFilterButton: true },
+			},
+
+			{
+				headerName: 'Daily Limit',
+				field: 'account_limit',
+				valueGetter: (p) => toNumberBR(p.data?.account_limit),
+				valueFormatter: currencyFormatter,
+				minWidth: 80,
+				flex: 0.8,
+			},
+			{
+				headerName: 'Campaign Status',
+				field: 'campaign_status',
+				cellClass: ['lion-center-cell'],
+				minWidth: 115,
+				flex: 0.8,
+				cellRenderer: StatusSliderRenderer,
+				cellRendererParams: { interactiveLevels: [0, 1, 2], smallKnob: true },
+				suppressKeyboardEvent: () => true,
+				cellClassRules: { 'ag-cell-loading': (p) => isCellLoading(p, 'campaign_status') },
+
+				// 👇👇 ADIÇÕES
+				filter: 'agTextColumnFilter',
+				floatingFilter: true,
+				floatingFilterComponent: CampaignStatusFloatingFilter,
+				floatingFilterComponentParams: { suppressFilterButton: true },
+			},
+
+			{
+				headerName: 'Budget',
+				field: 'budget',
+				editable: (p) => p.node?.level === 0 && !isCellLoading(p, 'budget'),
+				cellEditor: CurrencyMaskEditor, // 👈 trocado
+				valueParser: parseCurrencyInput, // já usa parseCurrencyFlexible (ok com vírgula)
+				valueFormatter: currencyFormatter,
+				minWidth: 120,
+				cellRenderer: EditableMoneyCellRenderer, // 👈 ADICIONE ISTO
+
+				flex: 0.6,
+				cellClassRules: { 'ag-cell-loading': (p) => isCellLoading(p, 'budget') },
+				onCellValueChanged: async (p) => {
+					try {
+						if (shouldSuppressCellChange(p, 'budget')) return;
+						if ((p?.node?.level ?? 0) !== 0) return;
+						const row = p?.data || {};
+						const id = String(row.id ?? row.utm_campaign ?? '');
+						if (!id) return;
+						const currency = getAppCurrency();
+						const oldN = parseCurrencyFlexible(p.oldValue, currency);
+						const newN = parseCurrencyFlexible(p.newValue, currency);
+						if (Number.isFinite(oldN) && Number.isFinite(newN) && oldN === newN) return;
+
+						if (!Number.isFinite(newN) || newN < 0) {
+							setCellSilently(p, 'budget', p.oldValue);
+							markCellError(p.node, 'budget'); // 👈 erro: input inválido
+							showToast('Budget inválido', 'danger');
+							nudgeRenderer(p, 'budget');
+							return;
+						}
+
+						setCellLoading(p.node, 'budget', true);
+						p.api.refreshCells({ rowNodes: [p.node], columns: ['budget'] });
+
+						const okTest = await toggleFeature('budget', { id, value: newN });
+						if (!okTest) {
+							setCellSilently(p, 'budget', p.oldValue);
+							markCellError(p.node, 'budget'); // 👈 erro: pré-check falhou
+							nudgeRenderer(p, 'bid'); // 👈 col certa
+
+							p.api.refreshCells({ rowNodes: [p.node], columns: ['budget'] });
+							return;
+						}
+
+						await updateCampaignBudgetBackend(id, newN);
+
+						setCellSilently(p, 'budget', newN);
+						clearCellError(p.node, 'budget'); // 👈 sucesso: limpa erro
+						p.api.refreshCells({ rowNodes: [p.node], columns: ['budget'] });
+						markCellJustSaved(p.node, 'budget');
+						nudgeRenderer(p, 'budget');
+
+						showToast('Budget atualizado', 'success');
+					} catch (e) {
+						setCellSilently(p, 'budget', p.oldValue);
+						markCellError(p.node, 'budget'); // 👈 erro: exceção no backend
+						nudgeRenderer(p, 'bid'); // 👈 col certa
+
+						showToast(`Erro ao salvar Budget: ${e?.message || e}`, 'danger');
+					} finally {
+						setCellLoading(p.node, 'budget', false);
+						p.api.refreshCells({ rowNodes: [p.node], columns: ['budget'] });
+					}
+				},
+			},
+
+			{
+				headerName: 'Bid',
+				field: 'bid',
+				cellRenderer: EditableMoneyCellRenderer, // 👈 ADICIONE ISTO
+
+				editable: (p) => p.node?.level === 0 && !isCellLoading(p, 'bid'),
+				cellEditor: CurrencyMaskEditor, // 👈 trocado
+				valueParser: parseCurrencyInput, // já usa parseCurrencyFlexible (ok com vírgula)
+				valueFormatter: currencyFormatter,
+				minWidth: 80,
+				flex: 0.6,
+				cellClassRules: { 'ag-cell-loading': (p) => isCellLoading(p, 'bid') },
+				onCellValueChanged: async (p) => {
+					try {
+						if (shouldSuppressCellChange(p, 'bid')) return;
+						if ((p?.node?.level ?? 0) !== 0) return;
+						const row = p?.data || {};
+						const id = String(row.id ?? row.utm_campaign ?? '');
+						if (!id) return;
+						const currency = getAppCurrency();
+						const oldN = parseCurrencyFlexible(p.oldValue, currency);
+						const newN = parseCurrencyFlexible(p.newValue, currency);
+						if (Number.isFinite(oldN) && Number.isFinite(newN) && oldN === newN) return;
+
+						if (!Number.isFinite(newN) || newN < 0) {
+							setCellSilently(p, 'bid', p.oldValue);
+							markCellError(p.node, 'bid'); // 👈 erro: input inválido
+							nudgeRenderer(p, 'bid'); // 👈 col certa
+
+							showToast('Bid inválido', 'danger');
+							nudgeRenderer(p, 'bid'); // 👈 col certa
+							return;
+						}
+
+						setCellLoading(p.node, 'bid', true);
+						p.api.refreshCells({ rowNodes: [p.node], columns: ['bid'] });
+
+						const okTest = await toggleFeature('bid', { id, value: newN });
+						if (!okTest) {
+							setCellSilently(p, 'bid', p.oldValue);
+							markCellError(p.node, 'bid'); // 👈 erro: pré-check falhou
+							nudgeRenderer(p, 'bid'); // 👈 col certa
+
+							p.api.refreshCells({ rowNodes: [p.node], columns: ['bid'] });
+							return;
+						}
+
+						await updateCampaignBidBackend(id, newN);
+
+						setCellSilently(p, 'bid', newN);
+						clearCellError(p.node, 'bid'); // 👈 sucesso: limpa erro
+						p.api.refreshCells({ rowNodes: [p.node], columns: ['bid'] });
+						markCellJustSaved(p.node, 'bid');
+						nudgeRenderer(p, 'bid'); // 👈 col certa
+
+						showToast('Bid atualizado', 'success');
+					} catch (e) {
+						setCellSilently(p, 'bid', p.oldValue);
+						markCellError(p.node, 'bid'); // 👈 erro: exceção no backend
+						nudgeRenderer(p, 'bid'); // 👈 col certa
+
+						showToast(`Erro ao salvar Bid: ${e?.message || e}`, 'danger');
+					} finally {
+						setCellLoading(p.node, 'bid', false);
+						p.api.refreshCells({ rowNodes: [p.node], columns: ['bid'] });
+					}
+				},
+			},
+			{
+				headerName: 'Ads',
+				field: '_ads',
+				minWidth: 70,
+				maxWidth: 120,
+				tooltipValueGetter: (p) => stripHtml(p.data?.xabu_ads),
+				cellRenderer: chipFractionBadgeRenderer,
+			},
+			{
+				headerName: 'Adsets',
+				field: '_adsets',
+				minWidth: 84,
+				maxWidth: 130,
+				tooltipValueGetter: (p) => stripHtml(p.data?.xabu_adsets),
+				cellRenderer: chipFractionBadgeRenderer,
+			},
+		],
+	},
+	{
+		headerName: 'Metrics & Revenue',
+		groupId: 'grp-metrics-rev',
+		marryChildren: true,
+		openByDefault: true,
+		children: [
+			{
+				headerName: 'Imp',
+				field: 'impressions',
+				valueFormatter: intFormatter,
+				minWidth: 70,
+				flex: 0.7,
+			},
+			{
+				headerName: 'Clicks',
+				field: 'clicks',
+				valueFormatter: intFormatter,
+				minWidth: 80,
+				flex: 0.6,
+			},
+			{
+				headerName: 'Visitors',
+				field: 'visitors',
+				valueFormatter: intFormatter,
+				minWidth: 88,
+				flex: 0.6,
+			},
+			{
+				headerName: 'CPC',
+				field: 'cpc',
+				valueGetter: (p) => toNumberBR(p.data?.cpc),
+				valueFormatter: currencyFormatter,
+				minWidth: 70,
+				flex: 0.6,
+			},
+			{
+				headerName: 'Convs',
+				field: 'conversions',
+				valueFormatter: intFormatter,
+				minWidth: 80,
+				flex: 0.6,
+			},
+			{
+				headerName: 'CPA FB',
+				field: 'cpa_fb',
+				valueGetter: (p) => toNumberBR(p.data?.cpa_fb),
+				valueFormatter: currencyFormatter,
+				minWidth: 70,
+				flex: 0.6,
+			},
+			{
+				headerName: 'Real Convs',
+				field: 'real_conversions',
+				valueGetter: (p) => toNumberBR(p.data?.real_conversions),
+				valueFormatter: intFormatter,
+				minWidth: 80,
+				flex: 0.7,
+			},
+			{
+				headerName: 'Real CPA',
+				field: 'real_cpa',
+				valueGetter: (p) => toNumberBR(p.data?.real_cpa),
+				valueFormatter: currencyFormatter,
+				minWidth: 80,
+				flex: 0.6,
+			},
+			{
+				headerName: 'Spend',
+				field: 'spent',
+				valueGetter: (p) => toNumberBR(p.data?.spent),
+				valueFormatter: currencyFormatter,
+				minWidth: 90,
+				pinned: 'right',
+
+				flex: 0.8,
+			},
+			{
+				headerName: 'Facebook Revenue',
+				field: 'fb_revenue',
+				valueGetter: (p) => toNumberBR(p.data?.fb_revenue),
+				valueFormatter: currencyFormatter,
+				minWidth: 100,
+				flex: 0.8,
+			},
+			{
+				headerName: 'Push Revenue',
+				field: 'push_revenue',
+				valueGetter: (p) => toNumberBR(p.data?.push_revenue),
+				valueFormatter: currencyFormatter,
+				minWidth: 94,
+				flex: 0.8,
+			},
+			{
+				headerName: 'Revenue',
+				field: 'revenue',
+				valueGetter: (p) => stripHtml(p.data?.revenue),
+				minWidth: 115,
+				flex: 1.0,
+				pinned: 'right',
+				wrapText: true,
+				cellRenderer: revenueCellRenderer,
+				tooltipValueGetter: (p) => p.data?.revenue || '',
+			},
+			{
+				headerName: 'MX',
+				field: 'mx',
+				minWidth: 80,
+				pinned: 'right',
+				valueGetter: (p) => stripHtml(p.data?.mx),
+				flex: 0.7,
+			},
+			{
+				headerName: 'Profit',
+				field: 'profit',
+				pinned: 'right',
+				valueGetter: (p) => toNumberBR(p.data?.profit),
+				valueFormatter: currencyFormatter,
+				minWidth: 95,
+				flex: 0.8,
+			},
+		],
+	},
+	{
+		headerName: 'Adsets',
+		groupId: 'grp-adsets',
+		marryChildren: true,
+		openByDefault: true,
+		children: [
+			{
+				headerName: 'CTR',
+				field: 'ctr',
+				minWidth: 70,
+				filter: 'agNumberColumnFilter',
+			},
+		],
+	},
+];
+
+/* =========================================
+ * 14) SSRM refresh compat
+ * =======================================*/
+function refreshSSRM(api) {
+	if (!api) return;
+	if (typeof api.refreshServerSideStore === 'function') {
+		api.refreshServerSideStore({ purge: true });
+	} else if (typeof api.purgeServerSideCache === 'function') {
+		api.purgeServerSideCache();
+	} else if (typeof api.refreshServerSide === 'function') {
+		api.refreshServerSide({ purge: true });
+	} else if (typeof api.onFilterChanged === 'function') {
+		api.onFilterChanged();
+	}
+}
+
+/* =========================================
+ * 15) Global Quick Filter (IIFE)
+ * =======================================*/
+(function setupGlobalQuickFilter() {
+	function focusQuickFilter() {
+		const input = document.getElementById('quickFilter');
+		if (!input) return;
+		input.focus();
+		input.select?.();
+	}
+
+	function applyGlobalFilter(val) {
+		GLOBAL_QUICK_FILTER = String(val || '');
+		const api = globalThis.LionGrid?.api;
+		if (!api) return;
+		refreshSSRM(api);
+	}
+
+	function init() {
+		const input = document.getElementById('quickFilter'); // id padrão do AG Grid
+		if (!input) return;
+
+		// atalho de acessibilidade opcional (vira Alt+Shift+K em vários browsers)
+		try {
+			input.setAttribute('accesskey', 'k');
+		} catch {}
+
+		let t = null;
+		input.addEventListener('input', () => {
+			clearTimeout(t);
+			t = setTimeout(() => applyGlobalFilter(input.value.trim()), 400);
+		});
+		if (input.value) applyGlobalFilter(input.value.trim());
+	}
+
+	// Global hotkeys: Meta+K e Ctrl+K
+	window.addEventListener(
+		'keydown',
+		(e) => {
+			const tag = e.target && e.target.tagName ? e.target.tagName.toLowerCase() : '';
+			const editable =
+				tag === 'input' || tag === 'textarea' || (e.target && e.target.isContentEditable);
+			if (editable) return;
+
+			const key = String(e.key || '').toLowerCase();
+			if (e.ctrlKey && !e.shiftKey && !e.altKey && key === 'k') {
+				e.preventDefault();
+				focusQuickFilter();
+				return;
+			}
+			if (e.metaKey && !e.shiftKey && !e.altKey && key === 'k') {
+				e.preventDefault();
+				focusQuickFilter();
+				return;
+			}
+		},
+		{ capture: true }
+	);
+
+	globalThis.addEventListener('lionGridReady', init);
+})();
+
+/* =========================================
+ * 16) State (load/apply)
+ * =======================================*/
+function buildFilterModelWithGlobal(baseFilterModel) {
+	const fm = { ...(baseFilterModel || {}) };
+	const gf = (GLOBAL_QUICK_FILTER || '').trim();
+	fm._global = Object.assign({}, fm._global, { filter: gf });
+	return fm;
+}
+function loadSavedState() {
+	try {
+		const raw = sessionStorage.getItem(GRID_STATE_KEY);
+		if (!raw) return null;
+		const parsed = JSON.parse(raw);
+		return parsed?.state || null;
+	} catch {
+		return null;
+	}
+}
+function applySavedStateIfAny(api) {
+	const saved = loadSavedState();
+	if (!saved) return false;
+	try {
+		api.setState(saved, GRID_STATE_IGNORE_ON_RESTORE);
+		return true;
+	} catch (e) {
+		console.warn('[GridState] restore failed:', e);
+		return false;
+	}
+}
+
+/* =========================================
+ * 17) Toggle de colunas pinadas
+ * =======================================*/
+/** Tenta descobrir a coluna de seleção (checkbox) corrente. */
+function getSelectionColId(api) {
+	try {
+		const cols = api.getColumns() || [];
+		const ids = cols.map((c) => c.getColId());
+		if (ids.includes('ag-Grid-Selection')) return 'ag-Grid-Selection';
+		const found = cols.find(
+			(c) => c.getColDef()?.headerCheckboxSelection || c.getColDef()?.checkboxSelection
+		);
+		return found?.getColId() || null;
+	} catch {
+		return null;
+	}
+}
+/**
+ * Pin/unpin colunas úteis (lado esquerdo/direito) a partir de um checkbox.
+ * @param {boolean} [silent=false]
+ */
+function togglePinnedColsFromCheckbox(silent = false) {
+	const api = globalThis.LionGrid?.api;
+	if (!api) return;
+	const el = document.getElementById('pinToggle');
+	if (!el) return;
+	const checked = !!el.checked;
+	const selectionColId = getSelectionColId(api);
+	const leftPins = [
+		{ colId: 'ag-Grid-SelectionColumn', pinned: checked ? 'left' : null },
+		{ colId: 'ag-Grid-AutoColumn', pinned: checked ? 'left' : null },
+		{ colId: 'profile_name', pinned: checked ? 'left' : null },
+	];
+	if (selectionColId) leftPins.push({ colId: selectionColId, pinned: checked ? 'left' : null });
+	const rightPins = [
+		{ colId: 'spent', pinned: checked ? 'right' : null },
+		{ colId: 'revenue', pinned: checked ? 'right' : null },
+		{ colId: 'mx', pinned: checked ? 'right' : null },
+		{ colId: 'profit', pinned: checked ? 'right' : null },
+	];
+	api.applyColumnState({ state: [...leftPins, ...rightPins], defaultState: { pinned: null } });
+	if (!silent)
+		showToast(checked ? 'Columns Pinned' : 'Columns Unpinned', checked ? 'success' : 'info');
+}
+
+/* =========================================
+ * 18) Toolbar (state/layout + presets + tamanho colunas)
+ * =======================================*/
+(function setupToolbar() {
+	const byId = (id) => document.getElementById(id);
+	function ensureApi() {
+		const api = globalThis.LionGrid?.api;
+		if (!api) {
+			console.warn('Grid API ainda não disponível');
+			return null;
+		}
+		return api;
+	}
+	const SS_KEY_STATE = GRID_STATE_KEY || 'lion.aggrid.state.v1';
+	const LS_KEY_PRESETS = 'lion.aggrid.presets.v1';
+	const LS_KEY_ACTIVE_PRESET = 'lion.aggrid.activePreset.v1';
+	const PRESET_VERSION = 1;
+
+	function getState() {
+		const api = ensureApi();
+		if (!api) return null;
+		try {
+			return api.getState();
+		} catch {
+			return null;
+		}
+	}
+	function setState(state, ignore = []) {
+		const api = ensureApi();
+		if (!api) return;
+		try {
+			api.setState(state, ignore || []);
+		} catch (e) {
+			console.warn('setState fail', e);
+		}
+	}
+
+	function resetLayout() {
+		const api = ensureApi();
+		if (!api) return;
+		try {
+			sessionStorage.removeItem(SS_KEY_STATE);
+			localStorage.removeItem(LS_KEY_ACTIVE_PRESET);
+			api.setState({}, []);
+			api.resetColumnState?.();
+			api.setFilterModel?.(null);
+			api.setSortModel?.([]);
+			refreshPresetUserSelect();
+			togglePinnedColsFromCheckbox(true);
+			showToast('Layout Reset', 'info');
+		} catch (e) {
+			console.warn('resetLayout fail', e);
+		}
+	}
+
+	function readPresets() {
+		try {
+			return JSON.parse(localStorage.getItem(LS_KEY_PRESETS) || '{}');
+		} catch {
+			return {};
+		}
+	}
+	function writePresets(obj) {
+		localStorage.setItem(LS_KEY_PRESETS, JSON.stringify(obj));
+	}
+	function listPresetNames() {
+		return Object.keys(readPresets()).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+	}
+
+	function refreshPresetUserSelect() {
+		const sel = byId('presetUserSelect');
+		if (!sel) return;
+		const activePreset = localStorage.getItem(LS_KEY_ACTIVE_PRESET) || '';
+		while (sel.firstChild) sel.removeChild(sel.firstChild);
+		const placeholderText = 'Default';
+		sel.appendChild(new Option(placeholderText, ''));
+		listPresetNames().forEach((name) => sel.appendChild(new Option(name, name)));
+		if (activePreset && [...sel.options].some((o) => o.value === activePreset))
+			sel.value = activePreset;
+		else sel.value = '';
+	}
+
+	function saveAsPreset() {
+		const api = ensureApi();
+		if (!api) return;
+		const name = prompt('Preset name:');
+		if (!name) return;
+		let state;
+		try {
+			state = api.getState();
+		} catch {}
+		if (!state) return showToast("Couldn't capture grid state", 'danger');
+		const bag = readPresets();
+		bag[name] = { v: PRESET_VERSION, name, createdAt: Date.now(), grid: state };
+		writePresets(bag);
+		refreshPresetUserSelect();
+		const sel = byId('presetUserSelect');
+		if (sel) sel.value = name;
+		showToast(`Preset "${name}" saved`, 'success');
+	}
+
+	function applyPresetUser(name) {
+		if (!name) return;
+		const bag = readPresets();
+		const p = bag[name];
+		if (!p?.grid) return showToast('Preset not found', 'warning');
+		setState(p.grid, ['pagination', 'scroll', 'rowSelection', 'focusedCell']);
+		localStorage.setItem(LS_KEY_ACTIVE_PRESET, name);
+		refreshPresetUserSelect();
+		showToast(`Preset "${name}" applied`, 'success');
+	}
+
+	function deletePreset() {
+		const sel = byId('presetUserSelect');
+		const name = sel?.value || '';
+		if (!name) return showToast('Pick a preset first', 'warning');
+		if (!confirm(`Delete preset "${name}"?`)) return;
+		const bag = readPresets();
+		delete bag[name];
+		writePresets(bag);
+		const activePreset = localStorage.getItem(LS_KEY_ACTIVE_PRESET);
+		if (activePreset === name) localStorage.removeItem(LS_KEY_ACTIVE_PRESET);
+		refreshPresetUserSelect();
+		showToast(`Preset "${name}" removed`, 'info');
+	}
+
+	function downloadPreset() {
+		const sel = byId('presetUserSelect');
+		const name = sel?.value || '';
+		if (!name) return showToast('Pick a preset first', 'warning');
+		const bag = readPresets();
+		const p = bag[name];
+		if (!p) return showToast('Preset not found', 'warning');
+		const blob = new Blob([JSON.stringify(p, null, 2)], { type: 'application/json;charset=utf-8' });
+		const url = URL.createObjectURL(blob);
+		const a = document.createElement('a');
+		a.href = url;
+		a.download = `lion-preset-${name}.json`;
+		document.body.appendChild(a);
+		a.click();
+		a.remove();
+		URL.revokeObjectURL(url);
+		showToast(`Preset "${name}" downloaded`, 'success');
+	}
+
+	function uploadPreset() {
+		const input = byId('presetFileInput');
+		if (!input) return;
+		input.value = '';
+		input.click();
+	}
+	byId('presetFileInput')?.addEventListener('change', (e) => {
+		const file = e.target.files?.[0];
+		if (!file) return;
+		const reader = new FileReader();
+		reader.onload = () => {
+			try {
+				const parsed = JSON.parse(String(reader.result || '{}'));
+				if (!parsed?.grid) return showToast('Invalid preset file', 'danger');
+				const name = prompt(
+					'Name to save this preset as:',
+					parsed.name || file.name.replace(/\.json$/i, '')
+				);
+				if (!name) return;
+				const bag = readPresets();
+				bag[name] = { ...parsed, name, importedAt: Date.now() };
+				writePresets(bag);
+				refreshPresetUserSelect();
+				const sel = byId('presetUserSelect');
+				if (sel) sel.value = name;
+				applyPresetUser(name);
+			} catch {
+				showToast('Failed to read JSON', 'danger');
+			}
+		};
+		reader.readAsText(file, 'utf-8');
+	});
+
+	/* ===== Toggle: modo de ajuste de colunas ===== */
+	const LS_KEY_SIZE_MODE = 'lion.aggrid.sizeMode'; // 'auto' | 'fit'
+	function applySizeMode(mode) {
+		const api = (globalThis.LionGrid || {}).api;
+		if (!api) return;
+		try {
+			if (mode === 'auto') {
+				const all = api.getColumns()?.map((c) => c.getColId()) || [];
+				api.autoSizeColumns(all, false);
+			} else {
+				api.sizeColumnsToFit();
+			}
+		} catch {}
+	}
+	function getSizeMode() {
+		const v = localStorage.getItem(LS_KEY_SIZE_MODE);
+		return v === 'auto' ? 'auto' : 'fit';
+	}
+	function setSizeMode(mode) {
+		localStorage.setItem(LS_KEY_SIZE_MODE, mode);
+	}
+
+	(function initSizeModeToggle() {
+		const el = byId('colSizeModeToggle');
+		if (!el) return;
+		const mode = getSizeMode();
+		el.checked = mode === 'auto';
+		applySizeMode(mode);
+		el.addEventListener('change', () => {
+			const next = el.checked ? 'auto' : 'fit';
+			setSizeMode(next);
+			applySizeMode(next);
+			showToast(next === 'auto' ? 'Mode: Auto Size' : 'Mode: Size To Fit', 'info');
+		});
+		window.addEventListener('resize', () => applySizeMode(getSizeMode()));
+	})();
+
+	/* ========== binds (botões/menus são opcionais) ========== */
+	byId('btnResetLayout')?.addEventListener('click', resetLayout);
+	byId('presetUserSelect')?.addEventListener('change', (e) => {
+		const v = e.target.value;
+		if (!v) {
+			resetLayout();
+			localStorage.removeItem(LS_KEY_ACTIVE_PRESET);
+			refreshPresetUserSelect();
+			return;
+		}
+		applyPresetUser(v);
+	});
+	byId('btnSaveAsPreset')?.addEventListener('click', saveAsPreset);
+	byId('btnDeletePreset')?.addEventListener('click', deletePreset);
+	byId('btnDownloadPreset')?.addEventListener('click', downloadPreset);
+	byId('btnUploadPreset')?.addEventListener('click', uploadPreset);
+
+	refreshPresetUserSelect();
+
+	globalThis.addEventListener('lionGridReady', () => {
+		const activePreset = localStorage.getItem(LS_KEY_ACTIVE_PRESET);
+		if (activePreset) {
+			const bag = readPresets();
+			const p = bag[activePreset];
+			if (p?.grid) {
+				setState(p.grid, ['pagination', 'scroll', 'rowSelection', 'focusedCell']);
+				console.log(`[Preset] Auto-aplicado: "${activePreset}"`);
+			}
+		}
+	});
+
+	globalThis.LionGrid = Object.assign(globalThis.LionGrid || {}, {
+		getState,
+		setState,
+		resetLayout,
+		saveAsPreset,
+		applyPresetUser,
+	});
+})();
+// ADD: duplo-clique no campaign_status com mesmo comportamento do slider/dropdown
+async function handleCampaignStatusDoubleClick(p) {
+	// só reage na coluna campaign_status e em linhas "reais"
+	if (p?.column?.getColId?.() !== 'campaign_status') return;
+	const lvl = p?.node?.level ?? -1;
+	if (lvl < 0 || lvl > 2) return;
+	if (isCellLoading(p, 'campaign_status')) return;
+
+	const d = p.data || {};
+	const colId = 'campaign_status';
+	const key = 'campaign_status' in d ? 'campaign_status' : 'status';
+
+	// scope + id por nível (mesma lógica do slider)
+	const scope = lvl === 2 ? 'ad' : lvl === 1 ? 'adset' : 'campaign';
+	const id = lvl === 0 ? String(d.id ?? d.utm_campaign ?? '') : String(d.id ?? '') || '';
+
+	if (!id) return;
+
+	const cur = String(d[key] ?? '').toUpperCase();
+	const next = cur === 'ACTIVE' ? 'PAUSED' : 'ACTIVE';
+
+	// liga loading
+	setCellLoading(p.node, colId, true);
+	p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
+
+	// otimista
+	d[key] = next;
+	p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
+
+	try {
+		// mesmo pré-check usado pelo slider
+		const okTest = await toggleFeature('status', { scope, id, value: next });
+		if (!okTest) {
+			d[key] = cur; // rollback
+			p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
+			return;
+		}
+
+		// backend real por escopo (igual ao slider)
+		if (scope === 'ad') {
+			await updateAdStatusBackend(id, next);
+		} else if (scope === 'adset') {
+			await updateAdsetStatusBackend(id, next);
+		} else {
+			await updateCampaignStatusBackend(id, next);
+		}
+
+		const scopeLabel = scope === 'ad' ? 'Ad' : scope === 'adset' ? 'Adset' : 'Campanha';
+		showToast(next === 'ACTIVE' ? `${scopeLabel} ativado` : `${scopeLabel} pausado`, 'success');
+	} catch (e) {
+		// rollback em erro
+		d[key] = cur;
+		p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
+		showToast(`Falha ao salvar status: ${e?.message || e}`, 'danger');
+	} finally {
+		// desliga loading
+		setCellLoading(p.node, colId, false);
+		p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
+	}
+}
+
+/* =========================================
+ * 19) Normalizadores (TreeData)
+ * =======================================*/
+function normalizeCampaignRow(r) {
+	return {
+		__nodeType: 'campaign',
+		__groupKey: String(r.utm_campaign || r.id || ''),
+		__label: stripHtml(r.campaign_name || '(sem nome)'),
+		...r,
+	};
+}
+function normalizeAdsetRow(r) {
+	return {
+		__nodeType: 'adset',
+		__groupKey: String(r.id || ''),
+		__label: stripHtml(r.name || '(adset)'),
+		...r,
+	};
+}
+function normalizeAdRow(r) {
+	return { __nodeType: 'ad', __label: stripHtml(r.name || '(ad)'), ...r };
+}
+
+/* =========================================
+ * 20) Clipboard
+ * =======================================*/
+async function copyToClipboard(text) {
+	try {
+		await navigator.clipboard.writeText(String(text ?? ''));
+		showToast('Copiado!', 'success');
+	} catch {
+		const ta = document.createElement('textarea');
+		ta.value = String(text ?? '');
+		ta.style.position = 'fixed';
+		ta.style.left = '-9999px';
+		document.body.appendChild(ta);
+		ta.select();
+		try {
+			document.execCommand('copy');
+			showToast('Copiado!', 'success');
+		} catch {
+			showToast('Falha ao copiar', 'danger');
+		} finally {
+			ta.remove();
+		}
+	}
+}
+
+/* =========================================
+ * 21) Grid (Tree Data + SSRM)
+ * =======================================*/
 function makeGrid() {
 	const AG = getAgGrid();
 	const gridDiv = document.getElementById('lionGrid');
@@ -127,492 +2389,591 @@ function makeGrid() {
 	}
 	gridDiv.classList.add('ag-theme-quartz');
 
-	// estilos mínimos para badge
-	const style = document.createElement('style');
-	style.textContent = `
-    .badge{display:inline-block;padding:2px 6px;border-radius:6px;font-size:11px;font-weight:600}
-    .badge--success{background:#e8f7ef;color:#0f8a4b}
-    .badge--secondary{background:#eee;color:#333}
-  `;
-	document.head.appendChild(style);
-	// ===== Helpers p/ parsing/format =====
-	const BRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
-	const INT = new Intl.NumberFormat('pt-BR');
+	const autoGroupColumnDef = {
+		headerName: 'Campaign',
+		colId: 'campaign', // bate com o back
+		filter: 'agTextColumnFilter',
+		floatingFilter: true,
+		sortable: false,
+		wrapText: true,
+		minWidth: 310,
+		pinned: 'left',
 
-	function stripHtml(s) {
-		return String(s ?? '')
-			.replace(/<[^>]*>/g, ' ')
-			.replace(/\s+/g, ' ')
-			.trim();
-	}
-
-	// "R$ 1.618,65"  | " -R$ 1,00 " | "2.360,73" -> number
-	function toNumberBR(s) {
-		if (s == null) return null;
-		const raw = String(s).trim();
-		if (!raw) return null;
-		const sign = raw.includes('-') ? -1 : 1;
-		const only = raw
-			.replace(/[^\d,.-]/g, '')
-			.replace(/\./g, '')
-			.replace(',', '.');
-		const n = Number(only);
-		return Number.isFinite(n) ? sign * n : null;
-	}
-
-	function currencyFormatter(p) {
-		const v = p.value;
-		if (v == null || Number.isNaN(v)) return '';
-		return BRL.format(v);
-	}
-
-	function intFormatter(p) {
-		const v = Number(p.value);
-		if (!Number.isFinite(v)) return '';
-		return INT.format(v);
-	}
-
-	// extrai o texto (e uma "classe de cor") a partir do HTML dos status
-	function parseBadgeHtml(html) {
-		const txt = stripHtml(html).toUpperCase(); // ACTIVE / INACTIVE …
-		const lower = txt.toLowerCase();
-		let color = 'secondary';
-		if (/(success|active|ok|ativo)/i.test(html) || /(success|active|ok|ativo)/i.test(lower))
-			color = 'success';
-		else if (
-			/(danger|error|inactive|inativo|blocked|ban)/i.test(html) ||
-			/(danger|error|inactive|inativo|blocked|ban)/i.test(lower)
-		)
-			color = 'danger';
-		else if (/(warning|pending|aguard|hold)/i.test(html) || /(warning|pending)/i.test(lower))
-			color = 'warning';
-		else if (/(info)/i.test(html)) color = 'info';
-		return { label: txt || '—', color };
-	}
-
-	const COLOR_CLASS = {
-		success: 'bg-green-500 text-white',
-		danger: 'bg-red-600 text-white',
-		warning: 'bg-yellow-500 text-black',
-		info: 'bg-cyan-500 text-white',
-		secondary: 'bg-gray-500 text-white',
+		cellClass: (p) => ['camp-root', 'camp-child', 'camp-grand'][Math.min(p?.node?.level ?? 0, 2)],
+		tooltipValueGetter: (p) => {
+			const d = p.data || {};
+			if (p?.node?.level === 0) {
+				const name = d.__label || '';
+				const utm = d.utm_campaign || '';
+				return utm ? `${name} — ${utm}` : name;
+			}
+			return d.__label || '';
+		},
+		cellRendererParams: {
+			suppressCount: true,
+			innerRenderer: (p) => {
+				const d = p.data || {};
+				const label = d.__label || '';
+				const utm = d.utm_campaign || '';
+				if (p?.node?.level === 0 && (label || utm)) {
+					const wrap = document.createElement('span');
+					wrap.style.display = 'inline-flex';
+					wrap.style.flexDirection = 'column';
+					wrap.style.lineHeight = '1.25';
+					const l1 = document.createElement('span');
+					l1.textContent = label;
+					l1.style.fontWeight = '600';
+					wrap.appendChild(l1);
+					if (utm) {
+						const l2 = document.createElement('span');
+						l2.textContent = utm;
+						l2.style.fontSize = '9px';
+						l2.style.opacity = '0.75';
+						l2.style.letterSpacing = '0.2px';
+						wrap.appendChild(l2);
+					}
+					return wrap;
+				}
+				return label;
+			},
+		},
+		// valor usado no filtro do autoGroup (campo virtual)
+		valueGetter: (p) => {
+			const d = p.data || {};
+			const name = d.__label || '';
+			const utm = d.utm_campaign || '';
+			return (name + ' ' + utm).trim();
+		},
 	};
+	// ===== [1] Medidor offscreen (singleton) =====
+	const _rowHeightMeasure = (() => {
+		let box = null;
+		return {
+			ensure() {
+				if (box) return box;
+				box = document.createElement('div');
+				box.id = 'lion-rowheight-measurer';
+				Object.assign(box.style, {
+					position: 'absolute',
+					left: '-99999px',
+					top: '-99999px',
+					visibility: 'hidden',
+					whiteSpace: 'normal',
+					wordBreak: 'break-word',
+					overflowWrap: 'anywhere',
+					lineHeight: '1.25',
+					fontFamily: 'IBM Plex Sans, system-ui, sans-serif',
+					fontSize: '14px',
+					padding: '0',
+					margin: '0',
+					border: '0',
+				});
+				document.body.appendChild(box);
+				return box;
+			},
+			measure(text, widthPx) {
+				const el = this.ensure();
+				el.style.width = Math.max(0, widthPx) + 'px';
+				el.textContent = text || '';
+				// scrollHeight retorna a altura “necessária”
+				return el.scrollHeight || 0;
+			},
+		};
+	})();
 
-	function statusRenderer(p) {
-		const { label, color } = parseBadgeHtml(p.value);
-		const span = document.createElement('span');
-		span.className = `px-2 py-[2px] rounded-full text-xs font-semibold ${
-			COLOR_CLASS[color] || COLOR_CLASS.secondary
-		}`;
-		span.textContent = label;
-		return span;
+	// ===== [2] Largura útil da coluna autoGroup =====
+	function getAutoGroupContentWidth(api) {
+		try {
+			const col =
+				api.getColumn('campaign') ||
+				api.getDisplayedCenterColumns().find((c) => c.getColId?.() === 'campaign');
+			if (!col) return 300;
+			const comp = api.getDisplayedColAfter ? api.getDisplayedColAfter(col) : null; // só p/ forçar layout
+			const colW = col.getActualWidth();
+			// padding interno do renderer (aprox) + ícones (seta/checkbox)
+			const padding = 16; // padding horizontal interno (left+right)
+			const iconArea = 28; // seta/checkbox/margens
+			return Math.max(40, colW - padding - iconArea);
+		} catch {
+			return 300;
+		}
 	}
 
-	// "0/3" em chip
-	function chipCountRenderer(p) {
-		const txt = stripHtml(p.value); // deve virar "0/3"
-		const span = document.createElement('span');
-		span.className = `px-2 py-[2px] rounded-full text-xs font-semibold ${COLOR_CLASS.success}`;
-		span.textContent = txt || '—';
-		return span;
+	// ===== [3] Texto que realmente aparece na célula (2 linhas possíveis) =====
+	function getCampaignCellText(p) {
+		const d = p?.data || {};
+		if ((p?.node?.level ?? 0) !== 0) {
+			// filhos/netos: só o label
+			return String(d.__label || '');
+		}
+		const label = String(d.__label || '');
+		const utm = String(d.utm_campaign || '');
+		// O innerRenderer mostra “label” na 1ª linha e “utm” (se houver) na 2ª.
+		return utm ? `${label}\n${utm}` : label;
 	}
 
-	// checkbox “selecionar linha”
-	function selectCellRenderer(p) {
-		const id = p?.data?.id || '';
-		const wrap = document.createElement('label');
-		wrap.style.display = 'flex';
-		wrap.style.alignItems = 'center';
-		wrap.style.height = '100%';
-
-		const input = document.createElement('input');
-		input.type = 'checkbox';
-		input.name = 'selected-campaigns';
-		input.dataset.selectId = id;
-		input.style.width = '18px';
-		input.style.height = '18px';
-		input.addEventListener('change', (e) => {
-			// se quiser, dispare um evento global aqui
-			// window.dispatchEvent(new CustomEvent('row-select', { detail: { id, checked: e.target.checked } }));
-		});
-
-		wrap.appendChild(input);
-		return wrap;
+	// ===== [4] Cache simples por rowId + largura =====
+	const _rowHCache = new Map(); // key -> height
+	function _cacheKey(p, width) {
+		const id =
+			p?.node?.id ||
+			(p?.node?.data?.__nodeType === 'campaign'
+				? `c:${p?.node?.data?.__groupKey}`
+				: p?.node?.data?.__nodeType === 'adset'
+				? `s:${p?.node?.data?.__groupKey}`
+				: p?.node?.data?.id || Math.random());
+		return id + '|' + Math.round(width);
 	}
-	// ===== Columns (na ordem do layout legado) =====
-	const columnDefs = [
-		{
-			headerName: '',
-			checkboxSelection: true,
-			headerCheckboxSelection: true,
-			width: 30,
-			pinned: 'left',
-			suppressHeaderFilterButton: true,
-		},
-		{
-			headerName: 'Perfil',
-			field: 'profile_name',
-			valueGetter: (p) => stripHtml(p.data?.profile_name),
-			minWidth: 180,
-			flex: 1.2,
-			tooltipValueGetter: (p) => p.value || '',
-		},
 
-		// 2) BM
-		{
-			headerName: 'BM',
-			field: 'bc_name',
-			valueGetter: (p) => stripHtml(p.data?.bc_name),
-			minWidth: 160,
-			flex: 1.0,
-			tooltipValueGetter: (p) => p.value || '',
-		},
-
-		// 3) Conta
-		{
-			headerName: 'Conta',
-			field: 'account_name',
-			valueGetter: (p) => stripHtml(p.data?.account_name),
-			minWidth: 200,
-			flex: 1.3,
-			tooltipValueGetter: (p) => p.value || '',
-		},
-
-		// 4) Status (conta)
-		{
-			headerName: 'Status',
-			field: 'account_status',
-			cellRenderer: statusRenderer,
-			minWidth: 140,
-			flex: 0.7,
-		},
-
-		// 5) Limite Diário
-		{
-			headerName: 'Limite Diário',
-			field: 'account_limit',
-			type: 'rightAligned',
-			valueGetter: (p) => toNumberBR(p.data?.account_limit),
-			valueFormatter: currencyFormatter,
-			minWidth: 120,
-			flex: 0.8,
-		},
-
-		// 6) Campanha
-		{
-			headerName: 'Campanha',
-			field: 'campaign_name',
-			valueGetter: (p) => stripHtml(p.data?.campaign_name),
-			minWidth: 260,
-			flex: 1.6,
-			tooltipValueGetter: (p) => p.value || '',
-		},
-
-		// 7) utm_camp
-		{
-			headerName: 'utm_camp',
-			field: 'utm_campaign',
-			minWidth: 160,
-			flex: 0.9,
-			tooltipValueGetter: (p) => p.value || '',
-		},
-
-		// 9) Bid
-		{
-			headerName: 'Bid',
-			field: 'bid',
-			type: 'rightAligned',
-			valueGetter: (p) => toNumberBR(p.data?.bid),
-			valueFormatter: currencyFormatter,
-			minWidth: 110,
-			flex: 0.6,
-		},
-
-		// 10) Status Campanha
-		{
-			headerName: 'Status Campanha',
-			field: 'campaign_status',
-			cellRenderer: statusRenderer,
-			minWidth: 160,
-			flex: 0.8,
-		},
-
-		// 11) Orçamento
-		{
-			headerName: 'Orçamento',
-			field: 'budget',
-			type: 'rightAligned',
-			valueGetter: (p) => toNumberBR(p.data?.budget),
-			valueFormatter: currencyFormatter,
-			minWidth: 120,
-			flex: 0.7,
-		},
-
-		// 12) Xabu Ads
-		{
-			headerName: 'Xabu Ads',
-			field: 'xabu_ads',
-			minWidth: 110,
-			maxWidth: 140,
-			cellRenderer: chipCountRenderer,
-			tooltipValueGetter: (p) => stripHtml(p.data?.xabu_ads),
-		},
-
-		// 13) Xabu Adsets
-		{
-			headerName: 'Xabu Adsets',
-			field: 'xabu_adsets',
-			minWidth: 120,
-			maxWidth: 150,
-			cellRenderer: chipCountRenderer,
-			tooltipValueGetter: (p) => stripHtml(p.data?.xabu_adsets),
-		},
-
-		// 14) Imp
-		{
-			headerName: 'Imp',
-			field: 'impressions',
-			type: 'rightAligned',
-			valueFormatter: intFormatter,
-			minWidth: 110,
-			flex: 0.7,
-		},
-
-		// 15) Clicks
-		{
-			headerName: 'Clicks',
-			field: 'clicks',
-			type: 'rightAligned',
-			valueFormatter: intFormatter,
-			minWidth: 100,
-			flex: 0.6,
-		},
-
-		// 16) Visitors
-		{
-			headerName: 'Visitors',
-			field: 'visitors',
-			type: 'rightAligned',
-			valueFormatter: intFormatter,
-			minWidth: 100,
-			flex: 0.6,
-		},
-
-		// 17) CPC
-		{
-			headerName: 'CPC',
-			field: 'cpc',
-			type: 'rightAligned',
-			valueGetter: (p) => toNumberBR(p.data?.cpc),
-			valueFormatter: currencyFormatter,
-			minWidth: 100,
-			flex: 0.6,
-		},
-
-		// 18) Convs
-		{
-			headerName: 'Convs',
-			field: 'conversions',
-			type: 'rightAligned',
-			valueFormatter: intFormatter,
-			minWidth: 100,
-			flex: 0.6,
-		},
-
-		// 19) CPA FB
-		{
-			headerName: 'CPA FB',
-			field: 'cpa_fb',
-			type: 'rightAligned',
-			valueGetter: (p) => toNumberBR(p.data?.cpa_fb),
-			valueFormatter: currencyFormatter,
-			minWidth: 110,
-			flex: 0.6,
-		},
-
-		// 20) Real Convs
-		{
-			headerName: 'Real Convs',
-			field: 'real_conversions',
-			type: 'rightAligned',
-			valueGetter: (p) => Number(stripHtml(p.data?.real_conversions) || NaN),
-			valueFormatter: intFormatter,
-			minWidth: 120,
-			flex: 0.7,
-		},
-
-		// 21) CPA Real
-		{
-			headerName: 'CPA Real',
-			field: 'real_cpa',
-			type: 'rightAligned',
-			valueGetter: (p) => toNumberBR(p.data?.real_cpa),
-			valueFormatter: currencyFormatter,
-			minWidth: 110,
-			flex: 0.6,
-		},
-
-		// 22) Gasto
-		{
-			headerName: 'Gasto',
-			field: 'spent',
-			type: 'rightAligned',
-			valueGetter: (p) => toNumberBR(p.data?.spent),
-			valueFormatter: currencyFormatter,
-			minWidth: 120,
-			flex: 0.8,
-		},
-
-		// 23) Feito fb
-		{
-			headerName: 'Feito fb',
-			field: 'fb_revenue',
-			type: 'rightAligned',
-			valueGetter: (p) => toNumberBR(p.data?.fb_revenue),
-			valueFormatter: currencyFormatter,
-			minWidth: 120,
-			flex: 0.8,
-		},
-
-		// 24) Feito psh
-		{
-			headerName: 'Feito psh',
-			field: 'push_revenue',
-			type: 'rightAligned',
-			valueGetter: (p) => toNumberBR(p.data?.push_revenue),
-			valueFormatter: currencyFormatter,
-			minWidth: 120,
-			flex: 0.8,
-		},
-
-		// 25) Feito (completo)
-		{
-			headerName: 'Feito',
-			field: 'revenue',
-			valueGetter: (p) => stripHtml(p.data?.revenue),
-			minWidth: 220,
-			flex: 1.2,
-			tooltipValueGetter: (p) => p.value || '',
-		},
-
-		// 26) MX
-		{
-			headerName: 'MX',
-			field: 'mx',
-			minWidth: 120,
-			valueGetter: (p) => stripHtml(p.data?.mx),
-			flex: 0.7,
-		},
-
-		// 27) Lucro
-		{
-			headerName: 'Lucro',
-			field: 'profit',
-			type: 'rightAligned',
-			valueGetter: (p) => toNumberBR(p.data?.profit),
-			valueFormatter: currencyFormatter,
-			minWidth: 120,
-			flex: 0.8,
-		},
-	];
-
-	const defaultColDef = {
-		sortable: true,
-		filter: true,
-		resizable: true,
-		tooltipShowDelay: 200,
-		tooltipHideDelay: 80,
-		wrapHeaderText: true,
-		autoHeaderHeight: false,
-		enableRowGroup: true,
-		enablePivot: true,
-		enableValue: true,
-	};
+	// ===== [5] getRowHeight dinâmico por nº de linhas =====
+	const BASE_ROW_MIN = 50; // altura mínima p/ qualquer linha
+	const VERT_PAD = 12; // padding vertical total dentro da célula (ajuste fino)
 
 	const gridOptions = {
-		columnDefs,
+		floatingFiltersHeight: 35,
+		groupHeaderHeight: 35,
+		headerHeight: 62,
+		context: { showToast: (msg, type) => Toastify({ text: msg }).showToast() },
+		rowModelType: 'serverSide',
+		cacheBlockSize: 200,
+		// maxBlocksInCache: 4,
+		treeData: true,
+		rowHeight: BASE_ROW_MIN,
+		getRowHeight: (p) => {
+			// Só precisa medir de verdade a coluna "Campaign". As outras usam 1 linha.
+			const w = getAutoGroupContentWidth(p.api);
+			const key = _cacheKey(p, w);
+			if (_rowHCache.has(key)) return _rowHCache.get(key);
+
+			const text = getCampaignCellText(p);
+			// mede a altura necessária para renderizar esse texto com a largura atual
+			const textH = _rowHeightMeasure.measure(text, w);
+			// soma padding e garante mínimo
+			const h = Math.max(BASE_ROW_MIN, textH + VERT_PAD);
+
+			_rowHCache.set(key, h);
+			return h;
+		},
+
+		onGridSizeChanged() {
+			_rowHCache.clear();
+			gridOptions.api?.resetRowHeights();
+		},
+		onColumnResized() {
+			_rowHCache.clear();
+			gridOptions.api?.resetRowHeights();
+		},
+		onFirstDataRendered() {
+			_rowHCache.clear();
+			gridOptions.api?.resetRowHeights();
+		},
+		onRowGroupOpened() {
+			_rowHCache.clear();
+			gridOptions.api?.resetRowHeights();
+		},
+		isServerSideGroup: (data) => data?.__nodeType === 'campaign' || data?.__nodeType === 'adset',
+		getServerSideGroupKey: (data) => data?.__groupKey ?? '',
+		getRowId: (p) => {
+			if (p.data?.__nodeType === 'campaign') return `c:${p.data.__groupKey}`;
+			if (p.data?.__nodeType === 'adset') return `s:${p.data.__groupKey}`;
+			if (p.data?.__nodeType === 'ad')
+				return `a:${p.data.id || p.data.story_id || p.data.__label}`;
+			return Math.random().toString(36).slice(2);
+		},
+
+		columnDefs: [].concat(columnDefs),
+		autoGroupColumnDef,
 		defaultColDef,
-		rowSelection: 'multiple',
-		suppressRowClickSelection: true,
-		rowData: [],
-		pagination: true,
-		paginationPageSize: 50,
+		rowSelection: {
+			mode: 'multiRow',
+			checkboxes: { enabled: true, header: true },
+			selectionColumn: {
+				id: 'ag-Grid-SelectionColumn',
+				width: 36,
+				pinned: 'left',
+				suppressHeaderMenuButton: true,
+				suppressHeaderFilterButton: true,
+			},
+		},
+
 		animateRows: true,
 		sideBar: { toolPanels: ['columns', 'filters'], defaultToolPanel: null, position: 'right' },
 		theme: createAgTheme(),
+
+		getContextMenuItems: (params) => {
+			const d = params.node?.data || {};
+			const isCampaign = params.node?.level === 0;
+			const items = [];
+			items.push('cut', 'copy', 'copyWithHeaders', 'copyWithGroupHeaders', 'export', 'separator');
+			if (isCampaign) {
+				const label = d.__label || d.campaign_name || '';
+				const utm = d.utm_campaign || '';
+				if (label)
+					items.push({
+						name: 'Copiar Campaign',
+						action: () => copyToClipboard(label),
+						icon: '<span class="ag-icon ag-icon-copy"></span>',
+					});
+				if (utm)
+					items.push({
+						name: 'Copiar UTM',
+						action: () => copyToClipboard(utm),
+						icon: '<span class="ag-icon ag-icon-copy"></span>',
+					});
+			}
+			return items;
+		},
+
+		onCellClicked(params) {
+			if (params?.node?.level > 0) return;
+			const isAutoGroupCol =
+				(typeof params.column?.isAutoRowGroupColumn === 'function' &&
+					params.column.isAutoRowGroupColumn()) ||
+				params.colDef?.colId === 'ag-Grid-AutoColumn' ||
+				!!params.colDef?.showRowGroup ||
+				params?.column?.getColId?.() === 'campaign';
+			const clickedExpanderOrCheckbox = !!params.event?.target?.closest?.(
+				'.ag-group-expanded, .ag-group-contracted, .ag-group-checkbox'
+			);
+			if (
+				isAutoGroupCol &&
+				!clickedExpanderOrCheckbox &&
+				params?.data?.__nodeType === 'campaign'
+			) {
+				const label = params.data.__label || '(sem nome)';
+				showKTModal({ title: 'Campaign', content: label });
+				return;
+			}
+			const MODAL_FIELDS = new Set([
+				'profile_name',
+				'bc_name',
+				'account_name',
+				'account_status',
+				'account_limit',
+				'campaign_name',
+				'utm_campaign',
+				'xabu_ads',
+				'xabu_adsets',
+			]);
+			const field = params.colDef?.field;
+			if (!field || !MODAL_FIELDS.has(field)) return;
+			const vfmt = params.valueFormatted;
+			let display;
+			if (vfmt != null && vfmt !== '') display = String(vfmt);
+			else {
+				const val = params.value;
+				if (typeof val === 'string') display = stripHtml(val);
+				else if (val == null) display = '';
+				else if (
+					[
+						'account_limit',
+						'bid',
+						'budget',
+						'cpc',
+						'cpa_fb',
+						'real_cpa',
+						'spent',
+						'fb_revenue',
+						'push_revenue',
+						'profit',
+					].includes(field)
+				) {
+					const n = toNumberBR(val);
+					const currency = getAppCurrency();
+					const locale = currency === 'USD' ? 'en-US' : 'pt-BR';
+					display =
+						n == null
+							? ''
+							: new Intl.NumberFormat(locale, { style: 'currency', currency }).format(n);
+				} else if (
+					['impressions', 'clicks', 'visitors', 'conversions', 'real_conversions'].includes(
+						field
+					)
+				) {
+					const n = Number(val);
+					display = Number.isFinite(n) ? intFmt.format(n) : String(val);
+				} else if (field === 'account_status' || field === 'campaign_status') {
+					display = strongText(String(val || ''));
+				} else display = String(val);
+			}
+			const title = params.colDef?.headerName || 'Detalhes';
+			showKTModal({ title, content: display || '(vazio)' });
+		},
+
 		onGridReady(params) {
+			applySavedStateIfAny(params.api);
+
+			const dataSource = {
+				getRows: async (req) => {
+					try {
+						const {
+							startRow = 0,
+							endRow = 200,
+							groupKeys = [],
+							sortModel,
+							filterModel,
+						} = req.request;
+
+						// monta filterModel com _global.filter (quick filter)
+						const filterModelWithGlobal = buildFilterModelWithGlobal(filterModel);
+
+						// referência de API para marcar/desmarcar loading na linha
+						const apiRef =
+							req.api ||
+							this?.gridApi ||
+							(globalThis.LionGrid && globalThis.LionGrid.api) ||
+							null;
+
+						// =========================
+						// Nível 0 => campanhas (SSRM)
+						// =========================
+						if (groupKeys.length === 0) {
+							const t0 = performance.now();
+
+							// POST principal
+							let res = await fetch(ENDPOINTS.SSRM, {
+								method: 'POST',
+								headers: { 'Content-Type': 'application/json' },
+								credentials: 'same-origin',
+								body: JSON.stringify({
+									startRow,
+									endRow,
+									sortModel: sortModel || [],
+									filterModel: filterModelWithGlobal,
+								}),
+							});
+
+							// Fallback GET
+							if (!res.ok) {
+								const qs = new URLSearchParams({
+									startRow: String(startRow),
+									endRow: String(endRow),
+									sortModel: JSON.stringify(sortModel || []),
+									filterModel: JSON.stringify(filterModelWithGlobal || {}),
+								});
+								res = await fetch(`${ENDPOINTS.SSRM}&${qs.toString()}`, {
+									credentials: 'same-origin',
+								});
+							}
+
+							const data = await res.json().catch(() => ({ rows: [], lastRow: 0 }));
+							// garante spinner mínimo (coerência visual com drill)
+							await withMinSpinner(t0, MIN_SPINNER_MS);
+
+							const totals = data?.totals || {};
+							const pinnedTotal = {
+								id: '__pinned_total__',
+								bc_name: 'TOTAL',
+								impressions: totals.impressions_sum ?? 0,
+								clicks: totals.clicks_sum ?? 0,
+								visitors: totals.visitors_sum ?? 0,
+								conversions: totals.conversions_sum ?? 0,
+								real_conversions: totals.real_conversions_sum ?? 0,
+								spent: totals.spent_sum ?? 0,
+								fb_revenue: totals.fb_revenue_sum ?? 0,
+								push_revenue: totals.push_revenue_sum ?? 0,
+								revenue: totals.revenue_sum ?? 0,
+								profit: totals.profit_sum ?? 0,
+								budget: totals.budget_sum ?? 0,
+								cpc: totals.cpc_total ?? 0,
+								cpa_fb: totals.cpa_fb_total ?? 0,
+								real_cpa: totals.real_cpa_total ?? 0,
+								mx: totals.mx_total ?? 0,
+								ctr: totals.ctr_total ?? 0,
+							};
+
+							const currency = getAppCurrency();
+							const locale = currency === 'USD' ? 'en-US' : 'pt-BR';
+							const nfCur = new Intl.NumberFormat(locale, { style: 'currency', currency });
+
+							for (const k of [
+								'spent',
+								'fb_revenue',
+								'push_revenue',
+								'revenue',
+								'profit',
+								'budget',
+								'cpc',
+								'cpa_fb',
+								'real_cpa',
+								'mx',
+							])
+								pinnedTotal[k] = nfCur.format(Number(pinnedTotal[k]) || 0);
+
+							for (const k of [
+								'impressions',
+								'clicks',
+								'visitors',
+								'conversions',
+								'real_conversions',
+							])
+								pinnedTotal[k] = intFmt.format(Number(pinnedTotal[k]) || 0);
+
+							if (typeof pinnedTotal.ctr === 'number')
+								pinnedTotal.ctr = (pinnedTotal.ctr * 100).toFixed(2) + '%';
+
+							const totalCampaigns =
+								typeof data.lastRow === 'number' && data.lastRow >= 0
+									? data.lastRow
+									: data?.totals?.campaigns_count ?? (data.rows || []).length;
+							pinnedTotal.__label = `CAMPAIGNS: ${intFmt.format(totalCampaigns)}`;
+
+							const rows = (data.rows || []).map(normalizeCampaignRow);
+
+							try {
+								const targetApi = apiRef || (req.api ?? null);
+								if (targetApi?.setPinnedBottomRowData)
+									targetApi.setPinnedBottomRowData([pinnedTotal]);
+								else req.api?.setGridOption?.('pinnedBottomRowData', [pinnedTotal]);
+							} catch (e) {
+								console.warn('Erro ao aplicar pinned bottom row:', e);
+							}
+
+							req.success({ rowData: rows, rowCount: data.lastRow ?? -1 });
+							return;
+						}
+
+						// =========================
+						// Nível 1 => adsets (DRILL)
+						// =========================
+						if (groupKeys.length === 1) {
+							const t0 = performance.now();
+							const campaignId = groupKeys[0];
+
+							// ⚠️ marca a linha pai (campanha) como "loading"
+							const parentRowId = `c:${campaignId}`;
+							if (apiRef) setRowLoadingById(apiRef, parentRowId, true);
+
+							try {
+								const qs = new URLSearchParams({
+									campaign_id: campaignId,
+									period: DRILL.period,
+									startRow: String(startRow),
+									endRow: String(endRow),
+									sortModel: JSON.stringify(sortModel || []),
+									filterModel: JSON.stringify(filterModelWithGlobal || {}),
+								});
+								const data = await fetchJSON(
+									`${DRILL_ENDPOINTS.ADSETS}?${qs.toString()}`
+								);
+								// garante spinner mínimo na abertura do filho
+								await withMinSpinner(t0, MIN_SPINNER_MS);
+
+								const rows = (data.rows || []).map(normalizeAdsetRow);
+
+								// desmarca loading da linha pai
+								if (apiRef) setRowLoadingById(apiRef, parentRowId, false);
+
+								req.success({ rowData: rows, rowCount: data.lastRow ?? rows.length });
+								return;
+							} catch (e) {
+								// rollback do loading em caso de erro
+								if (apiRef) setRowLoadingById(apiRef, parentRowId, false);
+								throw e;
+							}
+						}
+
+						// =========================
+						// Nível 2 => ads (DRILL)
+						// =========================
+						if (groupKeys.length === 2) {
+							const t0 = performance.now();
+							const adsetId = groupKeys[1];
+
+							// ⚠️ marca a linha pai (adset) como "loading"
+							const parentRowId = `s:${adsetId}`;
+							if (apiRef) setRowLoadingById(apiRef, parentRowId, true);
+
+							try {
+								const qs = new URLSearchParams({
+									adset_id: adsetId,
+									period: DRILL.period,
+									startRow: String(startRow),
+									endRow: String(endRow),
+									sortModel: JSON.stringify(sortModel || []),
+									filterModel: JSON.stringify(filterModelWithGlobal || {}),
+								});
+								const data = await fetchJSON(`${DRILL_ENDPOINTS.ADS}?${qs.toString()}`);
+								// garante spinner mínimo na abertura do neto
+								await withMinSpinner(t0, MIN_SPINNER_MS);
+
+								const rows = (data.rows || []).map(normalizeAdRow);
+
+								// desmarca loading da linha pai
+								if (apiRef) setRowLoadingById(apiRef, parentRowId, false);
+
+								req.success({ rowData: rows, rowCount: data.lastRow ?? rows.length });
+								return;
+							} catch (e) {
+								// rollback do loading em caso de erro
+								if (apiRef) setRowLoadingById(apiRef, parentRowId, false);
+								throw e;
+							}
+						}
+
+						// fallback
+						req.success({ rowData: [], rowCount: 0 });
+					} catch (e) {
+						console.error('[TREE SSRM] getRows failed:', e);
+						req.fail();
+					}
+				},
+			};
+
+			if (typeof params.api.setServerSideDatasource === 'function') {
+				params.api.setServerSideDatasource(dataSource);
+			} else {
+				params.api.setGridOption?.('serverSideDatasource', dataSource);
+			}
+
 			setTimeout(() => {
 				try {
 					params.api.sizeColumnsToFit();
 				} catch {}
 			}, 0);
+			setTimeout(() => {
+				globalThis.dispatchEvent(new CustomEvent('lionGridReady'));
+			}, 100);
 		},
 	};
 
-	// AG Grid 31+: createGrid retorna a API
-	const api = getAgGrid().createGrid(gridDiv, gridOptions);
+	const apiOrInstance =
+		typeof AG.createGrid === 'function'
+			? AG.createGrid(gridDiv, gridOptions)
+			: new AG.Grid(gridDiv, gridOptions);
+
+	const api = gridOptions.api || apiOrInstance;
+
+	globalThis.LionGrid = globalThis.LionGrid || {};
+	globalThis.LionGrid.api = api;
+	globalThis.LionGrid.resetLayout = function () {
+		try {
+			sessionStorage.removeItem(GRID_STATE_KEY);
+			api.setState({}, []);
+			showToast('Layout Reset', 'info');
+		} catch {}
+	};
+
 	return { api, gridDiv };
 }
 
-// ==================== Page Module ====================
+/* =========================================
+ * 22) Page module (mount)
+ * =======================================*/
 const LionPage = (() => {
 	let gridRef = null;
-
-	function setData(rows) {
-		const api = gridRef?.api;
-		if (!api) return;
-		const data = Array.isArray(rows) ? rows : [];
-		if (api.setGridOption) api.setGridOption('rowData', data);
-		else if (api.setRowData) api.setRowData(data);
-		try {
-			api.sizeColumnsToFit?.();
-		} catch {}
-	}
-
-	async function loadFromUrl(url) {
-		const api = gridRef?.api;
-		if (!api || !url) return;
-		try {
-			api.showLoadingOverlay?.();
-			const json = await fetchJSON(url);
-			const rows = Array.isArray(json) ? json : Array.isArray(json?.rows) ? json.rows : [];
-			setData(rows);
-			if (!rows.length) api.showNoRowsOverlay?.();
-			else api.hideOverlay?.();
-		} catch (err) {
-			console.error('[LionGrid] erro ao carregar:', err);
-			setData([]);
-			gridRef?.api?.showNoRowsOverlay?.();
-		}
-	}
-
-	// público
 	function mount() {
 		gridRef = makeGrid();
-
-		// 1) se o back injetar direto
-		if (Array.isArray(window.LION_DATA)) {
-			setData(window.LION_DATA);
-			return;
+		const el = document.getElementById('pinToggle');
+		if (el && !el.hasAttribute('data-init-bound')) {
+			el.checked = true;
+			el.addEventListener('change', () => togglePinnedColsFromCheckbox(false));
+			el.setAttribute('data-init-bound', '1');
 		}
-
-		// 2) carrega de URL (query ?data=... ou <meta name="lion-data-url" .../>)
-		const qsUrl = new URLSearchParams(location.search).get('data');
-		const metaUrl = document.querySelector('meta[name="lion-data-url"]')?.content;
-		const fallbackUrl = '/public/js/clean-dump.json'; // ajuste se necessário
-		loadFromUrl(qsUrl || metaUrl || fallbackUrl);
+		togglePinnedColsFromCheckbox(true); // silencioso no load
 	}
-
-	return { mount, setData, loadFromUrl };
+	if (document.readyState !== 'loading') mount();
+	else document.addEventListener('DOMContentLoaded', mount);
+	return { mount };
 })();
-
-// Boot
-if (document.readyState !== 'loading') LionPage.mount();
-else document.addEventListener('DOMContentLoaded', () => LionPage.mount());
-
-// Expondo API global
-globalThis.LionGrid = {
-	init: (rows) => LionPage.setData(rows), // seta dados diretamente (array de objetos)
-	setData: (rows) => LionPage.setData(rows),
-	loadFromUrl: (url) => LionPage.loadFromUrl(url),
-};
+globalThis.LionGrid = globalThis.LionGrid || {};

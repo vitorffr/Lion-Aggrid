@@ -1,5 +1,4 @@
 // src/index.js
-import { ObjectStoreDO } from './models/DurableObjects.js';
 import router from './router.js';
 
 /** helper pra garantir JSON quando for objeto */
@@ -17,13 +16,6 @@ export default {
 	async fetch(request, env, ctx) {
 		const url = new URL(request.url);
 		const p = url.pathname;
-
-		// 1) Rotas do DO (KV) — bypass direto pro Durable Object "default"
-		if (p === '/health' || p === '/scan' || p === '/kv' || p.startsWith('/kv/')) {
-			const stub = env.ObjectStore.getByName('default');
-			return stub.fetch(request);
-		}
-
 		// 2) Router (suas APIs e páginas dinâmicas)
 		//    Se router não tratar (ou responder 404), caímos no fallback de assets
 		try {
@@ -49,4 +41,3 @@ export default {
 };
 
 // Exporta a classe do DO para o runtime do Workers
-export { ObjectStoreDO };

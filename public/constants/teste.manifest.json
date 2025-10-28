@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "original": "teste.json",
+  "total_size": 47822165,
+  "total_sha256": "a3f75ac82cf0c3570390c4283f4d77d0d69303cc64b7dad5b755abb1b4d65f3d",
+  "content_type": "application/json; charset=utf-8",
+  "parts": [
+    {
+      "file": "teste.part00.json",
+      "size": 23068672,
+      "sha256": "a172fa3b3f9ee51a5ec24ad5ab9f73d7e6ecfd224356e571148d9bf0fe001924"
+    },
+    {
+      "file": "teste.part01.json",
+      "size": 23068672,
+      "sha256": "1c355dde89088678ebb780136a5b2c15eb44e440ec422243b47857134fbc1075"
+    },
+    {
+      "file": "teste.part02.json",
+      "size": 1684821,
+      "sha256": "dce6e1154f3af99d8b075c6d974e7380005ac1321ccfafb1fcc47a2d73b28ba6"
+    }
+  ]
+}

@@ -3,7 +3,7 @@ async function auth(request, env, ctx) {
 		return new Response('Method Not Allowed', { status: 405 });
 	}
 
-	console.log('SHIBA');
+	console.log('SHIBA SHIBA');
 	const formData = await request.formData();
 	const username = formData.get('username');
 	const password = formData.get('password');

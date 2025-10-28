@@ -1,3 +1,358 @@
+/* pill arrastável dentro da célula */
+
+/* célula que foi alterada recentemente */
+.ag-cell.lion-cell-changed {
+	position: relative; /* para posicionar o badge */
+	/* opcional: leve destaque de fundo */
+	/* background: linear-gradient(90deg, rgba(34,197,94,.08), transparent); */
+}
+
+/* o "check" */
+.ag-cell.lion-cell-changed::after {
+	content: '✓';
+	position: absolute;
+	right: 6px;
+	top: 6px;
+	font-size: 11px;
+	line-height: 16px;
+	width: 16px;
+	height: 16px;
+	border-radius: 999px;
+	text-align: center;
+	background: #22c55e;
+	color: #fff;
+	box-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
+	pointer-events: none;
+}
+
+/* Centraliza verticalmente a célula da autoGroup 'campaign' */
+#lionGrid .ag-cell[col-id='ag-Grid-AutoColumn'] > .ag-cell-wrapper {
+	display: flex !important;
+	align-items: center !important;
+	height: 100% !important; /* ocupa a altura da row */
+}
+
+/* O bloco do grupo também precisa ser flex e sem padding extra */
+#lionGrid .ag-cell[col-id='ag-Grid-AutoColumn'] .ag-row-group {
+	display: inline-flex !important;
+	align-items: center !important;
+}
+
+#lionGrid .ag-cell[col-id='ag-Grid-AutoColumn'] .ag-group-value {
+	display: flex !important;
+	align-items: center !important;
+	padding: 0 !important; /* mata aquele padding que puxa pra cima/baixo */
+	line-height: normal !important;
+}
+
+/* empilha texto do header e ícones em coluna */
+/* direto no alvo */
+/* 1) Centraliza verticalmente o conteúdo do gridcell alvo */
+#lionGrid.ag-theme-quartz
+	.ag-floating-bottom
+	.ag-pinned-left-floating-bottom
+	[role='gridcell'][col-id='ag-Grid-AutoColumn']
+	> .ag-cell-wrapper {
+	display: flex !important;
+	align-items: center !important;
+	height: 100% !important;
+}
+
+/* 2) Estiliza o texto “CAMPAIGNS: …” dentro do eValue */
+#lionGrid.ag-theme-quartz
+	.ag-floating-bottom
+	.ag-pinned-left-floating-bottom
+	[role='gridcell'][col-id='ag-Grid-AutoColumn']
+	.ag-row-group-leaf-indent
+	[data-ref='eValue']
+	> span {
+	display: inline-flex !important;
+	align-items: center !important;
+	font-size: 14px !important;
+	line-height: 32.5px !important;
+}
+
+/* 1) Faz o wrapper da célula ocupar 100% e alinhar verticalmente */
+#lionGrid.ag-theme-quartz.ag-theme-quartz
+	.ag-floating-bottom
+	.ag-pinned-left-floating-bottom.ag-pinned-left-floating-bottom
+	.ag-row.ag-row-pinned.ag-row-level-0.ag-row-first
+	.ag-cell.ag-cell-auto-height.ag-cell-wrap-text.camp-root[col-id='ag-Grid-AutoColumn']
+	> .ag-cell-wrapper {
+	display: flex !important;
+	font-size: 14px !important;
+
+	align-items: center !important;
+	height: 100% !important;
+}
+
+/* 2) Garante que o “grupo” interno também centra seu conteúdo */
+#lionGrid.ag-theme-quartz.ag-theme-quartz
+	.ag-floating-bottom
+	.ag-pinned-left-floating-bottom.ag-pinned-left-floating-bottom
+	.ag-row.ag-row-pinned.ag-row-level-0.ag-row-first
+	.ag-cell.ag-cell-auto-height.ag-cell-wrap-text.camp-root[col-id='ag-Grid-AutoColumn']
+	.ag-row-group-leaf-indent {
+	display: inline-flex !important;
+	align-items: center !important;
+}
+
+/* === estilo do dropdown igual ao input padrão do header === */
+.lion-ff-select--inputlike {
+	background: #0c0c0d;
+	color: #e5e7eb;
+	border-radius: 4px;
+}
+
+/* (reusa o mesmo estilo já adicionado para o CampaignStatus) */
+.ag-header-cell[col-id='account_status'] .ag-floating-filter-button,
+.ag-header-cell[col-id='account_status'] .ag-header-icon.ag-header-icon-filter {
+	display: none !important; /* opcional: esconder funil nessa coluna também */
+}
+
+/* some só o botão do floating filter nessa coluna */
+.ag-header-cell[col-id='campaign_status'] .ag-floating-filter-button {
+	display: none !important;
+}
+
+/* (opcional) se ainda aparecer o ícone de filtro do header, esconda só ele */
+.ag-header-cell[col-id='campaign_status'] .ag-header-icon.ag-header-icon-filter {
+	display: none !important;
+}
+
+/* mantém root como está */
+.camp-root {
+	font-size: 12px;
+	line-height: 1.6;
+}
+
+/* child e grand com a tipografia desejada */
+.camp-child {
+	font-size: 14px;
+	line-height: 1.4;
+}
+.camp-grand {
+	font-size: 13px;
+	line-height: 1.6;
+}
+
+/* ✅ centralização vertical SOMENTE do texto (ag-group-value) */
+.camp-child .ag-group-value,
+.camp-grand .ag-group-value {
+	display: flex; /* vira um flex container só do valor */
+	align-items: top;
+	padding: 7px; /* centra verticalmente o texto */
+	height: 100%; /* ocupa a altura inteira da célula */
+	/* nada de justify-content, pra não mexer no alinhamento horizontal */
+}
+
+/* (opcional) se quiser garantir uma única linha com reticências */
+.camp-child .ag-group-value,
+.camp-grand .ag-group-value {
+	white-space: wrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* pill já existente */
+.ag-status-pill {
+	--h: 22px;
+	--w: 80px;
+	--pad: 2px;
+	/* novo: folga mínima da borda p/ o knob “encostar” */
+	--edge-gap: 0px;
+}
+
+/* knob padrão (se algum lugar renderizar sem --sm, continua igual) */
+.ag-status-knob {
+	position: relative;
+	z-index: 2;
+	width: calc(var(--h) - var(--pad) * 2);
+	height: calc(var(--h) - var(--pad) * 2);
+	border-radius: 50%;
+	background: var(--knob, #0b1220);
+	box-shadow: 0 1px 0 rgba(0, 0, 0, 0.25), inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+	transform: translateX(0);
+	transition: transform 140ms ease;
+}
+
+/* knob pequeno */
+.ag-status-knob--sm {
+	width: 12px; /* <<< mini */
+	height: 12px; /* <<< mini */
+	border-radius: 9999px;
+	box-shadow: 0 1px 0 rgba(0, 0, 0, 0.25), inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+
+/* pill específica para "INATIVA PAGAMENTO" em 2 linhas */
+.lion-badge--inativa-pagamento {
+	display: inline-block;
+	white-space: pre-line; /* respeita o \n */
+	padding: 4px 10px;
+	border-radius: 999px;
+	background: #334155; /* slate-700 */
+	color: #fff;
+	font: 700 11px/1.05 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+	letter-spacing: 0.6px;
+	text-align: center;
+}
+/* ACTIVE no mesmo visual do botão verdinho */
+.lion-badge--active {
+	display: inline-block;
+	padding: 6px 14px; /* mesmo “cheio” do botão */
+	border-radius: 999px;
+	background: #22c55e; /* green-500 */
+	color: #fff;
+	font: 700 11px/1 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+	letter-spacing: 0.6px;
+	text-transform: uppercase;
+	text-align: center;
+	box-shadow: 0 0 0 0 rgba(0, 0, 0, 0); /* sem brilho */
+}
+
+/* Variante estática do pill (mesma base visual do slider) */
+.ag-status-pill--static {
+	cursor: default;
+	pointer-events: none; /* não interativo */
+}
+
+/* controla o “preenchimento” igual ao slider */
+.ag-status-pill--static[data-state='on'] .ag-status-fill {
+	width: 100%;
+}
+.ag-status-pill--static[data-state='off'] .ag-status-fill {
+	width: 0%;
+}
+
+/* ===== Footer (pinned bottom) destacado ===== */
+.ag-theme-quartz .ag-floating-bottom {
+	--lion-footer-bg: #141414; /* <<< MUDE A COR AQUI */
+	--lion-footer-fg: #e2e8f0;
+	box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.35); /* glow no topo do footer */
+}
+
+.ag-theme-quartz .ag-floating-bottom .ag-row,
+.ag-theme-quartz .ag-floating-bottom .ag-cell {
+	background: var(--lion-footer-bg) !important;
+	color: var(--lion-footer-fg) !important;
+}
+
+.ag-theme-quartz .ag-floating-bottom .ag-cell {
+	font-weight: 700;
+	border-top: 1px solid var(--lion-footer-border);
+}
+
+/* Não muda no hover */
+.ag-theme-quartz .ag-floating-bottom .ag-row:hover .ag-cell {
+	background: var(--lion-footer-bg) !important;
+}
+
+.ag-theme-quartz .ag-header-cell:not(.ag-header-group-cell) .ag-header-cell-label {
+	display: flex;
+	flex-direction: column; /* texto em cima, ícones embaixo */
+	align-items: center; /* ou: flex-start para alinhar à esquerda */
+	gap: 2px;
+}
+
+/* remove o recuo lateral padrão dos ícones */
+.ag-theme-quartz .ag-header-cell .ag-header-icons {
+	margin-left: 0;
+}
+
+/* centraliza o texto e deixa ocupar toda a largura */
+.ag-theme-quartz .ag-header-cell .ag-header-cell-text {
+	width: 100%;
+	text-align: center; /* troque para left se preferir */
+}
+
+.ag-theme-quartz .ag-header-group-cell {
+	font-size: 12px;
+}
+.ag-theme-quartz .ag-header-cell {
+	font-size: 12px;
+}
+.ag-cell.lion-center-cell {
+	display: flex; /* garante flex no host */
+	align-items: center; /* centro vertical */
+	justify-content: center;
+	/* padding: 10px;  */
+}
+/* vars globais (default = sem nudge) */
+:root {
+	--paused-nudge-x: 2px; /* + direita / - esquerda */
+	--paused-nudge-y: 0.5px; /* + baixo / - cima    */
+}
+
+/* aplica o nudge SOMENTE quando estiver PAUSED (aria-checked="false") */
+.ag-status-pill[aria-checked='false'] .ag-status-label {
+	transform: translateX(var(--paused-nudge-x)) translateY(var(--paused-nudge-y)) translateZ(0);
+}
+
+/* mantém ACTIVE como estava (sem nudge) */
+.ag-status-pill[aria-checked='true'] .ag-status-label {
+	transform: translateZ(0);
+}
+
+.ag-status-pill {
+	--h: 22px;
+	--w: 80px;
+	--pad: 2px;
+	--bg-off: #334155; /* slate-700 */
+	--bg-on: #22c55e; /* green-500 */
+	--knob: #0b1220; /* slate-950 aprox */
+	position: relative;
+	width: var(--w);
+	height: var(--h);
+	border-radius: 999px;
+	background: var(--bg-off);
+	display: inline-flex;
+	align-items: center;
+	padding: 0 var(--pad);
+	user-select: none;
+	outline: none;
+	cursor: grab;
+	font: 700 11px/1 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+	color: #fff;
+}
+.ag-status-pill:active {
+	cursor: grabbing;
+}
+.ag-center-cols-viewport {
+	min-height: unset !important;
+}
+.ag-status-fill {
+	position: absolute;
+	inset: 0;
+	border-radius: inherit;
+	background: var(--bg-on);
+	width: 0%;
+	transition: width 140ms ease;
+}
+.ag-status-pill[aria-checked='true'] .ag-status-label {
+	transform: translateY(0.5px) !important;
+}
+
+.ag-status-label {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	/* reserva espaço igual pros lados (metade do knob + padding da pill) */
+	padding-inline: var(--label-pad);
+	letter-spacing: 0.6px;
+	z-index: 1;
+	pointer-events: none;
+	/* melhora o render da fonte e evita “meio pixel” */
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+	transform: translateZ(0); /* evita subpixel jitter */
+}
+/* foco acessível */
+.ag-status-pill:focus-visible {
+	box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.35);
+}
+
 @layer properties;
 @layer theme, base, components, utilities;
 @layer theme {
