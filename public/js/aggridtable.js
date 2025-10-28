@@ -803,6 +803,9 @@ StatusSliderRenderer.prototype.init = function (p) {
 					if ('status' in p.data) p.data.status = rollbackVal;
 				}
 				setProgress(prevOn ? 1 : 0);
+				markCellError(p.node, colId);
+				p.api.refreshCells({ rowNodes: [p.node], columns: [colId], force: true });
+				nudgeRenderer(p, colId);
 				p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
 				return;
 			}
@@ -818,7 +821,8 @@ StatusSliderRenderer.prototype.init = function (p) {
 				if (scope === 'ad') await updateAdStatusBackend(id, nextVal);
 				else if (scope === 'adset') await updateAdsetStatusBackend(id, nextVal);
 				else await updateCampaignStatusBackend(id, nextVal);
-
+				clearCellError(p.node, colId);
+				p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
 				if (this._userInteracted) {
 					const scopeLabel = scope === 'ad' ? 'Ad' : scope === 'adset' ? 'Adset' : 'Campanha';
 					const msg = nextVal === 'ACTIVE' ? `${scopeLabel} ativado` : `${scopeLabel} pausado`;
@@ -832,6 +836,9 @@ StatusSliderRenderer.prototype.init = function (p) {
 				}
 				setProgress(prevOn ? 1 : 0);
 				p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
+				markCellError(p.node, colId);
+				p.api.refreshCells({ rowNodes: [p.node], columns: [colId], force: true });
+				nudgeRenderer(p, colId);
 				showToast(`Falha ao salvar status: ${e?.message || e}`, 'danger');
 			}
 		} finally {
@@ -1579,8 +1586,10 @@ const columnDefs = [
 				cellRenderer: StatusSliderRenderer,
 				cellRendererParams: { interactiveLevels: [0, 1, 2], smallKnob: true },
 				suppressKeyboardEvent: () => true,
-				cellClassRules: { 'ag-cell-loading': (p) => isCellLoading(p, 'campaign_status') },
-
+				cellClassRules: {
+					'ag-cell-loading': (p) => isCellLoading(p, 'campaign_status'),
+					'lion-cell-error': (p) => isCellError(p, 'campaign_status'),
+				},
 				// 👇👇 ADIÇÕES
 				filter: 'agTextColumnFilter',
 				floatingFilter: true,
