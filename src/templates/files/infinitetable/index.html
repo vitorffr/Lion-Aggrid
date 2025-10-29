@@ -50,6 +50,10 @@
   <!-- State (sessionStorage) -->
 
   <button id="btnResetLayout" class="kt-btn kt-btn-sm" title="Reset to Default">Reset</button>
+<button id="btnCalcCols" class="kt-btn kt-btn-sm" title="Calculated Columns" data-kt-modal-toggle="#calcColsModal">
+  Calc Cols
+  <i class="ki-filled ki-calculator text-base" aria-hidden="true"></i>
+</button>
 
   <span class="mx-2 opacity-50 select-none">|</span>
 <div class="kt-input">
@@ -84,6 +88,96 @@
     class="ag-theme-quartz w-full rounded-lg border border-border mt-4 overflow-hidden"
     style="height: 73vh"
   ></div>
+<!-- Modal: Calculated Columns -->
+<div class="kt-modal kt-modal-center" data-kt-modal="true" id="calcColsModal" aria-hidden="true">
+  <div class="kt-modal-content max-w-[800px] top-[8%]">
+    <div class="kt-modal-header">
+      <h3 class="kt-modal-title">Calculated Columns</h3>
+      <button type="button" class="kt-modal-close" aria-label="Close" data-kt-modal-dismiss="#calcColsModal">
+        <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+             class="lucide lucide-x" aria-hidden="true">
+          <path d="M18 6 6 18"></path><path d="m6 6 12 12"></path>
+        </svg>
+      </button>
+    </div>
+
+    <div class="kt-modal-body">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <!-- Form (criar/editar) -->
+        <div class="space-y-3">
+          <div class="text-sm font-medium opacity-70">Add / Edit</div>
+
+          <label class="kt-input">
+            <span class="text-xs">Header</span>
+            <input id="cc-header" type="text" placeholder="EPC (Total)" />
+          </label>
+
+          <label class="kt-input">
+            <span class="text-xs">ID (único, sem espaços)</span>
+            <input id="cc-id" type="text" placeholder="epc_total" />
+          </label>
+
+          <label class="kt-select">
+            <span class="text-xs">Format</span>
+            <select id="cc-format">
+              <option value="currency">currency</option>
+              <option value="int">int</option>
+              <option value="raw">raw</option>
+            </select>
+          </label>
+
+          <label class="kt-input">
+            <span class="text-xs">Expression</span>
+            <input id="cc-expression" type="text"
+                   placeholder="cc_numberOr0(revenue) / cc_numberOr0(clicks)" />
+          </label>
+
+          <label class="kt-textarea">
+            <span class="text-xs">Parts (JSON opcional)</span>
+            <textarea id="cc-parts" rows="4" placeholder='[{"label":"EPC FB","expr":"cc_numberOr0(fb_revenue)/cc_numberOr0(clicks)"}]'></textarea>
+          </label>
+
+          <div class="flex items-center gap-3">
+            <label class="inline-flex items-center gap-2">
+              <input id="cc-only-level0" type="checkbox" class="kt-checkbox" checked />
+              <span class="text-sm">Only Level 0 (campaign)</span>
+            </label>
+
+            <label class="kt-input flex-1">
+              <span class="text-xs">Insert after (header)</span>
+              <input id="cc-after" type="text" placeholder="Revenue" value="Revenue" />
+            </label>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <button id="cc-save" class="kt-btn kt-btn-primary">Save</button>
+            <button id="cc-reset-form" class="kt-btn kt-btn-light">Clear</button>
+          </div>
+        </div>
+
+        <!-- Lista (remover/aplicar) -->
+        <div class="space-y-3">
+          <div class="flex items-center justify-between">
+            <div class="text-sm font-medium opacity-70">Saved Columns</div>
+            <button id="cc-reload" class="kt-btn kt-btn-xs">Reload</button>
+          </div>
+
+          <div id="cc-empty" class="text-sm opacity-60 hidden">No calculated columns saved.</div>
+          <ul id="cc-list" class="divide-y divide-border rounded-md border border-border">
+            <!-- linhas geradas via JS -->
+          </ul>
+
+          <div class="flex items-center gap-2 pt-2">
+            <button id="cc-activate-all" class="kt-btn kt-btn-secondary kt-btn-sm">Activate All</button>
+            <button id="cc-close" class="kt-btn kt-btn-light kt-btn-sm" data-kt-modal-dismiss="#calcColsModal">Close</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
 
   <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/toastify-js"></script>
   <script type="module" src="/public/js/infinitetable.js"></script>

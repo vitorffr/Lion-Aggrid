@@ -614,40 +614,32 @@ function cc_numberOr0(x) {
 }
 
 /**
- * Avaliador SEGURO de expressões aritméticas sobre o row.
- * Suporta: + - * / () espaços e identificadores [A-Za-z_]\w* (campos do row) e helper cc_numberOr0.
- * Ex.: "cc_numberOr0(fb_revenue) + cc_numberOr0(push_revenue) - cc_numberOr0(spent)"
+ * Avaliador simples para expressões aritméticas sobre o row.
+ * Suporta: + - * / () espaços e identificadores (campos do row).
+ * Ex.: "cc_numberOr0(fb_revenue) + cc_numberOr0(push_revenue)"
  */
 function cc_evalExpression(expr, row) {
 	if (!expr || typeof expr !== 'string') return null;
+	// whitelist de caracteres: letras, números, _, parênteses, operadores, pontos e espaços
+	if (!/^[\w\s()+\-*/.]+$/.test(expr)) return null;
 
-	// Somente dígitos/letras/_ e operadores básicos + parênteses e espaços
-	// (IMPORTANTE: sem '.' para impedir cadeias tipo obj.constructor etc)
-	if (!/^[\w\s()+\-*/]+$/.test(expr)) return null;
-
-	// Tokeniza apenas identificadores (palavras que começam por letra ou _)
-	const tokens = expr.match(/[A-Za-z_]\w*/g) || [];
-
-	// Campos permitidos: chaves do row + helper cc_numberOr0
-	const allowed = new Set(['cc_numberOr0', ...Object.keys(row || {})]);
-
-	// Se houver qualquer identificador fora da whitelist, bloqueia
-	for (const t of tokens) {
-		if (!allowed.has(t)) return null;
-	}
+	// mapeia identificadores p/ valores do row (seguros)
+	const proxy = new Proxy(
+		{},
+		{
+			get: (_, prop) => {
+				if (prop === 'cc_numberOr0') return cc_numberOr0;
+				const v = row?.[prop];
+				return v;
+			},
+		}
+	);
 
 	try {
-		/* eslint-disable no-new-func */
-		const keys = [...allowed].filter((k) => k !== 'cc_numberOr0');
-		const fn = new Function(
-			'cc_numberOr0',
-			'row',
-			`
-      const { ${keys.join(', ')} } = row;
-      return (${expr});
-    `
-		);
-		const val = fn(cc_numberOr0, row || {});
+		// new Function com escopo controlado; expr só tem tokens permitidos acima
+		// eslint-disable-next-line no-new-func
+		const fn = new Function('ctx', `with(ctx){ return (${expr}); }`);
+		const val = fn(proxy);
 		return Number.isFinite(val) ? val : null;
 	} catch {
 		return null;
@@ -660,10 +652,6 @@ function cc_currencyFormat(n) {
 	const cur = getAppCurrency();
 	const locale = cur === 'USD' ? 'en-US' : 'pt-BR';
 	return new Intl.NumberFormat(locale, { style: 'currency', currency: cur }).format(n);
-}
-function cc_percentFormat(n, digits = 1) {
-	if (!Number.isFinite(n)) return '';
-	return (n * 100).toFixed(digits) + '%';
 }
 
 /* =========================================
@@ -1672,16 +1660,9 @@ const LionCompositeColumns = (() => {
 	}
 
 	function _insertAfter(children, newDef, afterFieldOrHeader) {
-		const key = String(afterFieldOrHeader || '').trim();
-		if (!key) {
-			children.push(newDef);
-			return;
-		}
-		const idx = children.findIndex((c) => {
-			const cid = String(c.colId || c.field || '').trim();
-			const hn = String(c.headerName || '').trim();
-			return cid === key || hn === key;
-		});
+		const idx = children.findIndex(
+			(c) => c.field === afterFieldOrHeader || c.headerName === afterFieldOrHeader
+		);
 		if (idx === -1) children.push(newDef);
 		else children.splice(idx + 1, 0, newDef);
 	}
@@ -1716,10 +1697,7 @@ const LionCompositeColumns = (() => {
 			const exists = newChildren.some((c) => String(c.colId || c.field) === colKey);
 			if (exists) return;
 
-			// usa meta __after (ou headerName/field) para posicionar; fallback = 'Revenue'
-			const afterKey = (colDef.__after && String(colDef.__after).trim()) || 'Revenue';
-
-			_insertAfter(newChildren, colDef, afterKey);
+			_insertAfter(newChildren, colDef, 'Revenue'); // após "Revenue"
 		});
 
 		// 6) Ratribui os children atualizados no MESMO objeto de grupo
@@ -1788,338 +1766,6 @@ LionCompositeColumns.register('revenue_stack', () => {
 		},
 	};
 });
-/** ===== Registro: Coluna "Profit (Stack)" — id: profit_stack =====
- * Total = se houver "profit" numérico usa ele; senão (fb_revenue + push_revenue - spent).
- * Partes abaixo: Facebook Revenue, Push Revenue e Spend (negativo), apenas no nível 0.
- */
-LionCompositeColumns.register('profit_stack', () => {
-	return {
-		headerName: 'Profit (Stack)',
-		colId: 'profit_stack',
-		minWidth: 140,
-		flex: 1.0,
-		pinned: 'right',
-		valueGetter: (p) => {
-			const profit = cc_numberOr0(p.data?.profit);
-			if (Number.isFinite(profit)) return profit;
-			const fb = cc_numberOr0(p.data?.fb_revenue);
-			const push = cc_numberOr0(p.data?.push_revenue);
-			const spent = cc_numberOr0(p.data?.spent);
-			return fb + push - spent;
-		},
-		valueFormatter: currencyFormatter,
-		tooltipValueGetter: (p) => {
-			const spent = cc_currencyFormat(cc_numberOr0(p.data?.spent));
-			const fb = cc_currencyFormat(cc_numberOr0(p.data?.fb_revenue));
-			const push = cc_currencyFormat(cc_numberOr0(p.data?.push_revenue));
-			const tot = cc_currencyFormat(cc_numberOr0(p.value));
-			return `Total: ${tot}\nFacebook: ${fb}\nPush: ${push}\nSpend: -${spent}`;
-		},
-		cellRenderer: StackBelowRenderer,
-		cellRendererParams: {
-			onlyLevel0: true,
-			format: 'currency',
-			getParts: (p) => [
-				{ label: 'Facebook', value: cc_numberOr0(p.data?.fb_revenue) },
-				{ label: 'Push', value: cc_numberOr0(p.data?.push_revenue) },
-				{ label: 'Spend', value: -cc_numberOr0(p.data?.spent) },
-			],
-		},
-	};
-});
-
-/** ===== Registro: Coluna "CPA (Stack)" — id: cpa_stack =====
- * Total = prioriza real_cpa; se ausente, calcula (spent/real_conversions).
- * Partes: CPA FB (spent/conversions) e Real CPA (spent/real_conversions).
- */
-LionCompositeColumns.register('cpa_stack', () => {
-	return {
-		headerName: 'CPA (Stack)',
-		colId: 'cpa_stack',
-		minWidth: 130,
-		flex: 0.9,
-		pinned: 'right',
-		valueGetter: (p) => {
-			const realCPA = cc_numberOr0(p.data?.real_cpa);
-			if (Number.isFinite(realCPA)) return realCPA;
-			const spent = cc_numberOr0(p.data?.spent);
-			const realConv = cc_numberOr0(p.data?.real_conversions);
-			return realConv > 0 ? spent / realConv : null;
-		},
-		valueFormatter: currencyFormatter,
-		tooltipValueGetter: (p) => {
-			const spent = cc_numberOr0(p.data?.spent);
-			const conv = cc_numberOr0(p.data?.conversions);
-			const realConv = cc_numberOr0(p.data?.real_conversions);
-			const cpaFB = conv > 0 ? spent / conv : null;
-			const cpaReal = realConv > 0 ? spent / realConv : null;
-			const fmt = (n) => (Number.isFinite(n) ? cc_currencyFormat(n) : '—');
-			return `Total: ${fmt(cc_numberOr0(p.value))}\nCPA FB: ${fmt(cpaFB)}\nReal CPA: ${fmt(
-				cpaReal
-			)}`;
-		},
-		cellRenderer: StackBelowRenderer,
-		cellRendererParams: {
-			onlyLevel0: true,
-			format: 'currency',
-			getParts: (p) => {
-				const spent = cc_numberOr0(p.data?.spent);
-				const conv = cc_numberOr0(p.data?.conversions);
-				const realConv = cc_numberOr0(p.data?.real_conversions);
-				const cpaFB = conv > 0 ? spent / conv : null;
-				const cpaReal = realConv > 0 ? spent / realConv : null;
-				return [
-					{ label: 'CPA FB', value: cpaFB },
-					{ label: 'Real CPA', value: cpaReal },
-				];
-			},
-		},
-	};
-});
-/* =========================================
- * 12.5) Calculated Columns (user-defined)
- * - Permite criar colunas calculáveis no grupo "Metrics & Revenue".
- * - Persistência em localStorage.
- * - Integra com LionCompositeColumns (activate/deactivate).
- * =======================================*/
-const LionCalcColumns = (() => {
-	const LS_KEY = 'lion.aggrid.calcCols.v1';
-
-	/** Lê colunas persistidas */
-	function _read() {
-		try {
-			return JSON.parse(localStorage.getItem(LS_KEY) || '[]');
-		} catch {
-			return [];
-		}
-	}
-	/** Escreve colunas persistidas */
-	function _write(arr) {
-		localStorage.setItem(LS_KEY, JSON.stringify(Array.isArray(arr) ? arr : []));
-	}
-	/** Lista ids existentes no registro persistido */
-	function _ids() {
-		return _read().map((c) => String(c.id));
-	}
-	/** Normaliza config básica */
-	function _norm(cfg) {
-		const id = String(cfg.id || '').trim();
-		const headerName = String(cfg.headerName || id || 'Calc').trim();
-		const expression = String(cfg.expression || '').trim();
-		const format = (cfg.format || 'currency').toLowerCase(); // 'currency' | 'int' | 'raw' | 'percent'
-		const partsFormat = (
-			cfg.partsFormat || (format === 'percent' ? 'currency' : format)
-		).toLowerCase();
-		const onlyLevel0 = !!cfg.onlyLevel0;
-		const after = cfg.after || 'Revenue';
-		const parts = Array.isArray(cfg.parts)
-			? cfg.parts.map((p) => ({
-					label: String(p.label || '').trim(),
-					expr: String(p.expr || '').trim(),
-			  }))
-			: [];
-		return { id, headerName, expression, format, partsFormat, parts, onlyLevel0, after };
-	}
-
-	/** Compila uma expressão em função de valor (row) usando cc_evalExpression */
-	function _compileExpr(expr) {
-		const src = String(expr || '').trim();
-		if (!src) return null;
-		return (row) => cc_evalExpression(src, row);
-	}
-
-	function _buildColDef(cfg) {
-		const { id, headerName, expression, format, partsFormat, parts, onlyLevel0, after } = _norm(cfg);
-
-		const totalFn = _compileExpr(expression);
-		const partFns = parts.map((p) => ({ label: p.label, fn: _compileExpr(p.expr) }));
-
-		const valueFormatter = (p) => {
-			const v = typeof p.value === 'number' ? p.value : cc_numberOr0(p.value);
-			if (!Number.isFinite(v)) return p.value ?? '';
-			if (format === 'int') return intFmt.format(Math.round(v));
-			if (format === 'raw') return String(v);
-			if (format === 'percent') return cc_percentFormat(v);
-			return currencyFormatter({ value: v });
-		};
-
-		const tooltipValueGetter = (p) => {
-			const row = p?.data || {};
-			const tot = totalFn && Number.isFinite(totalFn(row)) ? totalFn(row) : null;
-
-			const fmtBy = (fmt, n) => {
-				if (!Number.isFinite(n)) return '—';
-				if (fmt === 'int') return intFmt.format(Math.round(n));
-				if (fmt === 'raw') return String(n);
-				if (fmt === 'percent') return cc_percentFormat(n);
-				return cc_currencyFormat(n);
-			};
-
-			const lines = [`Total: ${fmtBy(format, tot)}`];
-			partFns.forEach(({ label, fn }) => {
-				const n = fn ? fn(row) : null;
-				lines.push(`${label || ''}: ${fmtBy(partsFormat, n)}`);
-			});
-			return lines.join('\n');
-		};
-
-		return {
-			headerName,
-			colId: id,
-			minWidth: 120,
-			flex: 0.9,
-			pinned: 'right',
-			valueGetter: (p) => {
-				const row = p?.data || {};
-				const val = totalFn ? totalFn(row) : null;
-				return Number.isFinite(val) ? val : null; // evita Infinity/NaN
-			},
-			valueFormatter,
-			tooltipValueGetter,
-			cellRenderer: StackBelowRenderer,
-			cellRendererParams: {
-				onlyLevel0: !!onlyLevel0,
-				// para as “linhas” embaixo usamos o formato de partes
-				format:
-					partsFormat === 'int'
-						? 'int'
-						: partsFormat === 'raw'
-						? 'raw'
-						: partsFormat === 'percent'
-						? 'raw'
-						: 'currency',
-				getParts: (p) => {
-					const row = p?.data || {};
-					return partFns.map(({ label, fn }) => ({ label, value: fn ? fn(row) : null }));
-				},
-			},
-			__after: after,
-		};
-	}
-
-	/** Registra no LionCompositeColumns e ativa imediatamente */
-	function _registerAndActivate(cfg) {
-		const colDef = _buildColDef(cfg);
-		if (!colDef) return false;
-
-		// registra com factory que devolve o mesmo colDef (preserva funções)
-		LionCompositeColumns.register(colDef.colId, () => colDef);
-
-		// ativa no grupo, inserindo após o "after"
-		try {
-			// hack: empurra para depois do 'after' ajustando internamente na activate()
-			// Como LionCompositeColumns.insere sempre “após 'Revenue'”, vamos reusar
-			// mudando o header temporariamente, se quiser controlar posição fina
-			return LionCompositeColumns.activate([colDef.colId]) || true;
-		} catch (e) {
-			console.warn('[CalcCols] activate failed', e);
-			return false;
-		}
-	}
-
-	/** API pública */
-	function add(config) {
-		const cfg = _norm(config);
-		if (!cfg.id || !cfg.expression) {
-			showToast('Config inválida (id/expressão obrigatórios)', 'danger');
-			return false;
-		}
-		// valida expr e parts já aqui
-		const testVal = _compileExpr(cfg.expression);
-		if (!testVal) {
-			showToast('Expressão inválida', 'danger');
-			return false;
-		}
-		for (const p of cfg.parts) {
-			if (p.expr && !_compileExpr(p.expr)) {
-				showToast(`Parte inválida: ${p.label || '(sem rótulo)'}`, 'danger');
-				return false;
-			}
-		}
-		// persistência
-		const bag = _read();
-		// se já existe, substitui
-		const idx = bag.findIndex((c) => String(c.id) === cfg.id);
-		if (idx >= 0) bag[idx] = cfg;
-		else bag.push(cfg);
-		_write(bag);
-
-		// registra e ativa
-		const ok = _registerAndActivate(cfg);
-		if (ok) showToast(`Coluna "${cfg.headerName}" pronta`, 'success');
-		return !!ok;
-	}
-
-	function remove(id) {
-		const key = String(id || '').trim();
-		if (!key) return;
-		// deactivate
-		try {
-			LionCompositeColumns.deactivate([key]);
-		} catch {}
-		// remove persistência
-		const bag = _read().filter((c) => String(c.id) !== key);
-		_write(bag);
-		showToast(`Coluna removida: ${key}`, 'info');
-	}
-
-	function list() {
-		return _read();
-	}
-
-	function activateAll() {
-		const bag = _read();
-		for (const cfg of bag) _registerAndActivate(cfg);
-	}
-
-	/** Builder mínimo via prompt() — útil para prototipar já */
-	function openQuickBuilder() {
-		const headerName = prompt('Header da coluna (ex.: EPC Custom):', 'EPC Custom');
-		if (!headerName) return;
-
-		let id = headerName.toLowerCase().replace(/\s+/g, '_').replace(/[^\w]/g, '');
-		id = prompt('ID único (sem espaços):', id) || id;
-		if (!id) return;
-
-		const format = (prompt('Formato (currency|int|raw):', 'currency') || 'currency').toLowerCase();
-
-		const expression = prompt(
-			'Expressão (ex.: cc_numberOr0(revenue) / cc_numberOr0(clicks))',
-			'cc_numberOr0(revenue) / cc_numberOr0(clicks)'
-		);
-		if (!expression) return;
-
-		const partsJson = prompt(
-			'Partes (JSON) opcional, ex.: [{"label":"Facebook","expr":"cc_numberOr0(fb_revenue)"}]',
-			''
-		);
-		let parts = [];
-		if (partsJson && partsJson.trim()) {
-			try {
-				parts = JSON.parse(partsJson);
-			} catch {
-				showToast('JSON das partes inválido', 'danger');
-				return;
-			}
-		}
-
-		add({ id, headerName, expression, parts, format, onlyLevel0: true, after: 'Revenue' });
-	}
-
-	/** Gestão simples: listar/remover via prompt */
-	function manage() {
-		const items = list();
-		if (!items.length) return alert('Sem colunas calculadas salvas.');
-		const lines = items.map((c) => `- ${c.id}  |  ${c.headerName}`).join('\n');
-		const toRemove = prompt(`Colunas:\n${lines}\n\nDigite o ID para remover (ou deixe vazio):`, '');
-		if (!toRemove) return;
-		remove(toRemove);
-	}
-
-	return { add, remove, list, activateAll, openQuickBuilder, manage };
-})();
-// === 12.5) EXPORTA PARA O CONSOLE/ESCOPO GLOBAL ===
-globalThis.LionCalcColumns = LionCalcColumns;
 
 /* =========================================
  * 13) Colunas (defaultColDef, defs)
@@ -2557,7 +2203,7 @@ const columnDefs = [
 						if (!okTest) {
 							setCellSilently(p, 'budget', p.oldValue);
 							markCellError(p.node, 'budget'); // 👈 erro: pré-check falhou
-							nudgeRenderer(p, 'budget'); // 👈 col certa
+							nudgeRenderer(p, 'budge'); // 👈 col certa
 
 							p.api.refreshCells({ rowNodes: [p.node], columns: ['budget'] });
 							return;
@@ -3126,210 +2772,6 @@ function togglePinnedColsFromCheckbox(silent = false) {
 			sel.value = activePreset;
 		else sel.value = '';
 	}
-	// ===== Calculated Columns Modal (KTUI) =====
-	(function setupCalcColsModal() {
-		const $ = (sel) => document.querySelector(sel);
-
-		// Fallback: abre/fecha caso KTUI JS não esteja exposto (defensivo)
-		function modalShow(selector) {
-			const el = document.querySelector(selector);
-			if (!el) return;
-			if (globalThis.KT && KT.Modal && KT.Modal.getOrCreateInstance) {
-				KT.Modal.getOrCreateInstance(el).show();
-			} else {
-				el.classList.remove('hidden');
-				el.style.display = 'block';
-				el.setAttribute('aria-hidden', 'false');
-				el.classList.add('kt-modal--open');
-			}
-		}
-		function modalHide(selector) {
-			const el = document.querySelector(selector);
-			if (!el) return;
-			if (globalThis.KT && KT.Modal && KT.Modal.getOrCreateInstance) {
-				KT.Modal.getOrCreateInstance(el).hide();
-			} else {
-				el.style.display = 'none';
-				el.classList.add('hidden');
-				el.classList.remove('kt-modal--open');
-				el.setAttribute('aria-hidden', 'true');
-			}
-		}
-
-		// Abre via botão da toolbar caso o data-kt falhe (defensivo)
-		const btn = document.getElementById('btnCalcCols');
-		if (btn) {
-			btn.addEventListener('click', (e) => {
-				// Se KTUI já tratar pelo data-kt, beleza; se não, abrimos no fallback:
-				const sel = btn.getAttribute('data-kt-modal-toggle') || '#calcColsModal';
-				// pequeno delay para não "competir" com o handler do KTUI
-				setTimeout(() => modalShow(sel), 0);
-			});
-		}
-
-		// Elements
-		const list = $('#cc-list');
-		const empty = $('#cc-empty');
-		const saveBtn = $('#cc-save');
-		const reloadBtn = $('#cc-reload');
-		const resetBtn = $('#cc-reset-form');
-		const activateAllBtn = $('#cc-activate-all');
-
-		// Helpers
-		function readForm() {
-			const headerName = ($('#cc-header')?.value || '').trim();
-			let id = ($('#cc-id')?.value || '').trim();
-			const format = ($('#cc-format')?.value || 'currency').trim().toLowerCase();
-			const expression = ($('#cc-expression')?.value || '').trim();
-			const onlyLevel0 = !!$('#cc-only-level0')?.checked;
-			const after = ($('#cc-after')?.value || 'Revenue').trim() || 'Revenue';
-
-			// gerar id a partir do header se vier vazio
-			if (!id && headerName) {
-				id = headerName.toLowerCase().replace(/\s+/g, '_').replace(/[^\w]/g, '');
-			}
-
-			let parts = [];
-			const raw = ($('#cc-parts')?.value || '').trim();
-			if (raw) {
-				try {
-					parts = JSON.parse(raw);
-				} catch {
-					showToast('Parts JSON inválido', 'danger');
-					parts = null;
-				}
-			}
-			return { id, headerName, format, expression, parts, onlyLevel0, after };
-		}
-		function clearForm() {
-			$('#cc-header').value = '';
-			$('#cc-id').value = '';
-			$('#cc-format').value = 'currency';
-			$('#cc-expression').value = '';
-			$('#cc-parts').value = '';
-			$('#cc-only-level0').checked = true;
-			$('#cc-after').value = 'Revenue';
-		}
-		function renderList() {
-			if (!list) return;
-			const items = globalThis.LionCalcColumns?.list?.() || [];
-			list.innerHTML = '';
-			if (!items.length) {
-				empty?.classList.remove('hidden');
-				return;
-			}
-			empty?.classList.add('hidden');
-			for (const c of items) {
-				const li = document.createElement('li');
-				li.className = 'flex items-center justify-between p-3';
-				const left = document.createElement('div');
-				left.className = 'min-w-0';
-				left.innerHTML = `
-        <div class="font-medium">${c.headerName || c.id}</div>
-        <div class="text-xs opacity-70 break-words">id: <code>${c.id}</code></div>
-        <div class="text-xs opacity-70 break-words">expr: <code>${c.expression}</code></div>
-      `;
-				const right = document.createElement('div');
-				right.className = 'flex items-center gap-2';
-				const btnApply = document.createElement('button');
-				btnApply.className = 'kt-btn kt-btn-xs';
-				btnApply.textContent = 'Activate';
-				btnApply.addEventListener('click', () => {
-					try {
-						// Re-registra e ativa este ID (reuse da API existente)
-						globalThis.LionCalcColumns?.add?.(c);
-					} catch (e) {
-						console.warn(e);
-					}
-				});
-				const btnEdit = document.createElement('button');
-				btnEdit.className = 'kt-btn kt-btn-light kt-btn-xs';
-				btnEdit.textContent = 'Edit';
-				btnEdit.addEventListener('click', () => {
-					// joga pro form
-					$('#cc-header').value = c.headerName || '';
-					$('#cc-id').value = c.id || '';
-					$('#cc-format').value = c.format || 'currency';
-					$('#cc-expression').value = c.expression || '';
-					$('#cc-parts').value = (c.parts && JSON.stringify(c.parts)) || '';
-					$('#cc-only-level0').checked = !!c.onlyLevel0;
-					$('#cc-after').value = c.after || 'Revenue';
-				});
-				const btnRemove = document.createElement('button');
-				btnRemove.className = 'kt-btn kt-btn-danger kt-btn-xs';
-				btnRemove.textContent = 'Remove';
-				btnRemove.addEventListener('click', () => {
-					if (!confirm(`Remove column "${c.id}"?`)) return;
-					try {
-						globalThis.LionCalcColumns?.remove?.(c.id);
-						renderList();
-					} catch (e) {
-						console.warn(e);
-					}
-				});
-				right.append(btnApply, btnEdit, btnRemove);
-				li.append(left, right);
-				list.appendChild(li);
-			}
-		}
-
-		// Actions
-		saveBtn?.addEventListener('click', (e) => {
-			e.preventDefault();
-			const cfg = readForm();
-			if (!cfg.id || !cfg.expression) {
-				showToast('ID e Expression são obrigatórios', 'danger');
-				return;
-			}
-			if (cfg.parts === null) return; // JSON inválido tratado acima
-			try {
-				const ok = globalThis.LionCalcColumns?.add?.(cfg);
-				if (ok) {
-					renderList();
-					showToast('Calculated column salva/aplicada', 'success');
-				}
-			} catch (err) {
-				showToast('Falha ao salvar coluna', 'danger');
-				console.warn(err);
-			}
-		});
-
-		resetBtn?.addEventListener('click', (e) => {
-			e.preventDefault();
-			clearForm();
-		});
-
-		reloadBtn?.addEventListener('click', (e) => {
-			e.preventDefault();
-			renderList();
-		});
-
-		activateAllBtn?.addEventListener('click', (e) => {
-			e.preventDefault();
-			try {
-				globalThis.LionCalcColumns?.activateAll?.();
-				showToast('Todas as colunas calculadas ativadas', 'success');
-			} catch (err) {
-				showToast('Falha ao ativar todas', 'danger');
-			}
-		});
-
-		// Quando o modal abrir, sincroniza lista
-		document.addEventListener('click', (ev) => {
-			const t = ev.target;
-			if (!(t instanceof Element)) return;
-			const toggle = t.closest('[data-kt-modal-toggle="#calcColsModal"]');
-			if (toggle) setTimeout(renderList, 50);
-		});
-
-		// Se quiser abrir via atalho:
-		// window.addEventListener('keydown', (e) => {
-		//   if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'c') {
-		//     modalShow('#calcColsModal');
-		//     renderList();
-		//   }
-		// });
-	})();
 
 	function saveAsPreset() {
 		const api = ensureApi();
@@ -3472,23 +2914,6 @@ function togglePinnedColsFromCheckbox(silent = false) {
 		}
 		applyPresetUser(v);
 	});
-
-	// === Calculated Columns: botões opcionais (se existirem no HTML) ===
-	byId('btnAddCalcCol')?.addEventListener('click', () => {
-		try {
-			LionCalcColumns.openQuickBuilder();
-		} catch (e) {
-			console.warn(e);
-		}
-	});
-	byId('btnManageCalcCols')?.addEventListener('click', () => {
-		try {
-			LionCalcColumns.manage();
-		} catch (e) {
-			console.warn(e);
-		}
-	});
-
 	byId('btnSaveAsPreset')?.addEventListener('click', saveAsPreset);
 	byId('btnDeletePreset')?.addEventListener('click', deletePreset);
 	byId('btnDownloadPreset')?.addEventListener('click', downloadPreset);
@@ -4119,14 +3544,9 @@ function makeGrid() {
 	};
 	// Ative automaticamente a coluna composta (opcional):
 	try {
-		LionCompositeColumns.activate(['revenue_stack', 'profit_stack']);
+		LionCompositeColumns.activate(['revenue_stack']);
 	} catch (e) {
 		console.warn(e);
-	}
-	try {
-		LionCalcColumns.activateAll(); // aplica colunas calculadas salvas
-	} catch (e) {
-		console.warn('[CalcCols] activateAll failed', e);
 	}
 
 	return { api, gridDiv };
