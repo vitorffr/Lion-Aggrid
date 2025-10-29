@@ -45,7 +45,11 @@ const GRID_STATE_IGNORE_ON_RESTORE = ['pagination', 'scroll', 'rowSelection', 'f
 // === Fake network & min spinner ===
 const DEV_FAKE_NETWORK_LATENCY_MS = 0;
 const MIN_SPINNER_MS = 500;
-
+const BID_TYPE_VALUES = ['LOWEST_COST', 'COST_CAP'];
+const BID_TYPE_LABEL = {
+	LOWEST_COST: 'Lowest Cost',
+	COST_CAP: 'Cost Cap',
+};
 // NEW — knobs só do drilldown:
 const DRILL_MIN_SPINNER_MS = 900; // mínimo que o spinner fica visível ao abrir filhos
 const DRILL_FAKE_NETWORK_MS = 0; // latência fake extra (ex.: 800 ou 1200)
@@ -1344,6 +1348,21 @@ async function updateCampaignStatusBackend(id, status) {
 	await withMinSpinner(t0, MIN_SPINNER_MS);
 	return data;
 }
+
+async function updateCampaignBidTypeBackend(id, bidType) {
+	const t0 = performance.now();
+	if (DEV_FAKE_NETWORK_LATENCY_MS > 0) await sleep(DEV_FAKE_NETWORK_LATENCY_MS);
+	const res = await fetch(`/api/campaigns/${encodeURIComponent(id)}/bid_type/`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		credentials: 'same-origin',
+		body: JSON.stringify({ bid_type: bidType }),
+	});
+	const data = await res.json().catch(() => ({}));
+	if (!res.ok || data?.ok === false) throw new Error(data?.error || 'Bid Type update failed');
+	await withMinSpinner(t0, MIN_SPINNER_MS);
+	return data;
+}
 async function updateCampaignBudgetBackend(id, budgetNumber) {
 	const t0 = performance.now();
 	if (DEV_FAKE_NETWORK_LATENCY_MS > 0) await sleep(DEV_FAKE_NETWORK_LATENCY_MS);
@@ -1500,6 +1519,79 @@ function parseCurrencyInput(params) {
 function isPinnedOrGroup(params) {
 	return params?.node?.rowPinned || params?.node?.group;
 }
+function BidTypeFloatingFilter() {}
+BidTypeFloatingFilter.prototype.init = function (params) {
+	this.params = params;
+
+	const wrap = document.createElement('div');
+	wrap.style.display = 'flex';
+	wrap.style.alignItems = 'center';
+	wrap.style.height = '100%';
+	wrap.style.padding = '0 6px';
+
+	const sel = document.createElement('select');
+	sel.className = 'ag-input-field-input ag-text-field-input lion-ff-select--inputlike';
+	sel.style.width = '100%';
+	sel.style.height = '28px';
+	sel.style.fontSize = '12px';
+	sel.style.padding = '2px 8px';
+	sel.style.boxSizing = 'border-box';
+
+	// Opções (ALL + valores do BID_TYPE_VALUES com rótulo via BID_TYPE_LABEL)
+	const opts = [['', 'ALL']].concat(
+		(Array.isArray(BID_TYPE_VALUES) ? BID_TYPE_VALUES : ['LOWEST_COST', 'COST_CAP']).map((code) => [
+			code,
+			BID_TYPE_LABEL?.[code] || code,
+		])
+	);
+	for (const [value, label] of opts) {
+		const o = document.createElement('option');
+		o.value = value;
+		o.textContent = label;
+		sel.appendChild(o);
+	}
+
+	// Sincroniza o select a partir do modelo do filtro pai
+	const applyFromModel = (model) => {
+		if (!model) {
+			sel.value = '';
+			return;
+		}
+		const v = String(model.filter ?? '').toUpperCase();
+		sel.value = opts.some(([code]) => code === v) ? v : '';
+	};
+	applyFromModel(params.parentModel);
+
+	// Aplica “equals” no filtro de texto do pai com o CODE (LOWEST_COST / COST_CAP)
+	const applyTextEquals = (val) => {
+		params.parentFilterInstance((parent) => {
+			if (!val) parent.setModel(null);
+			else parent.setModel({ filterType: 'text', type: 'equals', filter: val });
+			if (typeof parent.onBtApply === 'function') parent.onBtApply();
+			params.api.onFilterChanged();
+		});
+	};
+	sel.addEventListener('change', () => {
+		const v = sel.value ? String(sel.value).toUpperCase() : '';
+		applyTextEquals(v);
+	});
+
+	wrap.appendChild(sel);
+	this.eGui = wrap;
+	this.sel = sel;
+};
+BidTypeFloatingFilter.prototype.getGui = function () {
+	return this.eGui;
+};
+BidTypeFloatingFilter.prototype.onParentModelChanged = function (parentModel) {
+	if (!this.sel) return;
+	if (!parentModel) {
+		this.sel.value = '';
+		return;
+	}
+	const v = String(parentModel.filter ?? '').toUpperCase();
+	this.sel.value = v;
+};
 
 function CampaignStatusFloatingFilter() {}
 CampaignStatusFloatingFilter.prototype.init = function (params) {
@@ -1706,7 +1798,13 @@ CurrencyMaskEditor.prototype.destroy = function () {
 CurrencyMaskEditor.prototype.isPopup = function () {
 	return false;
 };
-
+function setCellValueNoEvent(p, colId, value) {
+	if (!p?.node?.data) return;
+	const key = `__suppress_${colId}`;
+	p.node.data[key] = true; // belt & suspenders
+	p.node.data[colId] = value; // 🔴 direto no data (sem setDataValue)
+	p.api.refreshCells({ rowNodes: [p.node], columns: [colId], force: true, suppressFlash: true });
+}
 /* ======= ColumnDefs ======= */
 const columnDefs = [
 	{
@@ -1835,7 +1933,7 @@ const columnDefs = [
 						if (!okTest) {
 							setCellSilently(p, 'budget', p.oldValue);
 							markCellError(p.node, 'budget'); // 👈 erro: pré-check falhou
-							nudgeRenderer(p, 'bid'); // 👈 col certa
+							nudgeRenderer(p, 'budge'); // 👈 col certa
 
 							p.api.refreshCells({ rowNodes: [p.node], columns: ['budget'] });
 							return;
@@ -1853,7 +1951,7 @@ const columnDefs = [
 					} catch (e) {
 						setCellSilently(p, 'budget', p.oldValue);
 						markCellError(p.node, 'budget'); // 👈 erro: exceção no backend
-						nudgeRenderer(p, 'bid'); // 👈 col certa
+						nudgeRenderer(p, 'budge'); // 👈 col certa
 
 						showToast(`Erro ao salvar Budget: ${e?.message || e}`, 'danger');
 					} finally {
@@ -1934,6 +2032,97 @@ const columnDefs = [
 					}
 				},
 			},
+
+			{
+				headerName: 'Bid Type',
+				field: 'bid_type',
+				minWidth: 110,
+				flex: 0.8,
+				// filtro “legalzinho” (igual campaign_status, mas com os 2 valores do bid_type)
+				filter: 'agTextColumnFilter',
+				floatingFilter: true,
+				floatingFilterComponent: BidTypeFloatingFilter,
+				floatingFilterComponentParams: { suppressFilterButton: true },
+
+				editable: (p) => p.node?.level === 0 && !isCellLoading(p, 'bid_type'),
+				cellEditor: 'agSelectCellEditor',
+				cellEditorParams: { values: BID_TYPE_VALUES },
+				// 1) valueFormatter: só o rótulo, SEM seta
+				valueFormatter: (p) => {
+					const v = String(p.value || '').toUpperCase();
+					return BID_TYPE_LABEL[v] || p.value || '';
+				},
+
+				// 2) cellRenderer: adiciona a setinha sempre visível
+				cellRenderer: (p) => {
+					const v = String(p.value || '').toUpperCase();
+					const label = BID_TYPE_LABEL[v] || p.value || '';
+					const el = document.createElement('span');
+					el.textContent = label + ' ';
+					const caret = document.createElement('span');
+					caret.textContent = '▾';
+					caret.style.opacity = '0.9';
+					el.appendChild(caret);
+					return el;
+				},
+
+				cellClassRules: {
+					'ag-cell-loading': (p) => isCellLoading(p, 'bid_type'),
+					'lion-cell-error': (p) => isCellError(p, 'bid_type'),
+				},
+
+				onCellValueChanged: async (p) => {
+					try {
+						if (shouldSuppressCellChange(p, 'bid_type')) return;
+						if ((p?.node?.level ?? 0) !== 0) return;
+
+						const row = p?.data || {};
+						const id = String(row.id ?? row.utm_campaign ?? '');
+						if (!id) return;
+
+						const oldV = String(p.oldValue || '').toUpperCase();
+						const newV = String(p.newValue || '').toUpperCase();
+						if (oldV === newV) return;
+
+						if (!BID_TYPE_VALUES.includes(newV)) {
+							p.api.stopEditing(false); // encerra editor sem re-commit
+							setCellValueNoEvent(p, 'bid_type', oldV); // rollback “mudo”
+							markCellError(p.node, 'bid_type');
+							showToast('Bid Type inválido', 'danger');
+							return;
+						}
+
+						setCellLoading(p.node, 'bid_type', true);
+						p.api.refreshCells({ rowNodes: [p.node], columns: ['bid_type'] });
+
+						const okTest = await toggleFeature('bid_type', { id, value: newV });
+						if (!okTest) {
+							p.api.stopEditing(false); // garante que não há editor aberto
+							setCellValueNoEvent(p, 'bid_type', oldV); // rollback sem novo evento
+							markCellError(p.node, 'bid_type');
+							return; // ✅ sem PUT após falha no teste
+						}
+
+						await updateCampaignBidTypeBackend(id, newV);
+
+						p.api.stopEditing(false);
+						setCellValueNoEvent(p, 'bid_type', newV); // aplica valor final sem reentrar
+						clearCellError(p.node, 'bid_type');
+						markCellJustSaved(p.node, 'bid_type');
+						showToast('Bid Type atualizado', 'success');
+					} catch (e) {
+						p.api.stopEditing(false);
+						setCellValueNoEvent(p, 'bid_type', p.oldValue);
+						markCellError(p.node, 'bid_type');
+						showToast(`Erro ao salvar Bid Type: ${e?.message || e}`, 'danger');
+					} finally {
+						setCellLoading(p.node, 'bid_type', false);
+						if (p?.data) p.data.__suppress_bid_type = false; // limpa trava
+						p.api.refreshCells({ rowNodes: [p.node], columns: ['bid_type'] });
+					}
+				},
+			},
+
 			{
 				headerName: 'Ads',
 				field: '_ads',

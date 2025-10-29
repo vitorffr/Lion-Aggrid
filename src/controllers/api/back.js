@@ -915,6 +915,36 @@ async function updateCampaignBid(req, env) {
 		});
 	}
 }
+/* ============================================================
+ * 10) Mutations: Bid/Budget (campanha)
+ * ============================================================ */
+
+async function updateCampaignBidType(req, env) {
+	try {
+		const url = new URL(req.url);
+		const parts = url.pathname.split('/').filter(Boolean);
+		const id = parts[2];
+		if (!id) throw new Error('Missing campaign id');
+
+		const body = await req.json().catch(() => ({}));
+		const bidType = String(body.bid_type || '').toUpperCase();
+		const allowedTypes = new Set(['LOWEST_COST', 'COST_CAP']);
+		if (!allowedTypes.has(bidType)) throw new Error('Invalid bid_type');
+
+		const store = getMutStore();
+		const prev = store.campaigns.get(id) || {};
+		store.campaigns.set(id, { ...prev, bid_type: bidType });
+
+		return new Response(JSON.stringify({ ok: true, id, bid_type: bidType }), {
+			headers: { 'Content-Type': 'application/json' },
+		});
+	} catch (err) {
+		return new Response(JSON.stringify({ ok: false, error: String(err?.message || err) }), {
+			status: 400,
+			headers: { 'Content-Type': 'application/json' },
+		});
+	}
+}
 
 async function updateCampaignBudget(req, env) {
 	try {
@@ -1091,4 +1121,5 @@ export default {
 	updateCampaignBid,
 	updateCampaignBudget,
 	testToggle,
+	updateCampaignBidType,
 };
