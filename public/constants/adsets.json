@@ -104,13 +104,13 @@
 		"fb_revenue": 0.0,
 		"push_revenue": 0.0,
 		"revenue": 0.0,
-		"mx": 0.0,
+		"mx": 8,
 		"profit": -20.16
 	},
 	{
 		"id": "120232994973660355",
-		"idroot": "120239620847120602",
-		"period": "YESTERDAY",
+		"idroot": "120232760146320097",
+		"period": "TODAY",
 
 		"name": "Adset WIFI | NOCTURN",
 		"campaign_status": "WITH_ISSUES",
@@ -131,7 +131,7 @@
 		"fb_revenue": 0.0,
 		"push_revenue": 0.0,
 		"revenue": 0.0,
-		"mx": 0.0,
+		"mx": 45,
 		"profit": -7.2
 	}
 ]
