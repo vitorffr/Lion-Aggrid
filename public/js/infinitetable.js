@@ -2618,7 +2618,6 @@ const columnDefs = [
 							nudgeRenderer(p, 'bid'); // 👈 col certa
 
 							showToast('Bid inválido', 'danger');
-							nudgeRenderer(p, 'bid'); // 👈 col certa
 							return;
 						}
 
