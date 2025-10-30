@@ -2575,7 +2575,7 @@ const columnDefs = [
 					} catch (e) {
 						setCellSilently(p, 'budget', p.oldValue);
 						markCellError(p.node, 'budget'); // 👈 erro: exceção no backend
-						nudgeRenderer(p, 'budge'); // 👈 col certa
+						nudgeRenderer(p, 'budget'); // 👈 col certa
 
 						showToast(`Erro ao salvar Budget: ${e?.message || e}`, 'danger');
 					} finally {
