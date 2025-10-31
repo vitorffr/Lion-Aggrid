@@ -606,7 +606,7 @@ function computeClientTotals(rows) {
 	};
 }
 /** ===== Calculated Columns Helpers (safe eval básico) ===== */
-function cc_numberOr0(x) {
+function number(x) {
 	const n1 = toNumberBR(x);
 	if (Number.isFinite(n1)) return n1;
 	const n2 = parseCurrencyFlexible(x, getAppCurrency());
@@ -615,8 +615,8 @@ function cc_numberOr0(x) {
 
 /**
  * Avaliador SEGURO de expressões aritméticas sobre o row.
- * Suporta: + - * / () espaços e identificadores [A-Za-z_]\w* (campos do row) e helper cc_numberOr0.
- * Ex.: "cc_numberOr0(fb_revenue) + cc_numberOr0(push_revenue) - cc_numberOr0(spent)"
+ * Suporta: + - * / () espaços e identificadores [A-Za-z_]\w* (campos do row) e helper number.
+ * Ex.: "number(fb_revenue) + number(push_revenue) - number(spent)"
  */
 function cc_evalExpression(expr, row) {
 	if (!expr || typeof expr !== 'string') return null;
@@ -628,8 +628,8 @@ function cc_evalExpression(expr, row) {
 	// Tokeniza apenas identificadores (palavras que começam por letra ou _)
 	const tokens = expr.match(/[A-Za-z_]\w*/g) || [];
 
-	// Campos permitidos: chaves do row + helper cc_numberOr0
-	const allowed = new Set(['cc_numberOr0', ...Object.keys(row || {})]);
+	// Campos permitidos: chaves do row + helper number
+	const allowed = new Set(['number', ...Object.keys(row || {})]);
 
 	// Se houver qualquer identificador fora da whitelist, bloqueia
 	for (const t of tokens) {
@@ -638,16 +638,16 @@ function cc_evalExpression(expr, row) {
 
 	try {
 		/* eslint-disable no-new-func */
-		const keys = [...allowed].filter((k) => k !== 'cc_numberOr0');
+		const keys = [...allowed].filter((k) => k !== 'number');
 		const fn = new Function(
-			'cc_numberOr0',
+			'number',
 			'row',
 			`
       const { ${keys.join(', ')} } = row;
       return (${expr});
     `
 		);
-		const val = fn(cc_numberOr0, row || {});
+		const val = fn(number, row || {});
 		return Number.isFinite(val) ? val : null;
 	} catch {
 		return null;
@@ -1392,8 +1392,8 @@ StatusSliderRenderer.prototype.destroy = function () {
  *  cellRenderer: StackBelowRenderer,
  *  cellRendererParams: {
  *    getParts: (p) => [
- *      { label: 'Facebook', value: cc_numberOr0(p.data.fb_revenue) },
- *      { label: 'Push',     value: cc_numberOr0(p.data.push_revenue) },
+ *      { label: 'Facebook', value: number(p.data.fb_revenue) },
+ *      { label: 'Push',     value: number(p.data.push_revenue) },
  *    ],
  *    format: 'currency', // 'int' | 'raw'
  *    onlyLevel0: true,   // mostra apenas nas campanhas (nó nível 0)
@@ -1428,7 +1428,7 @@ StackBelowRenderer.prototype.init = function (p) {
 	const topEl = document.createElement('span');
 	const topVal = p.valueFormatted != null ? p.valueFormatted : p.value;
 	topEl.textContent =
-		formatVal(typeof topVal === 'number' ? topVal : cc_numberOr0(topVal)) || stripHtml(topVal ?? '');
+		formatVal(typeof topVal === 'number' ? topVal : number(topVal)) || stripHtml(topVal ?? '');
 	this.eGui.appendChild(topEl);
 
 	const partsFn = p?.colDef?.cellRendererParams?.getParts;
@@ -1443,7 +1443,7 @@ StackBelowRenderer.prototype.init = function (p) {
 		line.style.fontSize = '11px';
 		line.style.opacity = '0.8';
 		const lab = String(row?.label ?? '').trim();
-		const val = Number.isFinite(row?.value) ? row.value : cc_numberOr0(row?.value);
+		const val = Number.isFinite(row?.value) ? row.value : number(row?.value);
 		line.textContent = lab ? `${lab}: ${formatVal(val)}` : formatVal(val);
 		this.eGui.appendChild(line);
 	});
@@ -2054,15 +2054,15 @@ const LionCalcColumns = (() => {
 		};
 	}
 
-	/** Envolve campos em cc_numberOr0() automaticamente se necessário */
+	/** Envolve campos em number() automaticamente se necessário */
 	function _autoWrapFields(expr) {
 		if (!expr) return expr;
-		// Já tem cc_numberOr0? Retorna como está
-		if (expr.includes('cc_numberOr0')) return expr;
+		// Já tem number? Retorna como está
+		if (expr.includes('number')) return expr;
 
-		// Substitui campos isolados por cc_numberOr0(campo)
+		// Substitui campos isolados por number(campo)
 		// Captura palavras que começam com letra/_ e não são seguidas por (
-		return expr.replace(/\b([a-zA-Z_]\w*)(?!\s*\()/g, 'cc_numberOr0($1)');
+		return expr.replace(/\b([a-zA-Z_]\w*)(?!\s*\()/g, 'number($1)');
 	}
 
 	/** Compila uma expressão em função de valor (row) usando cc_evalExpression */
@@ -2084,7 +2084,7 @@ const LionCalcColumns = (() => {
 		}));
 
 		const valueFormatter = (p) => {
-			const v = typeof p.value === 'number' ? p.value : cc_numberOr0(p.value);
+			const v = typeof p.value === 'number' ? p.value : number(p.value);
 			if (!Number.isFinite(v)) return p.value ?? '';
 			if (format === 'int') return intFmt.format(Math.round(v));
 			if (format === 'raw') return String(v);
@@ -2192,13 +2192,13 @@ const LionCalcColumns = (() => {
 		const fieldMatches = cfg.expression.match(/\b([a-zA-Z_]\w*)(?!\s*\()/g);
 		if (fieldMatches && fieldMatches.length > 0) {
 			// Remove duplicatas e funções conhecidas
-			const knownFunctions = ['cc_numberOr0', 'cc_evalExpression', 'Math'];
+			const knownFunctions = ['number', 'cc_evalExpression', 'Math'];
 			const uniqueFields = [...new Set(fieldMatches)].filter((f) => !knownFunctions.includes(f));
 
 			// Gera parts automáticas com os campos encontrados
 			cfg.parts = uniqueFields.slice(0, 5).map((field) => ({
 				label: field
-					.replace(/cc_numberOr0/gi, '')
+					.replace(/number/gi, '')
 					.replace(/_/g, ' ')
 					.replace(/\b\w/g, (l) => l.toUpperCase())
 					.trim(),
@@ -3382,37 +3382,37 @@ function togglePinnedColsFromCheckbox(silent = false) {
 			{
 				value: 'divide',
 				label: '÷ Division (A / B)',
-				template: 'cc_numberOr0({col1}) / cc_numberOr0({col2})',
+				template: 'number({col1}) / number({col2})',
 			},
 			{
 				value: 'multiply',
 				label: '× Multiplication (A × B)',
-				template: 'cc_numberOr0({col1}) * cc_numberOr0({col2})',
+				template: 'number({col1}) * number({col2})',
 			},
 			{
 				value: 'add',
 				label: '+ Addition (A + B)',
-				template: 'cc_numberOr0({col1}) + cc_numberOr0({col2})',
+				template: 'number({col1}) + number({col2})',
 			},
 			{
 				value: 'subtract',
 				label: '− Subtraction (A − B)',
-				template: 'cc_numberOr0({col1}) - cc_numberOr0({col2})',
+				template: 'number({col1}) - number({col2})',
 			},
 			{
 				value: 'percent',
 				label: '% Percentage (A / B × 100)',
-				template: '(cc_numberOr0({col1}) / cc_numberOr0({col2})) * 100',
+				template: '(number({col1}) / number({col2})) * 100',
 			},
 			{
 				value: 'percent_change',
 				label: 'Δ% Change ((B-A)/A × 100)',
-				template: '((cc_numberOr0({col2}) - cc_numberOr0({col1})) / cc_numberOr0({col1})) * 100',
+				template: '((number({col2}) - number({col1})) / number({col1})) * 100',
 			},
 			{
 				value: 'average',
 				label: '⌀ Average ((A+B)/2)',
-				template: '(cc_numberOr0({col1}) + cc_numberOr0({col2})) / 2',
+				template: '(number({col1}) + number({col2})) / 2',
 			},
 			{ value: 'custom', label: '✎ Custom Expression', template: '' },
 		];
@@ -3530,11 +3530,11 @@ function togglePinnedColsFromCheckbox(silent = false) {
 
 					const parts = [
 						{
-							label: col1Label.replace(/cc_numberOr0/gi, '').trim(),
+							label: col1Label.replace(/number/gi, '').trim(),
 							expr: col1,
 						},
 						{
-							label: col2Label.replace(/cc_numberOr0/gi, '').trim(),
+							label: col2Label.replace(/number/gi, '').trim(),
 							expr: col2,
 						},
 					];

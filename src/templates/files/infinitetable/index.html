@@ -156,7 +156,7 @@
         aria-hidden="true"
         tabindex="-1"
     >
-        <div class="kt-modal-content max-w-[800px]">
+        <div class="kt-modal-content max-w-[900px]">
             <div class="kt-modal-header">
                 <h3 class="kt-modal-title">Calculated Columns</h3>
                 <button
@@ -260,7 +260,7 @@
                             <input
                                 id="cc-expression"
                                 type="text"
-                                placeholder="cc_numberOr0(revenue) / cc_numberOr0(clicks)"
+                                placeholder="number(revenue) / number(clicks)"
                             />
                         </label>
 
@@ -271,7 +271,7 @@
                             <input
                                 id="cc-parts"
                                 type="text"
-                                placeholder='[{"label":"EPC FB","expr":"cc_numberOr0(fb_revenue)/cc_numberOr0(clicks)"}]'
+                                placeholder='[{"label":"EPC FB","expr":"number(fb_revenue)/number(clicks)"}]'
                             />
                         
                         </label>
