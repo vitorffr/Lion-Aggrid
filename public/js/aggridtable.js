@@ -1653,7 +1653,12 @@ function setCellValueNoEvent(p, colId, value) {
 	const key = `__suppress_${colId}`;
 	p.node.data[key] = true; // belt & suspenders
 	p.node.data[colId] = value; // 🔴 direto no data (sem setDataValue)
-	p.api.refreshCells({ rowNodes: [p.node], columns: [colId], force: true, suppressFlash: true });
+	p.api.refreshCells({
+		rowNodes: [p.node],
+		columns: [colId],
+		force: true,
+		suppressFlash: true,
+	});
 }
 
 /* ======= ColumnDefs ======= */

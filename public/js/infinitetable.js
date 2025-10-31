@@ -659,7 +659,10 @@ function cc_currencyFormat(n) {
 	if (!Number.isFinite(n)) return '';
 	const cur = getAppCurrency();
 	const locale = cur === 'USD' ? 'en-US' : 'pt-BR';
-	return new Intl.NumberFormat(locale, { style: 'currency', currency: cur }).format(n);
+	return new Intl.NumberFormat(locale, {
+		style: 'currency',
+		currency: cur,
+	}).format(n);
 }
 function cc_percentFormat(n, digits = 1) {
 	if (!Number.isFinite(n)) return '';
@@ -749,7 +752,12 @@ function clearCellError(node, colId) {
 	if (!node?.data?.__err) return;
 	delete node.data.__err[colId];
 	const api = globalThis.LionGrid?.api;
-	api?.refreshCells?.({ rowNodes: [node], columns: [colId], force: true, suppressFlash: true });
+	api?.refreshCells?.({
+		rowNodes: [node],
+		columns: [colId],
+		force: true,
+		suppressFlash: true,
+	});
 }
 
 function markCellError(node, colId, ms = 60000) {
@@ -757,7 +765,12 @@ function markCellError(node, colId, ms = 60000) {
 	node.data.__err = node.data.__err || {};
 	node.data.__err[colId] = true;
 	const api = globalThis.LionGrid?.api;
-	api?.refreshCells?.({ rowNodes: [node], columns: [colId], force: true, suppressFlash: true });
+	api?.refreshCells?.({
+		rowNodes: [node],
+		columns: [colId],
+		force: true,
+		suppressFlash: true,
+	});
 	setTimeout(() => clearCellError(node, colId), ms);
 }
 
@@ -1110,7 +1123,11 @@ StatusSliderRenderer.prototype.init = function (p) {
 
 		setCellBusy(true);
 		try {
-			const okTest = await toggleFeature('status', { scope, id, value: nextVal });
+			const okTest = await toggleFeature('status', {
+				scope,
+				id,
+				value: nextVal,
+			});
 			if (!okTest) {
 				const rollbackVal = prevOn ? 'ACTIVE' : 'PAUSED';
 				if (p.data) {
@@ -1119,7 +1136,11 @@ StatusSliderRenderer.prototype.init = function (p) {
 				}
 				setProgress(prevOn ? 1 : 0);
 				markCellError(p.node, colId);
-				p.api.refreshCells({ rowNodes: [p.node], columns: [colId], force: true });
+				p.api.refreshCells({
+					rowNodes: [p.node],
+					columns: [colId],
+					force: true,
+				});
 				nudgeRenderer(p, colId);
 				return;
 			}
@@ -1152,7 +1173,11 @@ StatusSliderRenderer.prototype.init = function (p) {
 				p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
 				// 👇 exceção: marca erro
 				markCellError(p.node, colId);
-				p.api.refreshCells({ rowNodes: [p.node], columns: [colId], force: true });
+				p.api.refreshCells({
+					rowNodes: [p.node],
+					columns: [colId],
+					force: true,
+				});
 				nudgeRenderer(p, colId);
 				showToast(`Falha ao salvar status: ${e?.message || e}`, 'danger');
 			}
@@ -1601,6 +1626,222 @@ function showKTModal({ title = 'Detalhes', content = '' } = {}) {
 	modal.querySelector('.kt-modal-body > pre').textContent = content;
 	openKTModal('#lionKtModal');
 }
+/* ========= Calculated Columns: populate selects (Col 1 / Col 2) ========= */
+(function CalcColsPopulate() {
+	// Referências fixas aos elementos do modal
+	const $col1 = document.getElementById('cc-col1');
+	const $col2 = document.getElementById('cc-col2');
+	const $reload = document.getElementById('cc-reload');
+
+	// Guarda última seleção do usuário para tentar preservar ao recarregar
+	let lastSelection = { col1: null, col2: null };
+
+	// Util: tenta descobrir api/columnApi a partir do seu setup
+	function resolveGridApis() {
+		// 1) Padrão AG Grid (gridOptions globais)
+		if (globalThis.gridOptions?.api) {
+			return { api: globalThis.gridOptions.api };
+		}
+		// 2) Seu wrapper LionGrid (comum nos seus projetos)
+		if (globalThis.LionGrid?.api) {
+			return { api: globalThis.LionGrid.api };
+		}
+		// 3) Caso você exponha via função
+		if (typeof globalThis.getAgGridApis === 'function') {
+			const apis = globalThis.getAgGridApis();
+			if (apis?.api) return { api: apis.api };
+		}
+		return { api: null };
+	}
+
+	// Extrai colunas "selecionáveis": apenas folhas com field e headerName visíveis/úteis
+	function getSelectableColumns(api) {
+		if (!api) return [];
+
+		// Preferimos ordem visual atual (colunas exibidas)
+
+		// Fallback: se por algum motivo não houver displayed, pega defs completas
+		if (!items.length) {
+			const columnState = api.getColumnState?.() || [];
+			const defs =
+				columnState.map((s) => api.getColumn(s.colId)?.getColDef?.()).filter(Boolean) ||
+				api.getColumnDefs?.() ||
+				[];
+			items = (defs || [])
+				.flatMap(flattenColDefs)
+				.filter((d) => d && d.field && d.headerName)
+				.map((d) => ({ field: d.field, headerName: d.headerName }));
+		}
+
+		// Filtragens comuns no seu grid (ajuste se quiser):
+		const deny = new Set(['ag-Grid-AutoColumn', 'ag-Grid-RowGroup', '__autoGroup']); // colunas auto
+		items = items.filter(
+			(it) =>
+				it.field &&
+				!deny.has(it.field) &&
+				!String(it.field).startsWith('__') &&
+				!String(it.headerName).toLowerCase().includes('select') // evita coluna de seleção
+		);
+
+		// Remove duplicados por field, preservando a primeira ocorrência (ordem visual)
+		const seen = new Set();
+		items = items.filter((it) => (seen.has(it.field) ? false : seen.add(it.field)));
+
+		return items;
+	}
+
+	// Achata colDefs aninhados (caso você tenha groups)
+	function flattenColDefs(defOrArray) {
+		const out = [];
+		const walk = (arr) => {
+			(arr || []).forEach((def) => {
+				if (def?.children?.length) {
+					walk(def.children);
+				} else {
+					out.push(def);
+				}
+			});
+		};
+		if (Array.isArray(defOrArray)) walk(defOrArray);
+		else if (defOrArray) walk([defOrArray]);
+		return out;
+	}
+
+	// Renderiza <option> em um <select> usando Option()/append,
+	// preserva seleção anterior e re-hidrata o KT select.
+	function fillSelect(selectEl, items, keepValue) {
+		if (!selectEl) return;
+
+		// 1) Guardar seleção atual (se existir)
+		const current = selectEl.value || null;
+		const desired = keepValue ?? current ?? '';
+
+		// 2) Limpar opções existentes
+		while (selectEl.options.length) selectEl.remove(0);
+
+		// 3) Placeholder
+		const placeholderText =
+			selectEl.getAttribute('data-kt-select-placeholder') ||
+			selectEl.getAttribute('title') ||
+			'Select';
+
+		// Se existir um valor válido para manter, não deixamos o placeholder como selected/disabled.
+		// Assim o KT mostra corretamente o rótulo do item escolhido.
+		const hasDesired = desired && items.some((it) => it.field === desired);
+		const ph = new Option(placeholderText, '');
+		if (!hasDesired) {
+			ph.disabled = true;
+			ph.selected = true;
+		}
+		selectEl.add(ph);
+
+		// 4) Opções reais
+		for (const it of items) {
+			const label = `${String(it.headerName)} (${String(it.field)})`;
+			const opt = new Option(label, String(it.field));
+			selectEl.add(opt);
+		}
+
+		// 5) Restaura seleção se ainda existir
+		if (hasDesired) {
+			selectEl.value = desired;
+		}
+
+		// 6) Re-hidratar/refresh do KT Select para refletir placeholder/seleção
+		try {
+			// alguns bundles expõem um "refresh" e/ou reinit; cobrimos ambos
+			selectEl.dispatchEvent(new CustomEvent('kt:select:refresh', { bubbles: true }));
+			if (window.KT?.select?.refresh) window.KT.select.refresh(selectEl);
+			if (window.KT?.reinitSelect) window.KT.reinitSelect(selectEl);
+			// Aciona 'change' para forçar o label do gatilho atualizar no KT
+			selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+		} catch (_) {}
+	}
+
+	// Popula os dois selects (Col1/Col2)
+	function populateColSelects() {
+		const { api } = resolveGridApis();
+		if (!$col1 || !$col2) return;
+
+		if (!api) {
+			console.warn('[populateColSelects] Grid API não disponível ainda');
+			return;
+		}
+
+		const items = getSelectableColumns(api);
+
+		// Preserva última seleção se possível
+		if (!$col1.value) lastSelection.col1 = lastSelection.col1 || null;
+		else lastSelection.col1 = $col1.value;
+		if (!$col2.value) lastSelection.col2 = lastSelection.col2 || null;
+		else lastSelection.col2 = $col2.value;
+
+		fillSelect($col1, items, lastSelection.col1);
+		fillSelect($col2, items, lastSelection.col2);
+	}
+
+	// Util: escape básico para option text
+	function escapeHtml(s) {
+		return String(s)
+			.replaceAll('&', '&amp;')
+			.replaceAll('<', '&lt;')
+			.replaceAll('>', '&gt;')
+			.replaceAll('"', '&quot;')
+			.replaceAll("'", '&#39;');
+	}
+
+	// Bind de eventos (reload + quando o modal abrir)
+	function bindEventsOnce() {
+		if ($reload) {
+			$reload.addEventListener(
+				'click',
+				() => {
+					populateColSelects();
+				},
+				{ passive: true }
+			);
+		}
+
+		// Quando o modal abrir (via data-kt-modal), repopula para refletir o estado atual da grid
+		const modal = document.getElementById('calcColsModal');
+		if (modal) {
+			// Alguns modais disparam eventos custom — cobrimos algumas possibilidades
+			modal.addEventListener('kt:modal:shown', populateColSelects, {
+				passive: true,
+			});
+			modal.addEventListener('shown.bs.modal', populateColSelects, {
+				passive: true,
+			}); // se usar Bootstrap events
+			// fallback: observe a mudança de aria-hidden -> false
+			const obs = new MutationObserver((muts) => {
+				for (const m of muts) {
+					if (m.type === 'attributes' && m.attributeName === 'aria-hidden') {
+						if (modal.getAttribute('aria-hidden') === 'false') populateColSelects();
+					}
+				}
+			});
+			obs.observe(modal, { attributes: true });
+		}
+	}
+
+	// Exponha uma função global opcional para você chamar manualmente após o gridReady
+	globalThis.CalcColsUI = {
+		populateSelects: populateColSelects,
+	};
+
+	// Inicializa na carga do DOM (vai funcionar mesmo antes do grid estar pronto;
+	// quando o modal abrir/ao clicar Reload, a população acontece com o estado atual)
+	if (document.readyState === 'loading') {
+		document.addEventListener('DOMContentLoaded', () => {
+			bindEventsOnce();
+			// Tenta uma primeira população (se grid já estiver pronto)
+			populateColSelects();
+		});
+	} else {
+		bindEventsOnce();
+		populateColSelects();
+	}
+})();
 
 /* =========================================
  * 12) Tema (AG Grid Quartz)
@@ -1758,124 +1999,7 @@ const LionCompositeColumns = (() => {
  * Total = fb_revenue + push_revenue (calculado no front), e mostra as duas linhas abaixo.
  * Só exibe o stack no nível 0 (campanhas).
  */
-LionCompositeColumns.register('revenue_stack', () => {
-	return {
-		headerName: 'Revenue (Stack)',
-		colId: 'revenue_stack',
-		minWidth: 135,
-		flex: 1.0,
-		pinned: 'right',
-		valueGetter: (p) => {
-			const fb = cc_numberOr0(p.data?.fb_revenue);
-			const push = cc_numberOr0(p.data?.push_revenue);
-			return fb + push;
-		},
-		valueFormatter: currencyFormatter, // mantém o padrão de moeda global
-		tooltipValueGetter: (p) => {
-			const fb = cc_currencyFormat(cc_numberOr0(p.data?.fb_revenue));
-			const push = cc_currencyFormat(cc_numberOr0(p.data?.push_revenue));
-			const tot = cc_currencyFormat(cc_numberOr0(p.value));
-			return `Total: ${tot}\nFacebook: ${fb}\nPush: ${push}`;
-		},
-		cellRenderer: StackBelowRenderer,
-		cellRendererParams: {
-			onlyLevel0: true,
-			format: 'currency',
-			getParts: (p) => [
-				{ label: 'Facebook', value: cc_numberOr0(p.data?.fb_revenue) },
-				{ label: 'Push', value: cc_numberOr0(p.data?.push_revenue) },
-			],
-		},
-	};
-});
-/** ===== Registro: Coluna "Profit (Stack)" — id: profit_stack =====
- * Total = se houver "profit" numérico usa ele; senão (fb_revenue + push_revenue - spent).
- * Partes abaixo: Facebook Revenue, Push Revenue e Spend (negativo), apenas no nível 0.
- */
-LionCompositeColumns.register('profit_stack', () => {
-	return {
-		headerName: 'Profit (Stack)',
-		colId: 'profit_stack',
-		minWidth: 140,
-		flex: 1.0,
-		pinned: 'right',
-		valueGetter: (p) => {
-			const profit = cc_numberOr0(p.data?.profit);
-			if (Number.isFinite(profit)) return profit;
-			const fb = cc_numberOr0(p.data?.fb_revenue);
-			const push = cc_numberOr0(p.data?.push_revenue);
-			const spent = cc_numberOr0(p.data?.spent);
-			return fb + push - spent;
-		},
-		valueFormatter: currencyFormatter,
-		tooltipValueGetter: (p) => {
-			const spent = cc_currencyFormat(cc_numberOr0(p.data?.spent));
-			const fb = cc_currencyFormat(cc_numberOr0(p.data?.fb_revenue));
-			const push = cc_currencyFormat(cc_numberOr0(p.data?.push_revenue));
-			const tot = cc_currencyFormat(cc_numberOr0(p.value));
-			return `Total: ${tot}\nFacebook: ${fb}\nPush: ${push}\nSpend: -${spent}`;
-		},
-		cellRenderer: StackBelowRenderer,
-		cellRendererParams: {
-			onlyLevel0: true,
-			format: 'currency',
-			getParts: (p) => [
-				{ label: 'Facebook', value: cc_numberOr0(p.data?.fb_revenue) },
-				{ label: 'Push', value: cc_numberOr0(p.data?.push_revenue) },
-				{ label: 'Spend', value: -cc_numberOr0(p.data?.spent) },
-			],
-		},
-	};
-});
 
-/** ===== Registro: Coluna "CPA (Stack)" — id: cpa_stack =====
- * Total = prioriza real_cpa; se ausente, calcula (spent/real_conversions).
- * Partes: CPA FB (spent/conversions) e Real CPA (spent/real_conversions).
- */
-LionCompositeColumns.register('cpa_stack', () => {
-	return {
-		headerName: 'CPA (Stack)',
-		colId: 'cpa_stack',
-		minWidth: 130,
-		flex: 0.9,
-		pinned: 'right',
-		valueGetter: (p) => {
-			const realCPA = cc_numberOr0(p.data?.real_cpa);
-			if (Number.isFinite(realCPA)) return realCPA;
-			const spent = cc_numberOr0(p.data?.spent);
-			const realConv = cc_numberOr0(p.data?.real_conversions);
-			return realConv > 0 ? spent / realConv : null;
-		},
-		valueFormatter: currencyFormatter,
-		tooltipValueGetter: (p) => {
-			const spent = cc_numberOr0(p.data?.spent);
-			const conv = cc_numberOr0(p.data?.conversions);
-			const realConv = cc_numberOr0(p.data?.real_conversions);
-			const cpaFB = conv > 0 ? spent / conv : null;
-			const cpaReal = realConv > 0 ? spent / realConv : null;
-			const fmt = (n) => (Number.isFinite(n) ? cc_currencyFormat(n) : '—');
-			return `Total: ${fmt(cc_numberOr0(p.value))}\nCPA FB: ${fmt(cpaFB)}\nReal CPA: ${fmt(
-				cpaReal
-			)}`;
-		},
-		cellRenderer: StackBelowRenderer,
-		cellRendererParams: {
-			onlyLevel0: true,
-			format: 'currency',
-			getParts: (p) => {
-				const spent = cc_numberOr0(p.data?.spent);
-				const conv = cc_numberOr0(p.data?.conversions);
-				const realConv = cc_numberOr0(p.data?.real_conversions);
-				const cpaFB = conv > 0 ? spent / conv : null;
-				const cpaReal = realConv > 0 ? spent / realConv : null;
-				return [
-					{ label: 'CPA FB', value: cpaFB },
-					{ label: 'Real CPA', value: cpaReal },
-				];
-			},
-		},
-	};
-});
 /* =========================================
  * 12.5) Calculated Columns (user-defined)
  * - Permite criar colunas calculáveis no grupo "Metrics & Revenue".
@@ -1918,21 +2042,46 @@ const LionCalcColumns = (() => {
 					expr: String(p.expr || '').trim(),
 			  }))
 			: [];
-		return { id, headerName, expression, format, partsFormat, parts, onlyLevel0, after };
+		return {
+			id,
+			headerName,
+			expression,
+			format,
+			partsFormat,
+			parts,
+			onlyLevel0,
+			after,
+		};
+	}
+
+	/** Envolve campos em cc_numberOr0() automaticamente se necessário */
+	function _autoWrapFields(expr) {
+		if (!expr) return expr;
+		// Já tem cc_numberOr0? Retorna como está
+		if (expr.includes('cc_numberOr0')) return expr;
+
+		// Substitui campos isolados por cc_numberOr0(campo)
+		// Captura palavras que começam com letra/_ e não são seguidas por (
+		return expr.replace(/\b([a-zA-Z_]\w*)(?!\s*\()/g, 'cc_numberOr0($1)');
 	}
 
 	/** Compila uma expressão em função de valor (row) usando cc_evalExpression */
 	function _compileExpr(expr) {
 		const src = String(expr || '').trim();
 		if (!src) return null;
-		return (row) => cc_evalExpression(src, row);
+		// Auto-wrap nos campos
+		const wrapped = _autoWrapFields(src);
+		return (row) => cc_evalExpression(wrapped, row);
 	}
 
 	function _buildColDef(cfg) {
 		const { id, headerName, expression, format, partsFormat, parts, onlyLevel0, after } = _norm(cfg);
 
 		const totalFn = _compileExpr(expression);
-		const partFns = parts.map((p) => ({ label: p.label, fn: _compileExpr(p.expr) }));
+		const partFns = parts.map((p) => ({
+			label: p.label,
+			fn: _compileExpr(p.expr),
+		}));
 
 		const valueFormatter = (p) => {
 			const v = typeof p.value === 'number' ? p.value : cc_numberOr0(p.value);
@@ -1979,7 +2128,7 @@ const LionCalcColumns = (() => {
 			cellRenderer: StackBelowRenderer,
 			cellRendererParams: {
 				onlyLevel0: !!onlyLevel0,
-				// para as “linhas” embaixo usamos o formato de partes
+				// para as "linhas" embaixo usamos o formato de partes
 				format:
 					partsFormat === 'int'
 						? 'int'
@@ -1990,7 +2139,15 @@ const LionCalcColumns = (() => {
 						: 'currency',
 				getParts: (p) => {
 					const row = p?.data || {};
-					return partFns.map(({ label, fn }) => ({ label, value: fn ? fn(row) : null }));
+					const result = partFns.map(({ label, fn }) => ({
+						label,
+						value: fn ? fn(row) : null,
+					}));
+					// Debug: log parts being generated
+					if (result.length > 0) {
+						console.log(`[CalcCol:${id}] Parts generated:`, result);
+					}
+					return result;
 				},
 			},
 			__after: after,
@@ -2005,10 +2162,18 @@ const LionCalcColumns = (() => {
 		// registra com factory que devolve o mesmo colDef (preserva funções)
 		LionCompositeColumns.register(colDef.colId, () => colDef);
 
+		// Debug: log column definition
+		console.log(`[CalcCols] Registering column "${colDef.colId}":`, {
+			cellRenderer: colDef.cellRenderer?.name || colDef.cellRenderer,
+			hasParts: !!colDef.cellRendererParams?.getParts,
+			partsCount: cfg.parts?.length || 0,
+			onlyLevel0: colDef.cellRendererParams?.onlyLevel0,
+		});
+
 		// ativa no grupo, inserindo após o "after"
 		try {
 			// hack: empurra para depois do 'after' ajustando internamente na activate()
-			// Como LionCompositeColumns.insere sempre “após 'Revenue'”, vamos reusar
+			// Como LionCompositeColumns.insere sempre "após 'Revenue'", vamos reusar
 			// mudando o header temporariamente, se quiser controlar posição fina
 			return LionCompositeColumns.activate([colDef.colId]) || true;
 		} catch (e) {
@@ -2017,9 +2182,42 @@ const LionCalcColumns = (() => {
 		}
 	}
 
+	/** Migra colunas antigas sem parts para incluir parts automáticas */
+	function _migrateLegacyColumn(cfg) {
+		// Se já tem parts, não precisa migrar
+		if (cfg.parts && cfg.parts.length > 0) return cfg;
+
+		// Tenta extrair campos da expressão para gerar parts automaticamente
+		// Regex para encontrar campos (palavras que não são funções)
+		const fieldMatches = cfg.expression.match(/\b([a-zA-Z_]\w*)(?!\s*\()/g);
+		if (fieldMatches && fieldMatches.length > 0) {
+			// Remove duplicatas e funções conhecidas
+			const knownFunctions = ['cc_numberOr0', 'cc_evalExpression', 'Math'];
+			const uniqueFields = [...new Set(fieldMatches)].filter((f) => !knownFunctions.includes(f));
+
+			// Gera parts automáticas com os campos encontrados
+			cfg.parts = uniqueFields.slice(0, 5).map((field) => ({
+				label: field
+					.replace(/cc_numberOr0/gi, '')
+					.replace(/_/g, ' ')
+					.replace(/\b\w/g, (l) => l.toUpperCase())
+					.trim(),
+				expr: field,
+			}));
+
+			console.log(`[CalcCols] Migrated column "${cfg.id}" with auto-generated parts:`, cfg.parts);
+		}
+
+		return cfg;
+	}
+
 	/** API pública */
 	function add(config) {
-		const cfg = _norm(config);
+		let cfg = _norm(config);
+
+		// Migra colunas antigas
+		cfg = _migrateLegacyColumn(cfg);
+
 		if (!cfg.id || !cfg.expression) {
 			showToast('Config inválida (id/expressão obrigatórios)', 'danger');
 			return false;
@@ -2069,54 +2267,91 @@ const LionCalcColumns = (() => {
 
 	function activateAll() {
 		const bag = _read();
-		for (const cfg of bag) _registerAndActivate(cfg);
-	}
+		const migratedBag = [];
+		let migrationCount = 0;
 
-	/** Builder mínimo via prompt() — útil para prototipar já */
-	function openQuickBuilder() {
-		const headerName = prompt('Header da coluna (ex.: EPC Custom):', 'EPC Custom');
-		if (!headerName) return;
-
-		let id = headerName.toLowerCase().replace(/\s+/g, '_').replace(/[^\w]/g, '');
-		id = prompt('ID único (sem espaços):', id) || id;
-		if (!id) return;
-
-		const format = (prompt('Formato (currency|int|raw):', 'currency') || 'currency').toLowerCase();
-
-		const expression = prompt(
-			'Expressão (ex.: cc_numberOr0(revenue) / cc_numberOr0(clicks))',
-			'cc_numberOr0(revenue) / cc_numberOr0(clicks)'
-		);
-		if (!expression) return;
-
-		const partsJson = prompt(
-			'Partes (JSON) opcional, ex.: [{"label":"Facebook","expr":"cc_numberOr0(fb_revenue)"}]',
-			''
-		);
-		let parts = [];
-		if (partsJson && partsJson.trim()) {
-			try {
-				parts = JSON.parse(partsJson);
-			} catch {
-				showToast('JSON das partes inválido', 'danger');
-				return;
+		for (const cfg of bag) {
+			// Migra cada coluna antes de ativar
+			const migrated = _migrateLegacyColumn(cfg);
+			if (migrated.parts && migrated.parts.length > 0 && (!cfg.parts || cfg.parts.length === 0)) {
+				migrationCount++;
 			}
+			migratedBag.push(migrated);
+			_registerAndActivate(migrated);
 		}
 
-		add({ id, headerName, expression, parts, format, onlyLevel0: true, after: 'Revenue' });
+		// Atualiza o localStorage com as colunas migradas
+		if (migrationCount > 0) {
+			_write(migratedBag);
+			console.log(`[CalcCols] Migrated ${migrationCount} column(s) with auto-generated parts`);
+		}
 	}
 
-	/** Gestão simples: listar/remover via prompt */
-	function manage() {
-		const items = list();
-		if (!items.length) return alert('Sem colunas calculadas salvas.');
-		const lines = items.map((c) => `- ${c.id}  |  ${c.headerName}`).join('\n');
-		const toRemove = prompt(`Colunas:\n${lines}\n\nDigite o ID para remover (ou deixe vazio):`, '');
-		if (!toRemove) return;
-		remove(toRemove);
+	/**
+	 * Lista os campos disponíveis para usar nas expressões
+	 * (baseado nas colunas principais da grid)
+	 */
+	function getAvailableFields() {
+		return [
+			'revenue',
+			'fb_revenue',
+			'push_revenue',
+			'spent',
+			'profit',
+			'clicks',
+			'impressions',
+			'visitors',
+			'conversions',
+			'real_conversions',
+			'cpc',
+			'cpa_fb',
+			'real_cpa',
+			'budget',
+			'bid',
+			'mx',
+			'ctr',
+		];
 	}
 
-	return { add, remove, list, activateAll, openQuickBuilder, manage };
+	/**
+	 * Exporta colunas para preset (inclui parts migradas)
+	 */
+	function exportForPreset() {
+		return _read().map((cfg) => _migrateLegacyColumn(cfg));
+	}
+
+	/**
+	 * Importa colunas de preset
+	 */
+	function importFromPreset(columns) {
+		if (!Array.isArray(columns)) return;
+		_write(columns);
+		activateAll();
+	}
+
+	/**
+	 * Limpa todas as colunas calculadas
+	 */
+	function clear() {
+		const bag = _read();
+		for (const cfg of bag) {
+			try {
+				LionCompositeColumns.deactivate([cfg.id]);
+			} catch {}
+		}
+		_write([]);
+	}
+
+	return {
+		add,
+		remove,
+		list,
+		activateAll,
+		getAvailableFields,
+		exportForPreset,
+		importFromPreset,
+		clear,
+	};
 })();
 // === 12.5) EXPORTA PARA O CONSOLE/ESCOPO GLOBAL ===
 globalThis.LionCalcColumns = LionCalcColumns;
@@ -2427,7 +2662,12 @@ function setCellValueNoEvent(p, colId, value) {
 	const key = `__suppress_${colId}`;
 	p.node.data[key] = true; // belt & suspenders
 	p.node.data[colId] = value; // 🔴 direto no data (sem setDataValue)
-	p.api.refreshCells({ rowNodes: [p.node], columns: [colId], force: true, suppressFlash: true });
+	p.api.refreshCells({
+		rowNodes: [p.node],
+		columns: [colId],
+		force: true,
+		suppressFlash: true,
+	});
 }
 /* ======= ColumnDefs ======= */
 const columnDefs = [
@@ -2896,6 +3136,7 @@ const columnDefs = [
 				field: 'ctr',
 				minWidth: 70,
 				filter: 'agNumberColumnFilter',
+				flex: 0.8,
 			},
 		],
 	},
@@ -2996,10 +3237,14 @@ function applySavedStateIfAny(api) {
 	const saved = loadSavedState();
 	if (!saved) return false;
 	try {
+		// Clear potentially corrupted state before applying
+		sessionStorage.removeItem(GRID_STATE_KEY);
 		api.setState(saved, GRID_STATE_IGNORE_ON_RESTORE);
 		return true;
 	} catch (e) {
-		console.warn('[GridState] restore failed:', e);
+		console.warn('[GridState] restore failed, clearing saved state:', e);
+		// Clear corrupted state
+		sessionStorage.removeItem(GRID_STATE_KEY);
 		return false;
 	}
 }
@@ -3039,7 +3284,10 @@ function togglePinnedColsFromCheckbox(silent = false) {
 		{ colId: 'mx', pinned: checked ? 'right' : null },
 		{ colId: 'profit', pinned: checked ? 'right' : null },
 	];
-	api.applyColumnState({ state: [...leftPins, ...rightPins], defaultState: { pinned: null } });
+	api.applyColumnState({
+		state: [...leftPins, ...rightPins],
+		defaultState: { pinned: null },
+	});
 	if (!silent)
 		showToast(checked ? 'Columns Pinned' : 'Columns Unpinned', checked ? 'success' : 'info');
 }
@@ -3129,6 +3377,172 @@ function togglePinnedColsFromCheckbox(silent = false) {
 	(function setupCalcColsModal() {
 		const $ = (sel) => document.querySelector(sel);
 
+		// Define operadores padrão para popular o seletor de expressões
+		const DEFAULT_OPERATORS = [
+			{
+				value: 'divide',
+				label: '÷ Division (A / B)',
+				template: 'cc_numberOr0({col1}) / cc_numberOr0({col2})',
+			},
+			{
+				value: 'multiply',
+				label: '× Multiplication (A × B)',
+				template: 'cc_numberOr0({col1}) * cc_numberOr0({col2})',
+			},
+			{
+				value: 'add',
+				label: '+ Addition (A + B)',
+				template: 'cc_numberOr0({col1}) + cc_numberOr0({col2})',
+			},
+			{
+				value: 'subtract',
+				label: '− Subtraction (A − B)',
+				template: 'cc_numberOr0({col1}) - cc_numberOr0({col2})',
+			},
+			{
+				value: 'percent',
+				label: '% Percentage (A / B × 100)',
+				template: '(cc_numberOr0({col1}) / cc_numberOr0({col2})) * 100',
+			},
+			{
+				value: 'percent_change',
+				label: 'Δ% Change ((B-A)/A × 100)',
+				template: '((cc_numberOr0({col2}) - cc_numberOr0({col1})) / cc_numberOr0({col1})) * 100',
+			},
+			{
+				value: 'average',
+				label: '⌀ Average ((A+B)/2)',
+				template: '(cc_numberOr0({col1}) + cc_numberOr0({col2})) / 2',
+			},
+			{ value: 'custom', label: '✎ Custom Expression', template: '' },
+		];
+
+		// Popula o seletor de expressões
+		function populateExpressionSelect() {
+			const sel = $('#cc-format');
+			if (!sel) return;
+
+			// Limpa opções existentes
+			sel.innerHTML = '';
+
+			// Adiciona operadores padrão
+			DEFAULT_OPERATORS.forEach((op) => {
+				const option = document.createElement('option');
+				option.value = op.value;
+				option.textContent = op.label;
+				option.dataset.template = op.template;
+				sel.appendChild(option);
+			});
+
+			// Reinicializa o KTUI select se disponível
+			if (globalThis.KT && KT.Select && KT.Select.getOrCreateInstance) {
+				try {
+					const instance = KT.Select.getOrCreateInstance(sel);
+					if (instance) {
+						instance.destroy();
+						KT.Select.getInstance(sel)?.init();
+					}
+				} catch (e) {
+					console.warn('Failed to reinitialize cc-format select:', e);
+				}
+			}
+		}
+
+		// Popula os seletores de colunas com as colunas disponíveis na grid
+		function populateColumnSelects() {
+			const api = ensureApi();
+			if (!api) return;
+
+			const col1Sel = $('#cc-col1');
+			const col2Sel = $('#cc-col2');
+			if (!col1Sel || !col2Sel) return;
+
+			// Obtém todas as colunas da grid
+			const allCols = api.getColumns?.() || [];
+			const colOptions = allCols
+				.filter((col) => {
+					const colDef = col.getColDef?.();
+					// Filtra apenas colunas de dados (não de grupo, etc)
+					return colDef && colDef.field && !colDef.hide;
+				})
+				.map((col) => {
+					const colDef = col.getColDef?.();
+					return {
+						field: colDef.field,
+						label: colDef.headerName || colDef.field,
+					};
+				})
+				.sort((a, b) => a.label.localeCompare(b.label));
+
+			// Popula ambos os seletores
+			[col1Sel, col2Sel].forEach((sel) => {
+				sel.innerHTML = '';
+				colOptions.forEach((col) => {
+					const option = document.createElement('option');
+					option.value = col.field;
+					option.textContent = col.label;
+					sel.appendChild(option);
+				});
+
+				// Reinicializa o KTUI select se disponível
+				if (globalThis.KT && KT.Select && KT.Select.getOrCreateInstance) {
+					try {
+						const instance = KT.Select.getOrCreateInstance(sel);
+						if (instance) {
+							instance.destroy();
+							KT.Select.getInstance(sel)?.init();
+						}
+					} catch (e) {
+						console.warn('Failed to reinitialize column select:', e);
+					}
+				}
+			});
+		}
+
+		// Atualiza a expressão baseada nos campos selecionados
+		function updateExpressionFromSelects() {
+			const formatSel = $('#cc-format');
+			const col1Sel = $('#cc-col1');
+			const col2Sel = $('#cc-col2');
+			const exprInput = $('#cc-expression');
+			const partsInput = $('#cc-parts');
+
+			if (!formatSel || !col1Sel || !col2Sel || !exprInput) return;
+
+			const selectedOp = formatSel.options[formatSel.selectedIndex];
+			const template = selectedOp?.dataset?.template;
+
+			// Se é custom ou não tem template, não faz nada
+			if (!template || formatSel.value === 'custom') return;
+
+			const col1 = col1Sel.value;
+			const col2 = col2Sel.value;
+
+			if (col1 && col2) {
+				const expression = template.replace(/{col1}/g, col1).replace(/{col2}/g, col2);
+				exprInput.value = expression;
+
+				// Auto-gerar parts para stacked rendering
+				if (partsInput) {
+					// Busca os labels das colunas selecionadas
+					const col1Label = col1Sel.options[col1Sel.selectedIndex]?.textContent || col1;
+					const col2Label = col2Sel.options[col2Sel.selectedIndex]?.textContent || col2;
+
+					const parts = [
+						{
+							label: col1Label.replace(/cc_numberOr0/gi, '').trim(),
+							expr: col1,
+						},
+						{
+							label: col2Label.replace(/cc_numberOr0/gi, '').trim(),
+							expr: col2,
+						},
+					];
+					partsInput.value = JSON.stringify(parts, null, 2);
+				}
+			}
+		}
+
 		// Fallback: abre/fecha caso KTUI JS não esteja exposto (defensivo)
 		function modalShow(selector) {
 			const el = document.querySelector(selector);
@@ -3162,7 +3576,40 @@ function togglePinnedColsFromCheckbox(silent = false) {
 				// Se KTUI já tratar pelo data-kt, beleza; se não, abrimos no fallback:
 				const sel = btn.getAttribute('data-kt-modal-toggle') || '#calcColsModal';
 				// pequeno delay para não "competir" com o handler do KTUI
-				setTimeout(() => modalShow(sel), 0);
+				setTimeout(() => {
+					modalShow(sel);
+					// Limpa e popula os seletores quando o modal é aberto
+					clearForm();
+					populateExpressionSelect();
+					populateColumnSelects();
+					renderList();
+				}, 0);
+			});
+		}
+
+		// Event listeners para os seletores
+		const formatSel = $('#cc-format');
+		const col1Sel = $('#cc-col1');
+		const col2Sel = $('#cc-col2');
+
+		if (formatSel) {
+			formatSel.addEventListener('change', updateExpressionFromSelects);
+		}
+		if (col1Sel) {
+			col1Sel.addEventListener('change', updateExpressionFromSelects);
+		}
+		if (col2Sel) {
+			col2Sel.addEventListener('change', updateExpressionFromSelects);
+		}
+
+		// Também inicializa quando o modal é exibido via evento KTUI
+		const modalEl = document.getElementById('calcColsModal');
+		if (modalEl) {
+			modalEl.addEventListener('show.kt.modal', () => {
+				clearForm();
+				populateExpressionSelect();
+				populateColumnSelects();
+				renderList();
 			});
 		}
 
@@ -3174,11 +3621,29 @@ function togglePinnedColsFromCheckbox(silent = false) {
 		const resetBtn = $('#cc-reset-form');
 		const activateAllBtn = $('#cc-activate-all');
 
+		// Inicializa os seletores na primeira carga
+		if (typeof document !== 'undefined') {
+			// Espera o DOM estar pronto
+			if (document.readyState === 'loading') {
+				document.addEventListener('DOMContentLoaded', () => {
+					setTimeout(() => {
+						populateExpressionSelect();
+						populateColumnSelects();
+					}, 100);
+				});
+			} else {
+				setTimeout(() => {
+					populateExpressionSelect();
+					populateColumnSelects();
+				}, 100);
+			}
+		}
+
 		// Helpers
 		function readForm() {
 			const headerName = ($('#cc-header')?.value || '').trim();
 			let id = ($('#cc-id')?.value || '').trim();
-			const format = ($('#cc-format')?.value || 'currency').trim().toLowerCase();
+			const format = ($('#cc-type')?.value || 'currency').trim().toLowerCase();
 			const expression = ($('#cc-expression')?.value || '').trim();
 			const onlyLevel0 = !!$('#cc-only-level0')?.checked;
 			const after = ($('#cc-after')?.value || 'Revenue').trim() || 'Revenue';
@@ -3203,11 +3668,36 @@ function togglePinnedColsFromCheckbox(silent = false) {
 		function clearForm() {
 			$('#cc-header').value = '';
 			$('#cc-id').value = '';
-			$('#cc-format').value = 'currency';
+
+			// Reseta para o primeiro operador (division)
+			const formatSel = $('#cc-format');
+			if (formatSel && formatSel.options.length > 0) {
+				formatSel.selectedIndex = 0;
+			}
+
+			// Reseta seletores de colunas
+			const col1Sel = $('#cc-col1');
+			const col2Sel = $('#cc-col2');
+			if (col1Sel && col1Sel.options.length > 0) {
+				col1Sel.selectedIndex = 0;
+			}
+			if (col2Sel && col2Sel.options.length > 0) {
+				col2Sel.selectedIndex = 0;
+			}
+
 			$('#cc-expression').value = '';
-			$('#cc-parts').value = '';
+			$('#cc-parts').value = '[]';
 			$('#cc-only-level0').checked = true;
 			$('#cc-after').value = 'Revenue';
+
+			// Reseta seletor de tipo/formato
+			const typeSel = $('#cc-type');
+			if (typeSel && typeSel.options.length > 0) {
+				typeSel.value = 'currency';
+			}
+
+			// Atualiza a expressão com base nos valores resetados
+			updateExpressionFromSelects();
 		}
 		function renderList() {
 			if (!list) return;
@@ -3248,7 +3738,7 @@ function togglePinnedColsFromCheckbox(silent = false) {
 					// joga pro form
 					$('#cc-header').value = c.headerName || '';
 					$('#cc-id').value = c.id || '';
-					$('#cc-format').value = c.format || 'currency';
+					$('#cc-type').value = c.format || 'currency';
 					$('#cc-expression').value = c.expression || '';
 					$('#cc-parts').value = (c.parts && JSON.stringify(c.parts)) || '';
 					$('#cc-only-level0').checked = !!c.onlyLevel0;
@@ -3276,11 +3766,11 @@ function togglePinnedColsFromCheckbox(silent = false) {
 		saveBtn?.addEventListener('click', (e) => {
 			e.preventDefault();
 			const cfg = readForm();
+			if (!cfg) return; // Erro já tratado no readForm
 			if (!cfg.id || !cfg.expression) {
 				showToast('ID e Expression são obrigatórios', 'danger');
 				return;
 			}
-			if (cfg.parts === null) return; // JSON inválido tratado acima
 			try {
 				const ok = globalThis.LionCalcColumns?.add?.(cfg);
 				if (ok) {
@@ -3300,6 +3790,7 @@ function togglePinnedColsFromCheckbox(silent = false) {
 
 		reloadBtn?.addEventListener('click', (e) => {
 			e.preventDefault();
+			populateColumnSelects();
 			renderList();
 		});
 
@@ -3318,7 +3809,14 @@ function togglePinnedColsFromCheckbox(silent = false) {
 			const t = ev.target;
 			if (!(t instanceof Element)) return;
 			const toggle = t.closest('[data-kt-modal-toggle="#calcColsModal"]');
-			if (toggle) setTimeout(renderList, 50);
+			if (toggle) {
+				setTimeout(() => {
+					clearForm();
+					populateExpressionSelect();
+					populateColumnSelects();
+					renderList();
+				}, 50);
+			}
 		});
 
 		// Se quiser abrir via atalho:
@@ -3340,8 +3838,16 @@ function togglePinnedColsFromCheckbox(silent = false) {
 			state = api.getState();
 		} catch {}
 		if (!state) return showToast("Couldn't capture grid state", 'danger');
+		const calcColumns = globalThis.LionCalcColumns?.exportForPreset?.() || [];
+
 		const bag = readPresets();
-		bag[name] = { v: PRESET_VERSION, name, createdAt: Date.now(), grid: state };
+		bag[name] = {
+			v: PRESET_VERSION,
+			name,
+			createdAt: Date.now(),
+			grid: state,
+			calcColumns: calcColumns,
+		};
 		writePresets(bag);
 		refreshPresetUserSelect();
 		const sel = byId('presetUserSelect');
@@ -3354,6 +3860,14 @@ function togglePinnedColsFromCheckbox(silent = false) {
 		const bag = readPresets();
 		const p = bag[name];
 		if (!p?.grid) return showToast('Preset not found', 'warning');
+		// Limpa colunas calculadas antes de aplicar preset
+		globalThis.LionCalcColumns?.clear?.();
+
+		// Restaura colunas calculadas do preset (se houver)
+		if (Array.isArray(p.calcColumns) && p.calcColumns.length > 0) {
+			globalThis.LionCalcColumns?.importFromPreset?.(p.calcColumns);
+		}
+
 		setState(p.grid, ['pagination', 'scroll', 'rowSelection', 'focusedCell']);
 		localStorage.setItem(LS_KEY_ACTIVE_PRESET, name);
 		refreshPresetUserSelect();
@@ -3381,7 +3895,9 @@ function togglePinnedColsFromCheckbox(silent = false) {
 		const bag = readPresets();
 		const p = bag[name];
 		if (!p) return showToast('Preset not found', 'warning');
-		const blob = new Blob([JSON.stringify(p, null, 2)], { type: 'application/json;charset=utf-8' });
+		const blob = new Blob([JSON.stringify(p, null, 2)], {
+			type: 'application/json;charset=utf-8',
+		});
 		const url = URL.createObjectURL(blob);
 		const a = document.createElement('a');
 		a.href = url;
@@ -3503,6 +4019,25 @@ function togglePinnedColsFromCheckbox(silent = false) {
 			if (p?.grid) {
 				setState(p.grid, ['pagination', 'scroll', 'rowSelection', 'focusedCell']);
 				console.log(`[Preset] Auto-aplicado: "${activePreset}"`);
+			}
+		} else {
+			// No preset active - apply complete initialization like resetLayout
+			const api = globalThis.LionGrid?.api;
+			if (api) {
+				try {
+					// Apply complete grid initialization (same as resetLayout but without clearing storage)
+					api.setState({}, []);
+					api.resetColumnState?.();
+					api.setFilterModel?.(null);
+					api.setSortModel?.([]);
+					// Apply pinned columns
+					setTimeout(() => {
+						togglePinnedColsFromCheckbox(true);
+					}, 50);
+					console.log('[Preset] Complete initialization applied - no active preset');
+				} catch (e) {
+					console.warn('[Preset] Failed to apply complete initialization:', e);
+				}
 			}
 		}
 	});
@@ -3790,7 +4325,11 @@ function makeGrid() {
 			gridOptions.api?.resetRowHeights();
 		},
 		animateRows: true,
-		sideBar: { toolPanels: ['columns', 'filters'], defaultToolPanel: null, position: 'right' },
+		sideBar: {
+			toolPanels: ['columns', 'filters'],
+			defaultToolPanel: null,
+			position: 'right',
+		},
 		theme: createAgTheme(),
 
 		getContextMenuItems: (params) => {
@@ -3877,7 +4416,10 @@ function makeGrid() {
 					display =
 						n == null
 							? ''
-							: new Intl.NumberFormat(locale, { style: 'currency', currency }).format(n);
+							: new Intl.NumberFormat(locale, {
+									style: 'currency',
+									currency,
+							  }).format(n);
 				} else if (
 					['impressions', 'clicks', 'visitors', 'conversions', 'real_conversions'].includes(
 						field
@@ -3894,7 +4436,9 @@ function makeGrid() {
 		},
 
 		onGridReady(params) {
-			applySavedStateIfAny(params.api);
+			// Don't restore state on initial load to prevent grid loading issues
+			// State will be restored via presets or manual reset if needed
+			console.log('[GridReady] Grid initialized successfully');
 
 			const dataSource = {
 				getRows: async (req) => {
@@ -3923,7 +4467,9 @@ function makeGrid() {
 								});
 								if (!res.ok) {
 									// Fallback GET
-									res = await fetch(ENDPOINTS.SSRM, { credentials: 'same-origin' });
+									res = await fetch(ENDPOINTS.SSRM, {
+										credentials: 'same-origin',
+									});
 								}
 								const data = await res.json().catch(() => ({ rows: [] }));
 								const rowsRaw = Array.isArray(data.rows) ? data.rows : [];
@@ -3945,7 +4491,10 @@ function makeGrid() {
 							const totals = computeClientTotals(ordered);
 							const currency = getAppCurrency();
 							const locale = currency === 'USD' ? 'en-US' : 'pt-BR';
-							const nfCur = new Intl.NumberFormat(locale, { style: 'currency', currency });
+							const nfCur = new Intl.NumberFormat(locale, {
+								style: 'currency',
+								currency,
+							});
 
 							const pinnedTotal = {
 								id: '__pinned_total__',
@@ -4033,7 +4582,10 @@ function makeGrid() {
 							// NEW — garante spinner mínimo
 							await withMinSpinner(t0, DRILL_MIN_SPINNER_MS);
 
-							req.success({ rowData: rows, rowCount: data.lastRow ?? rows.length });
+							req.success({
+								rowData: rows,
+								rowCount: data.lastRow ?? rows.length,
+							});
 
 							// NEW — desliga loading do pai
 							setParentRowLoading(apiTarget, parentId, false);
@@ -4068,7 +4620,10 @@ function makeGrid() {
 							// NEW — garante spinner mínimo
 							await withMinSpinner(t0, DRILL_MIN_SPINNER_MS);
 
-							req.success({ rowData: rows, rowCount: data.lastRow ?? rows.length });
+							req.success({
+								rowData: rows,
+								rowCount: data.lastRow ?? rows.length,
+							});
 
 							// NEW — desliga loading do pai
 							setParentRowLoading(apiTarget, parentId, false);
@@ -4113,6 +4668,11 @@ function makeGrid() {
 		try {
 			sessionStorage.removeItem(GRID_STATE_KEY);
 			api.setState({}, []);
+			// Force grid refresh after reset
+			setTimeout(() => {
+				api.sizeColumnsToFit();
+				api.resetRowHeights();
+			}, 50);
 			showToast('Layout Reset', 'info');
 		} catch {}
 	};
@@ -4121,11 +4681,6 @@ function makeGrid() {
 		LionCompositeColumns.activate(['revenue_stack', 'profit_stack']);
 	} catch (e) {
 		console.warn(e);
-	}
-	try {
-		LionCalcColumns.activateAll(); // aplica colunas calculadas salvas
-	} catch (e) {
-		console.warn('[CalcCols] activateAll failed', e);
 	}
 
 	return { api, gridDiv };

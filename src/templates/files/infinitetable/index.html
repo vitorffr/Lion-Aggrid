@@ -1,249 +1,374 @@
 <link
-  rel="stylesheet"
-  type="text/css"
-  href="https://cdn.jsdelivr.net/npm/toastify-js/src/toastify.min.css"
+    rel="stylesheet"
+    type="text/css"
+    href="https://cdn.jsdelivr.net/npm/toastify-js/src/toastify.min.css"
 />
 
 <div id="kv-page-root" class="kt-container-fluid py-6">
-  <!-- Separador superior -->
-  <div class="border-b border-border mb-4"></div>
+    <!-- Separador superior -->
+    <div class="border-b border-border mb-4"></div>
 
-  <!-- Header -->
-  <div class="flex flex-col gap-3">
-    <div class="flex items-center justify-between">
-      <div>
-        <h1 class="text-2xl font-semibold leading-tight">Lion Table</h1>
-        <p class="text-sm text-muted-foreground">
-          Infinite AG Grid table: drill-down, filters, and totals.
-        </p>
-      </div>
-<div class="flex items-center gap-3">
+    <!-- Header -->
+    <div class="flex flex-col gap-3">
+        <div class="flex items-center justify-between">
+            <div>
+                <h1 class="text-2xl font-semibold leading-tight">Lion Table</h1>
+                <p class="text-sm text-muted-foreground">
+                    Infinite AG Grid table: drill-down, filters, and totals.
+                </p>
+            </div>
+            <div class="flex items-center gap-3">
+                <!-- Meus presets -->
+                <select
+                    id="presetUserSelect"
+                    class="kt-select min-w-[180px]"
+                    title="Meus presets"
+                >
+                    <option value="">User Presets</option>
+                </select>
+                <button
+                    id="btnSaveAsPreset"
+                    class="kt-btn kt-btn-sm"
+                    title="Add new preset"
+                >
+                    <i
+                        class="ki-filled ki-abstract-10 text-base"
+                        aria-hidden="true"
+                    ></i>
+                    <span class="sr-only">Save preset</span>
+                </button>
 
-  <!-- Meus presets -->
-  <select id="presetUserSelect" class="kt-select min-w-[180px]" title="Meus presets">
-    <option value="">User Presets</option>
+                <button
+                    id="btnDeletePreset"
+                    class="kt-btn kt-btn-sm"
+                    title="Delete actual preset"
+                >
+                    <i
+                        class="ki-filled ki-trash text-base"
+                        aria-hidden="true"
+                    ></i>
+                    <span class="sr-only">Delete preset</span>
+                </button>
+
+                <button
+                    id="btnDownloadPreset"
+                    class="kt-btn kt-btn-sm"
+                    title="Download preset in JSON format"
+                >
+                    Download
+                    <i
+                        class="ki-filled ki-cloud-download text-base"
+                        aria-hidden="true"
+                    ></i>
+                </button>
+
+                <button
+                    id="btnUploadPreset"
+                    class="kt-btn kt-btn-sm"
+                    title="Upload preset in JSON format"
+                >
+                    Upload
+                    <i
+                        class="ki-filled ki-cloud-add text-base"
+                        aria-hidden="true"
+                    ></i>
+                </button>
+
+                <input
+                    id="presetFileInput"
+                    type="file"
+                    accept="application/json"
+                    class="hidden"
+                    aria-hidden="true"
+                />
+
+                <span class="mx-2 opacity-50 select-none">|</span>
+                <!-- State (sessionStorage) -->
+
+                <button
+                    id="btnResetLayout"
+                    class="kt-btn kt-btn-sm"
+                    title="Reset to Default"
+                >
+                    Reset
+                </button>
+                <button
+                    id="btnCalcCols"
+                    class="kt-btn kt-btn-sm"
+                    title="Calculated Columns"
+                    data-kt-modal-toggle="#calcColsModal"
+                >
+                    Calc Cols
+                    <i
+                        class="ki-filled ki-calculator text-base"
+                        aria-hidden="true"
+                    ></i>
+                </button>
+
+                <span class="mx-2 opacity-50 select-none">|</span>
+                <div class="kt-input">
+                    <i class="ki-filled ki-magnifier"></i>
+                    <input
+                        id="quickFilter"
+                        placeholder="Filter All"
+                        type="text"
+                        aria-label="Filter All"
+                    />
+                    <span class="kt-badge kt-badge-outline -me-1.5">⌘ K</span>
+                </div>
+
+                <label
+                    class="inline-flex items-center gap-2 select-none"
+                    title="Toggle column sizing mode"
+                >
+                    <input
+                        id="colSizeModeToggle"
+                        type="checkbox"
+                        class="kt-checkbox"
+                    />
+                    <span class="text whitespace-nowrap">Auto size</span>
+                </label>
+
+                <label
+                    class="inline-flex items-center gap-2 select-none"
+                    title="Pin/Unpin Columns"
+                >
+                    <input id="pinToggle" type="checkbox" class="kt-checkbox" />
+                    <span class="text">Pinned</span>
+                </label>
+            </div>
+        </div>
+        <!-- Separador fino -->
+        <div class="border-b border-border"></div>
+    </div>
+    <!-- Grid -->
+    <div
+        id="lionGrid"
+        class="ag-theme-quartz w-full rounded-lg border border-border mt-4 overflow-hidden"
+        style="height: 73vh"
+    ></div>
+
+    <!-- Modal: Calculated Columns -->
+    <div
+        class="kt-modal"
+        id="calcColsModal"
+        data-kt-modal="true"
+        aria-hidden="true"
+        tabindex="-1"
+    >
+        <div class="kt-modal-content max-w-[800px]">
+            <div class="kt-modal-header">
+                <h3 class="kt-modal-title">Calculated Columns</h3>
+                <button
+                    type="button"
+                    class="kt-modal-close"
+                    aria-label="Close"
+                    data-kt-modal-dismiss="#calcColsModal"
+                >
+                    <i class="ki-filled ki-cross" aria-hidden="true"></i>
+                </button>
+            </div>
+
+            <div class="kt-modal-body">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <!-- LEFT: form -->
+                    <div class="space-y-4">
+                        <div class="text-sm font-medium opacity-70">
+                            Add / Edit
+                        </div>
+
+                        <label class="kt-input">
+                            <span class="text-sm">Nome</span>
+                            <input
+                                id="cc-header"
+                                type="text"
+                                placeholder="EPC (Total)"
+                            />
+                        </label>
+
+                        <label class="kt-input">
+                            <span class="text-sm">ID</span>
+                            <input
+                                id="cc-id"
+                                type="text"
+                                placeholder="epc_total"
+                            />
+                        </label>
+
+                        <!-- Format -->
+                        <select
+                            id="cc-format"
+                            class="kt-select"
+                            data-kt-select="true"
+                            data-kt-select-placeholder="Expression"
+                            data-kt-select-config='{
+			"optionsClass": "kt-scrollable overflow-auto max-h-[250px]"
+		}'
+                        >
+                            <!-- opções entram via JS -->
+                        </select>
+
+          <div class="flex flex-nowrap items-center gap-2 overflow-x-auto">
+  <!-- Col 1 (KTUI) -->
+  <select
+    id="cc-col1"
+    class="kt-select whitespace-nowrap block w-[180px] flex-none overflow-hidden text-ellipsis whitespace-nowrap"
+    data-kt-select="true"
+    data-kt-select-placeholder="Col 1"
+    data-kt-select-config='{
+      "optionsClass": "kt-scrollable overflow-auto max-h-[250px]"
+    }'
+  >
+    <!-- opções entram via JS -->
   </select>
-<button id="btnSaveAsPreset"   class="kt-btn kt-btn-sm" title="Add new preset">
-  <i class="ki-filled ki-abstract-10 text-base" aria-hidden="true"></i>
-  <span class="sr-only">Save preset</span>
-</button>
 
-<button id="btnDeletePreset"   class="kt-btn kt-btn-sm" title="Delete actual preset">
-  <i class="ki-filled ki-trash text-base" aria-hidden="true"></i>
-  <span class="sr-only">Delete preset</span>
-</button>
+  <!-- Col 2 (KTUI) -->
+  <select
+    id="cc-col2"
+    class="kt-select whitespace-nowrap block w-[180px] flex-none overflow-hidden text-ellipsis whitespace-nowrap"
+    data-kt-select="true"
+    data-kt-select-placeholder="Col 2"
+    data-kt-select-config='{
+      "optionsClass": "kt-scrollable overflow-auto max-h-[250px]"
+    }'
+  >
+    <!-- opções entram via JS -->
+  </select>
 
-<button id="btnDownloadPreset" class="kt-btn kt-btn-sm" title="Download preset in JSON format">
-  Download
-  <i class="ki-filled ki-cloud-download text-base" aria-hidden="true"></i>
-</button>
-
-<button id="btnUploadPreset"   class="kt-btn kt-btn-sm" title="Upload preset in JSON format">
-  Upload
-  <i class="ki-filled ki-cloud-add text-base" aria-hidden="true"></i>
-</button>
-
-  <input id="presetFileInput" type="file" accept="application/json"
-         class="hidden" aria-hidden="true" />
-
-  <span class="mx-2 opacity-50 select-none">|</span>
-  <!-- State (sessionStorage) -->
-
-  <button id="btnResetLayout" class="kt-btn kt-btn-sm" title="Reset to Default">Reset</button>
-<button id="btnCalcCols" class="kt-btn kt-btn-sm" title="Calculated Columns" data-kt-modal-toggle="#calcColsModal">
-  Calc Cols
-  <i class="ki-filled ki-calculator text-base" aria-hidden="true"></i>
-</button>
-
-  <span class="mx-2 opacity-50 select-none">|</span>
-<div class="kt-input">
-          <i class="ki-filled ki-magnifier"></i>
-          <input
-            id="quickFilter"
-            placeholder="Filter All"
-            type="text"
-            aria-label="Filter All"
-          />
-          <span class="kt-badge kt-badge-outline -me-1.5">⌘ K</span>
-        </div>
-
-  <label class="inline-flex items-center gap-2 select-none" title="Toggle column sizing mode">
-    <input id="colSizeModeToggle" type="checkbox" class="kt-checkbox" />
-  <span class="text whitespace-nowrap">Auto size</span>
-  </label>
-
-        <label class="inline-flex items-center gap-2 select-none" title="Pin/Unpin Columns">
-        <input id="pinToggle" type="checkbox" class="kt-checkbox" />
-        <span class="text">Pinned</span>
-      </label>
-      
-    </div>
-    </div>
-    <!-- Separador fino -->
-    <div class="border-b border-border"></div>
-  </div>
-  <!-- Grid -->
-  <div
-    id="lionGrid"
-    class="ag-theme-quartz w-full rounded-lg border border-border mt-4 overflow-hidden"
-    style="height: 73vh"
-  ></div>
-
-<!-- Modal: Calculated Columns -->
-<div class="kt-modal kt-modal-center" id="calcColsModal" data-kt-modal="true" aria-hidden="true" tabindex="-1">
-  <div class="kt-modal-content max-w-[800px] top-[8%]">
-    <div class="kt-modal-header">
-      <h3 class="kt-modal-title">Calculated Columns</h3>
-      <button type="button" class="kt-modal-close" aria-label="Close" data-kt-modal-dismiss="#calcColsModal">
-        <i class="ki-filled ki-cross" aria-hidden="true"></i>
-      </button>
-    </div>
-
-    <div class="kt-modal-body">
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <!-- LEFT: form -->
-        <div class="space-y-4">
-          <div class="text-sm font-medium opacity-70">Add / Edit</div>
-
-          <label class="kt-input">
-            <span class="text-sm">Nome</span>
-            <input id="cc-header" type="text" placeholder="EPC (Total)" />
-          </label>
-
-          <label class="kt-input">
-            <span class="text-sm">ID</span>
-            <input id="cc-id" type="text" placeholder="epc_total" />
-          </label>
-
-          <!-- JSON agora alinhado (mesmo componente dos demais) -->
-       
-
-           <select
-                id="cc-format"
-                class="kt-select"
-                data-kt-select="true"
-                data-kt-select-placeholder="Expression"
-                data-kt-select-config='{
-                  "dropdownContainer": "body",
-                  "dropdownStrategy": "fixed"
-                }'
-              >
-                <option value="currency">currency</option>
-                <option value="int">int</option>
-                <option value="raw">raw</option>
-              </select>   
-
- 
-
-          <div class="flex items-center gap-2">
-              <select
-                id="cc-format"
-                class="kt-select"
-                data-kt-select="true"
-                data-kt-select-placeholder="Col 1"
-                data-kt-select-config='{
-                  "dropdownContainer": "body",
-                  "dropdownStrategy": "fixed"
-                }'
-              >
-                <option value="currency">currency</option>
-                <option value="int">int</option>
-                <option value="raw">raw</option>
-              </select>            
-
-               <select
-                id="cc-format"
-                class="kt-select"
-                data-kt-select="true"
-                data-kt-select-placeholder="Col 2"
-                data-kt-select-config='{
-                  "dropdownContainer": "body",
-                  "dropdownStrategy": "fixed"
-                }'
-              >
-                <option value="currency">currency</option>
-                <option value="int">int</option>
-                <option value="raw">raw</option>
-              </select>
-
-              <select
-                id="cc-format"
-                class="kt-select"
-                data-kt-select="true"
-                data-kt-select-placeholder="Typo"
-                data-kt-select-config='{
-                  "dropdownContainer": "body",
-                  "dropdownStrategy": "fixed"
-                }'
-              >
-                <option value="currency">currency</option>
-                <option value="int">int</option>
-                <option value="raw">raw</option>
-              </select>
-          </div>
-
-          <label class="kt-input">
-            <span class="text-sm opacity-80 whitespace-nowrap">Custom Expression</span>
-            <input id="cc-expression" type="text" placeholder="cc_numberOr0(revenue) / cc_numberOr0(clicks)" />
-          </label>
-
-
-            <label class="kt-input">
-            <span class="text-sm opacity-80 whitespace-nowrap">Custom Json</span>
-            <input
-              id="cc-parts"
-              type="text"
-              placeholder='[{"label":"EPC FB","expr":"cc_numberOr0(fb_revenue)/cc_numberOr0(clicks)"}]'
-            />
-          </label>
-
-          <div class="flex items-center gap-3">
-            <label class="inline-flex items-center gap-2">
-              <input id="cc-only-level0" type="checkbox" class="kt-checkbox" checked />
-              <span class="text-sm">Only root</span>
-            </label>
-            <label class="inline-flex items-center gap-2">
-              <input  id="calc-mode-label" type="checkbox" class="kt-checkbox" checked />
-              <span class="text-sm">Stacked</span>
-            </label>
-            <label class="kt-input flex-1">
-              <span class="text-sm opacity-80 whitespace-nowrap">Insert after</span>
-              <input id="cc-after" type="text" placeholder="Revenue" value="Revenue" />
-            </label>
-          </div>
-
-          <div class="flex items-center gap-2">
-            <button id="cc-save" class="kt-btn kt-btn-primary">Save</button>
-            <button id="cc-reset-form" class="kt-btn kt-btn-light">Clear</button>
-          </div>
-        </div>
-
-        <!-- RIGHT -->
-        <div class="space-y-3">
-          <div class="flex items-center justify-between">
-            <div class="text-sm font-medium opacity-70">Saved Columns</div>
-            <button id="cc-reload" class="kt-btn kt-btn-xs">Reload</button>
-          </div>
-
-          <div id="cc-empty" class="text-sm opacity-60 hidden">No calculated columns saved.</div>
-
-          <div class="kt-scrollable rounded-md border border-border max-h-[360px]">
-            <ul id="cc-list" class="divide-y divide-border">
-              <!-- linhas via JS -->
-            </ul>
-          </div>
-
-          <div class="flex items-center gap-2 pt-2">
-            <button id="cc-activate-all" class="kt-btn kt-btn-secondary kt-btn-sm">Activate All</button>
-            <button id="cc-close" class="kt-btn kt-btn-light kt-btn-sm" data-kt-modal-dismiss="#calcColsModal">Close</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
+  <!-- Type / Op -->
+  <select
+    id="cc-type"
+    class="kt-select block w-[110px] flex-none overflow-hidden text-ellipsis whitespace-nowrap"
+    data-kt-select="true"
+    data-kt-select-placeholder="Format"
+    data-kt-select-config='{
+      "optionsClass": "kt-scrollable overflow-auto max-h-[250px]"
+    }'
+  >
+    <option value="currency">currency</option>
+    <option value="percent">percent</option>
+    <option value="int">int</option>
+    <option value="raw">raw</option>
+  </select>
 </div>
 
 
-  <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/toastify-js"></script>
-  <script type="module" src="/public/js/infinitetable.js"></script>
+                        <label class="kt-input">
+                            <span class="text-sm opacity-80 whitespace-nowrap"
+                                >Custom Expression</span
+                            >
+                            <input
+                                id="cc-expression"
+                                type="text"
+                                placeholder="cc_numberOr0(revenue) / cc_numberOr0(clicks)"
+                            />
+                        </label>
+
+                        <label class="kt-input">
+                            <span class="text-sm opacity-80 whitespace-nowrap"
+                                >Stacked Parts (auto-generated)</span
+                            >
+                            <input
+                                id="cc-parts"
+                                type="text"
+                                placeholder='[{"label":"EPC FB","expr":"cc_numberOr0(fb_revenue)/cc_numberOr0(clicks)"}]'
+                            />
+                        
+                        </label>
+
+                        <div class="flex items-center gap-3">
+                            <label class="inline-flex items-center gap-2">
+                                <input
+                                    id="cc-only-level0"
+                                    type="checkbox"
+                                    class="kt-checkbox"
+                                    checked
+                                />
+                                <span class="text-sm">Only root</span>
+                            </label>
+                            <label class="inline-flex items-center gap-2">
+                                <input
+                                    id="cc-stacked"
+                                    type="checkbox"
+                                    class="kt-checkbox"
+                                    checked
+                                />
+                                <span class="text-sm">Stacked</span>
+                            </label>
+                            <label class="kt-input flex-1">
+                                <span
+                                    class="text-sm opacity-80 whitespace-nowrap"
+                                    >Insert after</span
+                                >
+                                <input
+                                    id="cc-after"
+                                    type="text"
+                                    placeholder="Revenue"
+                                    value="Revenue"
+                                />
+                            </label>
+                        </div>
+
+                        <div class="flex items-center gap-2">
+                            <button id="cc-save" class="kt-btn kt-btn-primary">
+                                Save
+                            </button>
+                            <button
+                                id="cc-reset-form"
+                                class="kt-btn kt-btn-light"
+                            >
+                                Clear
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- RIGHT -->
+                    <div class="space-y-3">
+                        <div class="flex items-center justify-between">
+                            <div class="text-sm font-medium opacity-70">
+                                Saved Columns
+                            </div>
+                            <button id="cc-reload" class="kt-btn kt-btn-xs">
+                                Reload
+                            </button>
+                        </div>
+
+                        <div id="cc-empty" class="text-sm opacity-60 hidden">
+                            No calculated columns saved.
+                        </div>
+
+                        <div
+                            class="kt-scrollable rounded-md border border-border max-h-[360px]"
+                        >
+                            <ul id="cc-list" class="divide-y divide-border">
+                                <!-- linhas via JS -->
+                            </ul>
+                        </div>
+
+                        <div class="flex items-center gap-2 pt-2">
+                            <button
+                                id="cc-activate-all"
+                                class="kt-btn kt-btn-secondary kt-btn-sm"
+                            >
+                                Activate All
+                            </button>
+                            <button
+                                id="cc-close"
+                                class="kt-btn kt-btn-light kt-btn-sm"
+                                data-kt-modal-dismiss="#calcColsModal"
+                            >
+                                Close
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script
+        type="text/javascript"
+        src="https://cdn.jsdelivr.net/npm/toastify-js"
+    ></script>
+    <script type="module" src="/public/js/infinitetable.js"></script>
 </div>
