@@ -276,38 +276,48 @@
                         
                         </label>
 
-                        <div class="flex items-center gap-3">
-                            <label class="inline-flex items-center gap-2">
-                                <input
-                                    id="cc-only-level0"
-                                    type="checkbox"
-                                    class="kt-checkbox"
-                                    checked
-                                />
-                                <span class="text-sm">Only root</span>
-                            </label>
-                            <label class="inline-flex items-center gap-2">
-                                <input
-                                    id="cc-stacked"
-                                    type="checkbox"
-                                    class="kt-checkbox"
-                                    checked
-                                />
-                                <span class="text-sm">Stacked</span>
-                            </label>
-                            <label class="kt-input flex-1">
-                                <span
-                                    class="text-sm opacity-80 whitespace-nowrap"
-                                    >Insert after</span
-                                >
-                                <input
-                                    id="cc-after"
-                                    type="text"
-                                    placeholder="Revenue"
-                                    value="Revenue"
-                                />
-                            </label>
-                        </div>
+                      <div class="flex items-center gap-3">
+  <label class="inline-flex items-center gap-2">
+    <input
+      id="cc-only-level0"
+      type="checkbox"
+      class="kt-checkbox"
+      checked
+    />
+    <span class="text-sm">Only root</span>
+  </label>
+
+  <!-- <label class="inline-flex items-center gap-2">
+    <input
+      id="cc-stacked"
+      type="checkbox"
+      class="kt-checkbox"
+      checked
+    />
+    <span class="text-sm">Stacked</span>
+  </label> -->
+
+  <!-- NOVO: Mini -->
+  <label class="inline-flex items-center gap-2">
+    <input
+      id="cc-mini"
+      type="checkbox"
+      class="kt-checkbox"
+    />
+    <span class="text-sm">Mini (labels + Total)</span>
+  </label>
+
+  <label class="kt-input flex-1">
+    <span class="text-sm opacity-80 whitespace-nowrap">Insert after</span>
+    <input
+      id="cc-after"
+      type="text"
+      placeholder="Revenue"
+      value="Revenue"
+    />
+  </label>
+</div>
+
 
                         <div class="flex items-center gap-2">
                             <button id="cc-save" class="kt-btn kt-btn-primary">

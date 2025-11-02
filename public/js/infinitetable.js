@@ -553,6 +553,7 @@ function numBR(x) {
 	const n2 = parseCurrencyFlexible(x, getAppCurrency());
 	return Number.isFinite(n2) ? n2 : null;
 }
+
 function sumNum(arr, pick) {
 	let acc = 0;
 	for (let i = 0; i < arr.length; i++) {
@@ -561,9 +562,11 @@ function sumNum(arr, pick) {
 	}
 	return acc;
 }
+
 function safeDiv(num, den) {
 	return den > 0 ? num / den : 0;
 }
+
 function computeClientTotals(rows) {
 	const spent_sum = sumNum(rows, (r) => numBR(r.spent));
 	const fb_revenue_sum = sumNum(rows, (r) => numBR(r.fb_revenue));
@@ -1400,6 +1403,7 @@ StatusSliderRenderer.prototype.destroy = function () {
  *  }
  */
 function StackBelowRenderer() {}
+
 StackBelowRenderer.prototype.init = function (p) {
 	this.p = p;
 	this.eGui = document.createElement('span');
@@ -1409,7 +1413,13 @@ StackBelowRenderer.prototype.init = function (p) {
 	this.eGui.style.gap = '2px';
 
 	const lvl = p?.node?.level ?? -1;
-	const onlyLevel0 = !!p?.colDef?.cellRendererParams?.onlyLevel0;
+	const params = p?.colDef?.cellRendererParams || {};
+	const onlyLevel0 = !!params.onlyLevel0;
+	const showTop = params.showTop !== false; // default: true
+	const partsLabelOnly = !!params.partsLabelOnly; // default: false
+	const maxParts = Number(params.maxParts) || 0; // 0 = sem limite
+	const fmtKey = String(params.format || 'raw');
+
 	if (isPinnedOrTotal(p) || (onlyLevel0 && lvl !== 0)) {
 		const span = document.createElement('span');
 		span.textContent = stripHtml(p.value ?? '');
@@ -1417,37 +1427,47 @@ StackBelowRenderer.prototype.init = function (p) {
 		return;
 	}
 
-	const fmt = String(p?.colDef?.cellRendererParams?.format || 'raw');
 	const formatVal = (v) => {
 		if (v == null) return '';
-		if (fmt === 'currency') return cc_currencyFormat(Number(v));
-		if (fmt === 'int') return intFmt.format(Math.round(Number(v)));
+		if (fmtKey === 'currency') return cc_currencyFormat(Number(v));
+		if (fmtKey === 'int') return intFmt.format(Math.round(Number(v)));
+		if (fmtKey === 'percent') return cc_percentFormat(Number(v));
 		return String(v);
 	};
 
-	const topEl = document.createElement('span');
-	const topVal = p.valueFormatted != null ? p.valueFormatted : p.value;
-	topEl.textContent =
-		formatVal(typeof topVal === 'number' ? topVal : number(topVal)) || stripHtml(topVal ?? '');
-	this.eGui.appendChild(topEl);
+	// topo (opcional)
+	if (showTop) {
+		const topEl = document.createElement('span');
+		const topVal = p.valueFormatted != null ? p.valueFormatted : p.value;
+		const coerced = typeof topVal === 'number' ? topVal : number(topVal);
+		topEl.textContent = formatVal(Number.isFinite(coerced) ? coerced : topVal);
+		this.eGui.appendChild(topEl);
+	}
 
+	// partes
 	const partsFn = p?.colDef?.cellRendererParams?.getParts;
 	let parts = [];
 	try {
 		parts = typeof partsFn === 'function' ? partsFn(p) : [];
 	} catch {}
 	if (!Array.isArray(parts)) parts = [];
+	if (maxParts > 0) parts = parts.slice(0, maxParts);
 
 	parts.forEach((row) => {
 		const line = document.createElement('span');
 		line.style.fontSize = '11px';
-		line.style.opacity = '0.8';
+		line.style.opacity = '0.85';
+
 		const lab = String(row?.label ?? '').trim();
-		const val = Number.isFinite(row?.value) ? row.value : number(row?.value);
-		line.textContent = lab ? `${lab}: ${formatVal(val)}` : formatVal(val);
+		const valNum = Number.isFinite(row?.value) ? row.value : number(row?.value);
+
+		line.textContent = partsLabelOnly
+			? lab || '' // só label
+			: (lab ? `${lab}: ` : '') + formatVal(valNum); // label + valor
 		this.eGui.appendChild(line);
 	});
 };
+
 StackBelowRenderer.prototype.getGui = function () {
 	return this.eGui;
 };
@@ -1636,7 +1656,7 @@ function showKTModal({ title = 'Detalhes', content = '' } = {}) {
 	// Guarda última seleção do usuário para tentar preservar ao recarregar
 	let lastSelection = { col1: null, col2: null };
 
-	// Util: tenta descobrir api/columnApi a partir do seu setup
+	// Util: tenta descobrir api a partir do seu setup
 	function resolveGridApis() {
 		// 1) Padrão AG Grid (gridOptions globais)
 		if (globalThis.gridOptions?.api) {
@@ -1654,40 +1674,88 @@ function showKTModal({ title = 'Detalhes', content = '' } = {}) {
 		return { api: null };
 	}
 
-	// Extrai colunas "selecionáveis": apenas folhas com field e headerName visíveis/úteis
+	// Heurística: esta coluna é explicitamente "calculável"/numérica?
+	function _isCalculableByDef(def) {
+		if (!def) return false;
+
+		// Identificador explícito (preferencial)
+		if (def.calcEligible === true) return true;
+		if (def.calcType === 'numeric') return true;
+
+		// Sinais comuns do AG Grid / tipagem
+		if (def.valueType === 'number') return true;
+		if (def.cellDataType === 'number') return true;
+		if (def.type === 'numericColumn') return true;
+		if (def.filter === 'agNumberColumnFilter') return true;
+
+		// Se tiver um valueParser que converte para número, geralmente é numérica
+		if (typeof def.valueParser === 'function') return true;
+
+		return false;
+	}
+
+	// Extrai colunas "selecionáveis": só folhas com header/field úteis e calculáveis
 	function getSelectableColumns(api) {
 		if (!api) return [];
 
-		// Preferimos ordem visual atual (colunas exibidas)
+		// 1) Preferir as colunas atualmente exibidas (ordem visual)
+		let defs = [];
+		try {
+			const displayed = api.getAllDisplayedColumns?.() || [];
+			if (displayed.length) {
+				defs = displayed.map((gc) => gc.getColDef?.() || gc.colDef || null).filter(Boolean);
+			}
+		} catch (_) {}
 
-		// Fallback: se por algum motivo não houver displayed, pega defs completas
-		if (!items.length) {
+		// 2) Fallbacks para obter colDefs
+		if (!defs.length) {
 			const columnState = api.getColumnState?.() || [];
-			const defs =
-				columnState.map((s) => api.getColumn(s.colId)?.getColDef?.()).filter(Boolean) ||
-				api.getColumnDefs?.() ||
-				[];
-			items = (defs || [])
-				.flatMap(flattenColDefs)
-				.filter((d) => d && d.field && d.headerName)
-				.map((d) => ({ field: d.field, headerName: d.headerName }));
+			const viaState = columnState
+				.map((s) => api.getColumn?.(s.colId)?.getColDef?.())
+				.filter(Boolean);
+			if (viaState.length) {
+				defs = viaState;
+			} else {
+				const fromApi = api.getColumnDefs?.() || [];
+				defs = (fromApi || []).flatMap(flattenColDefs);
+			}
 		}
 
-		// Filtragens comuns no seu grid (ajuste se quiser):
-		const deny = new Set(['ag-Grid-AutoColumn', 'ag-Grid-RowGroup', '__autoGroup']); // colunas auto
-		items = items.filter(
-			(it) =>
-				it.field &&
-				!deny.has(it.field) &&
-				!String(it.field).startsWith('__') &&
-				!String(it.headerName).toLowerCase().includes('select') // evita coluna de seleção
-		);
+		// 3) Filtrar apenas folhas válidas
+		const deny = new Set(['ag-Grid-AutoColumn', 'ag-Grid-RowGroup', '__autoGroup']);
+		defs = defs.filter((def) => {
+			if (!def) return false;
+			const field = def.field || def.colId;
+			const header = def.headerName || field;
+			if (!field || !header) return false;
+			if (deny.has(field)) return false;
+			if (String(field).startsWith('__')) return false;
+			if (def.checkboxSelection) return false;
+			if (def.rowGroup || def.pivot) return false;
+			// Evitar colunas de seleção/ação
+			const h = String(header).toLowerCase();
+			if (h.includes('select') || h.includes('ação') || h.includes('action')) return false;
 
-		// Remove duplicados por field, preservando a primeira ocorrência (ordem visual)
+			return true;
+		});
+
+		// 4) Manter só as que são explicitamente calculáveis (identificador)
+		defs = defs.filter(_isCalculableByDef);
+
+		// 5) Mapear p/ {field, headerName} e deduplicar por field mantendo ordem
+		const mapped = defs.map((def) => ({
+			field: String(def.field || def.colId),
+			headerName: String(def.headerName || def.field || def.colId),
+		}));
+
 		const seen = new Set();
-		items = items.filter((it) => (seen.has(it.field) ? false : seen.add(it.field)));
-
-		return items;
+		const unique = [];
+		for (const it of mapped) {
+			if (seen.has(it.field)) continue;
+			seen.add(it.field);
+			unique.push(it);
+		}
+		return unique;
 	}
 
 	// Achata colDefs aninhados (caso você tenha groups)
@@ -1726,7 +1794,6 @@ function showKTModal({ title = 'Detalhes', content = '' } = {}) {
 			'Select';
 
 		// Se existir um valor válido para manter, não deixamos o placeholder como selected/disabled.
-		// Assim o KT mostra corretamente o rótulo do item escolhido.
 		const hasDesired = desired && items.some((it) => it.field === desired);
 		const ph = new Option(placeholderText, '');
 		if (!hasDesired) {
@@ -1749,11 +1816,9 @@ function showKTModal({ title = 'Detalhes', content = '' } = {}) {
 
 		// 6) Re-hidratar/refresh do KT Select para refletir placeholder/seleção
 		try {
-			// alguns bundles expõem um "refresh" e/ou reinit; cobrimos ambos
 			selectEl.dispatchEvent(new CustomEvent('kt:select:refresh', { bubbles: true }));
 			if (window.KT?.select?.refresh) window.KT.select.refresh(selectEl);
 			if (window.KT?.reinitSelect) window.KT.reinitSelect(selectEl);
-			// Aciona 'change' para forçar o label do gatilho atualizar no KT
 			selectEl.dispatchEvent(new Event('change', { bubbles: true }));
 		} catch (_) {}
 	}
@@ -1764,7 +1829,6 @@ function showKTModal({ title = 'Detalhes', content = '' } = {}) {
 		if (!$col1 || !$col2) return;
 
 		if (!api) {
-			console.warn('[populateColSelects] Grid API não disponível ainda');
 			return;
 		}
 
@@ -1780,7 +1844,7 @@ function showKTModal({ title = 'Detalhes', content = '' } = {}) {
 		fillSelect($col2, items, lastSelection.col2);
 	}
 
-	// Util: escape básico para option text
+	// Util: escape básico para option text (mantido caso precise)
 	function escapeHtml(s) {
 		return String(s)
 			.replaceAll('&', '&amp;')
@@ -1800,19 +1864,18 @@ function showKTModal({ title = 'Detalhes', content = '' } = {}) {
 				},
 				{ passive: true }
 			);
+			document.getElementById('cc-save')?.setAttribute('data-kt-modal-dismiss', '#calcColsModal');
 		}
 
 		// Quando o modal abrir (via data-kt-modal), repopula para refletir o estado atual da grid
 		const modal = document.getElementById('calcColsModal');
 		if (modal) {
-			// Alguns modais disparam eventos custom — cobrimos algumas possibilidades
-			modal.addEventListener('kt:modal:shown', populateColSelects, {
-				passive: true,
-			});
-			modal.addEventListener('shown.bs.modal', populateColSelects, {
-				passive: true,
-			}); // se usar Bootstrap events
-			// fallback: observe a mudança de aria-hidden -> false
+			// Eventos custom comuns
+			modal.addEventListener('kt:modal:shown', populateColSelects, { passive: true });
+			// Bootstrap (se estiver usando)
+			modal.addEventListener('shown.bs.modal', populateColSelects, { passive: true });
+
+			// Fallback: observar aria-hidden -> 'false'
 			const obs = new MutationObserver((muts) => {
 				for (const m of muts) {
 					if (m.type === 'attributes' && m.attributeName === 'aria-hidden') {
@@ -1829,12 +1892,10 @@ function showKTModal({ title = 'Detalhes', content = '' } = {}) {
 		populateSelects: populateColSelects,
 	};
 
-	// Inicializa na carga do DOM (vai funcionar mesmo antes do grid estar pronto;
-	// quando o modal abrir/ao clicar Reload, a população acontece com o estado atual)
+	// Inicializa na carga do DOM
 	if (document.readyState === 'loading') {
 		document.addEventListener('DOMContentLoaded', () => {
 			bindEventsOnce();
-			// Tenta uma primeira população (se grid já estiver pronto)
 			populateColSelects();
 		});
 	} else {
@@ -2009,7 +2070,6 @@ const LionCompositeColumns = (() => {
 const LionCalcColumns = (() => {
 	const LS_KEY = 'lion.aggrid.calcCols.v1';
 
-	/** Lê colunas persistidas */
 	function _read() {
 		try {
 			return JSON.parse(localStorage.getItem(LS_KEY) || '[]');
@@ -2017,31 +2077,53 @@ const LionCalcColumns = (() => {
 			return [];
 		}
 	}
-	/** Escreve colunas persistidas */
 	function _write(arr) {
 		localStorage.setItem(LS_KEY, JSON.stringify(Array.isArray(arr) ? arr : []));
 	}
-	/** Lista ids existentes no registro persistido */
-	function _ids() {
-		return _read().map((c) => String(c.id));
+
+	function _autoWrapFields(expr) {
+		if (!expr) return expr;
+		if (/\bnumber\s*\(/.test(expr)) return expr;
+		return expr.replace(/\b([a-zA-Z_]\w*)(?!\s*\()/g, 'number($1)');
 	}
-	/** Normaliza config básica */
+
+	function _compileExpr(expr) {
+		const src = String(expr || '').trim();
+		if (!src) return null;
+		const wrapped = _autoWrapFields(src);
+		return (row) => cc_evalExpression(wrapped, row);
+	}
+
 	function _norm(cfg) {
 		const id = String(cfg.id || '').trim();
 		const headerName = String(cfg.headerName || id || 'Calc').trim();
 		const expression = String(cfg.expression || '').trim();
-		const format = (cfg.format || 'currency').toLowerCase(); // 'currency' | 'int' | 'raw' | 'percent'
+
+		const format = (cfg.format || 'currency').toLowerCase();
 		const partsFormat = (
 			cfg.partsFormat || (format === 'percent' ? 'currency' : format)
 		).toLowerCase();
-		const onlyLevel0 = !!cfg.onlyLevel0;
+
+		const onlyLevel0 = cfg.onlyLevel0 ?? cfg.onlyRoot ?? true;
 		const after = cfg.after || 'Revenue';
+		const totalLabel = String(cfg.totalLabel ?? 'Total').trim();
+
+		// ÚNICA FLAG:
+		const mini = !!cfg.mini;
+
+		// Tudo deriva de mini:
+		const hideTop = mini; // esconde o número “grandão”
+		const includeTotalAsPart = mini; // injeta Total nas linhas pequenas
+		const partsLabelOnly = false; // linhas pequenas SEMPRE com número
+		const maxParts = 0;
+
 		const parts = Array.isArray(cfg.parts)
 			? cfg.parts.map((p) => ({
 					label: String(p.label || '').trim(),
 					expr: String(p.expr || '').trim(),
 			  }))
 			: [];
+
 		return {
 			id,
 			headerName,
@@ -2051,41 +2133,48 @@ const LionCalcColumns = (() => {
 			parts,
 			onlyLevel0,
 			after,
+			totalLabel,
+			mini,
+			hideTop,
+			includeTotalAsPart,
+			partsLabelOnly,
+			maxParts,
 		};
 	}
 
-	/** Envolve campos em number() automaticamente se necessário */
-	function _autoWrapFields(expr) {
-		if (!expr) return expr;
-		// Já tem number? Retorna como está
-		if (expr.includes('number')) return expr;
-
-		// Substitui campos isolados por number(campo)
-		// Captura palavras que começam com letra/_ e não são seguidas por (
-		return expr.replace(/\b([a-zA-Z_]\w*)(?!\s*\()/g, 'number($1)');
-	}
-
-	/** Compila uma expressão em função de valor (row) usando cc_evalExpression */
-	function _compileExpr(expr) {
-		const src = String(expr || '').trim();
-		if (!src) return null;
-		// Auto-wrap nos campos
-		const wrapped = _autoWrapFields(src);
-		return (row) => cc_evalExpression(wrapped, row);
+	function _fmtBy(fmt, n) {
+		if (!Number.isFinite(n)) return '—';
+		if (fmt === 'int') return intFmt.format(Math.round(n));
+		if (fmt === 'raw') return String(n);
+		if (fmt === 'percent') return cc_percentFormat(n);
+		return cc_currencyFormat(n);
 	}
 
 	function _buildColDef(cfg) {
-		const { id, headerName, expression, format, partsFormat, parts, onlyLevel0, after } = _norm(cfg);
+		const {
+			id,
+			headerName,
+			expression,
+			format,
+			partsFormat,
+			parts,
+			onlyLevel0,
+			after,
+			totalLabel,
+			mini,
+			hideTop,
+			includeTotalAsPart,
+			partsLabelOnly,
+			maxParts,
+		} = _norm(cfg);
 
 		const totalFn = _compileExpr(expression);
-		const partFns = parts.map((p) => ({
-			label: p.label,
-			fn: _compileExpr(p.expr),
-		}));
+		const partFns = parts.map((p) => ({ label: p.label, fn: _compileExpr(p.expr) }));
 
 		const valueFormatter = (p) => {
-			const v = typeof p.value === 'number' ? p.value : number(p.value);
-			if (!Number.isFinite(v)) return p.value ?? '';
+			const v0 = typeof p.value === 'number' ? p.value : number(p.value);
+			const v = Number.isFinite(v0) ? v0 : null;
+			if (v == null) return p.value ?? '';
 			if (format === 'int') return intFmt.format(Math.round(v));
 			if (format === 'raw') return String(v);
 			if (format === 'percent') return cc_percentFormat(v);
@@ -2094,21 +2183,11 @@ const LionCalcColumns = (() => {
 
 		const tooltipValueGetter = (p) => {
 			const row = p?.data || {};
-			const tot = totalFn && Number.isFinite(totalFn(row)) ? totalFn(row) : null;
-
-			const fmtBy = (fmt, n) => {
-				if (!Number.isFinite(n)) return '—';
-				if (fmt === 'int') return intFmt.format(Math.round(n));
-				if (fmt === 'raw') return String(n);
-				if (fmt === 'percent') return cc_percentFormat(n);
-				return cc_currencyFormat(n);
-			};
-
-			const lines = [`Total: ${fmtBy(format, tot)}`];
-			partFns.forEach(({ label, fn }) => {
-				const n = fn ? fn(row) : null;
-				lines.push(`${label || ''}: ${fmtBy(partsFormat, n)}`);
-			});
+			const tot = totalFn ? totalFn(row) : null;
+			const lines = [`${totalLabel}: ${_fmtBy(format, tot)}`];
+			for (const { label, fn } of partFns) {
+				lines.push(`${label || ''}: ${_fmtBy(partsFormat, fn ? fn(row) : null)}`);
+			}
 			return lines.join('\n');
 		};
 
@@ -2121,60 +2200,76 @@ const LionCalcColumns = (() => {
 			valueGetter: (p) => {
 				const row = p?.data || {};
 				const val = totalFn ? totalFn(row) : null;
-				return Number.isFinite(val) ? val : null; // evita Infinity/NaN
+				return Number.isFinite(val) ? val : null;
 			},
 			valueFormatter,
 			tooltipValueGetter,
 			cellRenderer: StackBelowRenderer,
 			cellRendererParams: {
 				onlyLevel0: !!onlyLevel0,
-				// para as "linhas" embaixo usamos o formato de partes
 				format:
 					partsFormat === 'int'
 						? 'int'
 						: partsFormat === 'raw'
 						? 'raw'
 						: partsFormat === 'percent'
-						? 'raw'
+						? 'percent'
 						: 'currency',
+
+				// chaves “de compatibilidade” para renderers diferentes:
+				showTop: !hideTop, // mini => false
+				partsLabelOnly: !!partsLabelOnly, // sempre false
+				showLabels: mini, // dica explícita pro renderer
+				forceShowLabels: mini, // belt & suspenders
+				maxParts: Number(maxParts) || 0,
+
 				getParts: (p) => {
 					const row = p?.data || {};
-					const result = partFns.map(({ label, fn }) => ({
-						label,
-						value: fn ? fn(row) : null,
-					}));
-					// Debug: log parts being generated
-					if (result.length > 0) {
-						console.log(`[CalcCol:${id}] Parts generated:`, result);
+					const list = [];
+
+					// Sempre calcular os valores para podermos montar `text`
+					const pushPart = (label, value, isTotal, fmt) => {
+						const formatted = Number.isFinite(value) ? _fmtBy(fmt, value) : '—';
+						// retornamos múltiplos campos para cobrir renderers diferentes
+						list.push({
+							label, // rótulo puro
+							name: label, // alias comum
+							value, // número “cru” (renderer pode usar)
+							text: `${label}: ${formatted}`, // fallback textual
+							labelWithValue: `${label}: ${formatted}`, // outro alias textual
+							isTotal: !!isTotal,
+						});
+					};
+
+					if (includeTotalAsPart) {
+						const tot = totalFn ? totalFn(row) : null;
+						pushPart(totalLabel, tot, true, format);
 					}
-					return result;
+					for (const { label, fn } of partFns) {
+						const v = fn ? fn(row) : null;
+						pushPart(label, v, false, partsFormat);
+					}
+					return list;
 				},
 			},
 			__after: after,
 		};
 	}
 
-	/** Registra no LionCompositeColumns e ativa imediatamente */
 	function _registerAndActivate(cfg) {
 		const colDef = _buildColDef(cfg);
 		if (!colDef) return false;
 
-		// registra com factory que devolve o mesmo colDef (preserva funções)
 		LionCompositeColumns.register(colDef.colId, () => colDef);
 
-		// Debug: log column definition
-		console.log(`[CalcCols] Registering column "${colDef.colId}":`, {
-			cellRenderer: colDef.cellRenderer?.name || colDef.cellRenderer,
-			hasParts: !!colDef.cellRendererParams?.getParts,
-			partsCount: cfg.parts?.length || 0,
+		console.log(`[CalcCols] Registering "${colDef.colId}":`, {
+			showTop: colDef.cellRendererParams?.showTop,
+			showLabels: colDef.cellRendererParams?.showLabels,
+			forceShowLabels: colDef.cellRendererParams?.forceShowLabels,
 			onlyLevel0: colDef.cellRendererParams?.onlyLevel0,
 		});
 
-		// ativa no grupo, inserindo após o "after"
 		try {
-			// hack: empurra para depois do 'after' ajustando internamente na activate()
-			// Como LionCompositeColumns.insere sempre "após 'Revenue'", vamos reusar
-			// mudando o header temporariamente, se quiser controlar posição fina
 			return LionCompositeColumns.activate([colDef.colId]) || true;
 		} catch (e) {
 			console.warn('[CalcCols] activate failed', e);
@@ -2182,49 +2277,33 @@ const LionCalcColumns = (() => {
 		}
 	}
 
-	/** Migra colunas antigas sem parts para incluir parts automáticas */
 	function _migrateLegacyColumn(cfg) {
-		// Se já tem parts, não precisa migrar
 		if (cfg.parts && cfg.parts.length > 0) return cfg;
-
-		// Tenta extrair campos da expressão para gerar parts automaticamente
-		// Regex para encontrar campos (palavras que não são funções)
-		const fieldMatches = cfg.expression.match(/\b([a-zA-Z_]\w*)(?!\s*\()/g);
+		const fieldMatches = (cfg.expression || '').match(/\b([a-zA-Z_]\w*)(?!\s*\()/g);
 		if (fieldMatches && fieldMatches.length > 0) {
-			// Remove duplicatas e funções conhecidas
-			const knownFunctions = ['number', 'cc_evalExpression', 'Math'];
-			const uniqueFields = [...new Set(fieldMatches)].filter((f) => !knownFunctions.includes(f));
-
-			// Gera parts automáticas com os campos encontrados
-			cfg.parts = uniqueFields.slice(0, 5).map((field) => ({
+			const known = ['number', 'cc_evalExpression', 'Math'];
+			const unique = [...new Set(fieldMatches)].filter((f) => !known.includes(f));
+			cfg.parts = unique.slice(0, 5).map((field) => ({
 				label: field
-					.replace(/number/gi, '')
 					.replace(/_/g, ' ')
 					.replace(/\b\w/g, (l) => l.toUpperCase())
 					.trim(),
 				expr: field,
 			}));
-
-			console.log(`[CalcCols] Migrated column "${cfg.id}" with auto-generated parts:`, cfg.parts);
+			console.log(`[CalcCols] Migrated "${cfg.id}" with auto-parts:`, cfg.parts);
 		}
-
 		return cfg;
 	}
 
-	/** API pública */
 	function add(config) {
 		let cfg = _norm(config);
-
-		// Migra colunas antigas
 		cfg = _migrateLegacyColumn(cfg);
 
 		if (!cfg.id || !cfg.expression) {
 			showToast('Config inválida (id/expressão obrigatórios)', 'danger');
 			return false;
 		}
-		// valida expr e parts já aqui
-		const testVal = _compileExpr(cfg.expression);
-		if (!testVal) {
+		if (!_compileExpr(cfg.expression)) {
 			showToast('Expressão inválida', 'danger');
 			return false;
 		}
@@ -2234,15 +2313,13 @@ const LionCalcColumns = (() => {
 				return false;
 			}
 		}
-		// persistência
+
 		const bag = _read();
-		// se já existe, substitui
 		const idx = bag.findIndex((c) => String(c.id) === cfg.id);
 		if (idx >= 0) bag[idx] = cfg;
 		else bag.push(cfg);
 		_write(bag);
 
-		// registra e ativa
 		const ok = _registerAndActivate(cfg);
 		if (ok) showToast(`Coluna "${cfg.headerName}" pronta`, 'success');
 		return !!ok;
@@ -2251,11 +2328,9 @@ const LionCalcColumns = (() => {
 	function remove(id) {
 		const key = String(id || '').trim();
 		if (!key) return;
-		// deactivate
 		try {
 			LionCompositeColumns.deactivate([key]);
 		} catch {}
-		// remove persistência
 		const bag = _read().filter((c) => String(c.id) !== key);
 		_write(bag);
 		showToast(`Coluna removida: ${key}`, 'info');
@@ -2267,30 +2342,21 @@ const LionCalcColumns = (() => {
 
 	function activateAll() {
 		const bag = _read();
-		const migratedBag = [];
-		let migrationCount = 0;
+		const migrated = [];
+		let cnt = 0;
 
 		for (const cfg of bag) {
-			// Migra cada coluna antes de ativar
-			const migrated = _migrateLegacyColumn(cfg);
-			if (migrated.parts && migrated.parts.length > 0 && (!cfg.parts || cfg.parts.length === 0)) {
-				migrationCount++;
-			}
-			migratedBag.push(migrated);
-			_registerAndActivate(migrated);
+			const m = _migrateLegacyColumn(cfg);
+			if (m.parts && m.parts.length > 0 && (!cfg.parts || cfg.parts.length === 0)) cnt++;
+			migrated.push(m);
+			_registerAndActivate(m);
 		}
-
-		// Atualiza o localStorage com as colunas migradas
-		if (migrationCount > 0) {
-			_write(migratedBag);
-			console.log(`[CalcCols] Migrated ${migrationCount} column(s) with auto-generated parts`);
+		if (cnt > 0) {
+			_write(migrated);
+			console.log(`[CalcCols] Migrated ${cnt} column(s)`);
 		}
 	}
 
-	/**
-	 * Lista os campos disponíveis para usar nas expressões
-	 * (baseado nas colunas principais da grid)
-	 */
 	function getAvailableFields() {
 		return [
 			'revenue',
@@ -2313,25 +2379,14 @@ const LionCalcColumns = (() => {
 		];
 	}
 
-	/**
-	 * Exporta colunas para preset (inclui parts migradas)
-	 */
 	function exportForPreset() {
 		return _read().map((cfg) => _migrateLegacyColumn(cfg));
 	}
-
-	/**
-	 * Importa colunas de preset
-	 */
 	function importFromPreset(columns) {
 		if (!Array.isArray(columns)) return;
 		_write(columns);
 		activateAll();
 	}
-
-	/**
-	 * Limpa todas as colunas calculadas
-	 */
 	function clear() {
 		const bag = _read();
 		for (const cfg of bag) {
@@ -2353,7 +2408,7 @@ const LionCalcColumns = (() => {
 		clear,
 	};
 })();
-// === 12.5) EXPORTA PARA O CONSOLE/ESCOPO GLOBAL ===
+
 globalThis.LionCalcColumns = LionCalcColumns;
 
 /* =========================================
@@ -2731,6 +2786,7 @@ const columnDefs = [
 			{
 				headerName: 'Daily Limit',
 				field: 'account_limit',
+				calcEligible: true,
 				valueGetter: (p) => toNumberBR(p.data?.account_limit),
 				valueFormatter: currencyFormatter,
 				minWidth: 80,
@@ -2757,6 +2813,8 @@ const columnDefs = [
 			{
 				headerName: 'Budget',
 				field: 'budget',
+				calcEligible: true,
+
 				editable: (p) => p.node?.level === 0 && !isCellLoading(p, 'budget'),
 				cellEditor: CurrencyMaskEditor, // 👈 trocado
 				valueParser: parseCurrencyInput, // já usa parseCurrencyFlexible (ok com vírgula)
@@ -2828,6 +2886,8 @@ const columnDefs = [
 			{
 				headerName: 'Bid',
 				field: 'bid',
+				calcEligible: true,
+
 				cellRenderer: EditableMoneyCellRenderer, // 👈 ADICIONE ISTO
 
 				editable: (p) => p.node?.level === 0 && !isCellLoading(p, 'bid'),
@@ -3015,6 +3075,8 @@ const columnDefs = [
 				field: 'impressions',
 				valueFormatter: intFormatter,
 				minWidth: 70,
+				calcEligible: true,
+
 				flex: 0.7,
 			},
 			{
@@ -3022,6 +3084,8 @@ const columnDefs = [
 				field: 'clicks',
 				valueFormatter: intFormatter,
 				minWidth: 80,
+				calcEligible: true,
+
 				flex: 0.6,
 			},
 			{
@@ -3029,6 +3093,8 @@ const columnDefs = [
 				field: 'visitors',
 				valueFormatter: intFormatter,
 				minWidth: 88,
+				calcEligible: true,
+
 				flex: 0.6,
 			},
 			{
@@ -3037,6 +3103,8 @@ const columnDefs = [
 				valueGetter: (p) => toNumberBR(p.data?.cpc),
 				valueFormatter: currencyFormatter,
 				minWidth: 70,
+				calcEligible: true,
+
 				flex: 0.6,
 			},
 			{
@@ -3044,6 +3112,8 @@ const columnDefs = [
 				field: 'conversions',
 				valueFormatter: intFormatter,
 				minWidth: 80,
+				calcEligible: true,
+
 				flex: 0.6,
 			},
 			{
@@ -3052,6 +3122,8 @@ const columnDefs = [
 				valueGetter: (p) => toNumberBR(p.data?.cpa_fb),
 				valueFormatter: currencyFormatter,
 				minWidth: 70,
+				calcEligible: true,
+
 				flex: 0.6,
 			},
 			{
@@ -3060,6 +3132,8 @@ const columnDefs = [
 				valueGetter: (p) => toNumberBR(p.data?.real_conversions),
 				valueFormatter: intFormatter,
 				minWidth: 80,
+				calcEligible: true,
+
 				flex: 0.7,
 			},
 			{
@@ -3068,6 +3142,8 @@ const columnDefs = [
 				valueGetter: (p) => toNumberBR(p.data?.real_cpa),
 				valueFormatter: currencyFormatter,
 				minWidth: 80,
+				calcEligible: true,
+
 				flex: 0.6,
 			},
 			{
@@ -3076,6 +3152,8 @@ const columnDefs = [
 				valueGetter: (p) => toNumberBR(p.data?.spent),
 				valueFormatter: currencyFormatter,
 				minWidth: 90,
+				calcEligible: true,
+
 				pinned: 'right',
 				flex: 0.8,
 			},
@@ -3085,6 +3163,8 @@ const columnDefs = [
 				valueGetter: (p) => toNumberBR(p.data?.fb_revenue),
 				valueFormatter: currencyFormatter,
 				minWidth: 100,
+				calcEligible: true,
+
 				flex: 0.8,
 			},
 			{
@@ -3093,6 +3173,8 @@ const columnDefs = [
 				valueGetter: (p) => toNumberBR(p.data?.push_revenue),
 				valueFormatter: currencyFormatter,
 				minWidth: 94,
+				calcEligible: true,
+
 				flex: 0.8,
 			},
 			{
@@ -3101,6 +3183,8 @@ const columnDefs = [
 				valueGetter: (p) => stripHtml(p.data?.revenue),
 				minWidth: 115,
 				flex: 1.0,
+				calcEligible: true,
+
 				pinned: 'right',
 				wrapText: true,
 				cellRenderer: revenueCellRenderer,
@@ -3110,6 +3194,8 @@ const columnDefs = [
 				headerName: 'MX',
 				field: 'mx',
 				minWidth: 80,
+				calcEligible: true,
+
 				pinned: 'right',
 				valueGetter: (p) => stripHtml(p.data?.mx),
 				flex: 0.7,
@@ -3118,6 +3204,8 @@ const columnDefs = [
 				headerName: 'Profit',
 				field: 'profit',
 				pinned: 'right',
+				calcEligible: true,
+
 				valueGetter: (p) => toNumberBR(p.data?.profit),
 				valueFormatter: currencyFormatter,
 				minWidth: 95,
@@ -3135,6 +3223,8 @@ const columnDefs = [
 				headerName: 'CTR',
 				field: 'ctr',
 				minWidth: 70,
+				calcEligible: true,
+
 				filter: 'agNumberColumnFilter',
 				flex: 0.8,
 			},
@@ -3648,8 +3738,8 @@ function togglePinnedColsFromCheckbox(silent = false) {
 			const expression = ($('#cc-expression')?.value || '').trim();
 			const onlyLevel0 = !!$('#cc-only-level0')?.checked;
 			const after = ($('#cc-after')?.value || 'Revenue').trim() || 'Revenue';
+			const mini = !!$('#cc-mini')?.checked; // <<<<<<<<<< LIGA O MINI
 
-			// gerar id a partir do header se vier vazio
 			if (!id && headerName) {
 				id = headerName.toLowerCase().replace(/\s+/g, '_').replace(/[^\w]/g, '');
 			}
@@ -3664,42 +3754,34 @@ function togglePinnedColsFromCheckbox(silent = false) {
 					parts = null;
 				}
 			}
-			return { id, headerName, format, expression, parts, onlyLevel0, after };
+
+			return { id, headerName, format, expression, parts, onlyLevel0, after, mini }; // <<<<<< retorna mini
 		}
+
 		function clearForm() {
 			$('#cc-header').value = '';
 			$('#cc-id').value = '';
 
-			// Reseta para o primeiro operador (division)
 			const formatSel = $('#cc-format');
-			if (formatSel && formatSel.options.length > 0) {
-				formatSel.selectedIndex = 0;
-			}
+			if (formatSel && formatSel.options.length > 0) formatSel.selectedIndex = 0;
 
-			// Reseta seletores de colunas
 			const col1Sel = $('#cc-col1');
 			const col2Sel = $('#cc-col2');
-			if (col1Sel && col1Sel.options.length > 0) {
-				col1Sel.selectedIndex = 0;
-			}
-			if (col2Sel && col2Sel.options.length > 0) {
-				col2Sel.selectedIndex = 0;
-			}
+			if (col1Sel && col1Sel.options.length > 0) col1Sel.selectedIndex = 0;
+			if (col2Sel && col2Sel.options.length > 0) col2Sel.selectedIndex = 0;
 
 			$('#cc-expression').value = '';
 			$('#cc-parts').value = '[]';
 			$('#cc-only-level0').checked = true;
 			$('#cc-after').value = 'Revenue';
+			$('#cc-type').value = 'currency';
 
-			// Reseta seletor de tipo/formato
-			const typeSel = $('#cc-type');
-			if (typeSel && typeSel.options.length > 0) {
-				typeSel.value = 'currency';
-			}
+			const miniEl = $('#cc-mini'); // <<<<<<
+			if (miniEl) miniEl.checked = false; // <<<<<< (padrão desativado)
 
-			// Atualiza a expressão com base nos valores resetados
 			updateExpressionFromSelects();
 		}
+
 		function renderList() {
 			if (!list) return;
 			const items = globalThis.LionCalcColumns?.list?.() || [];
@@ -3736,7 +3818,6 @@ function togglePinnedColsFromCheckbox(silent = false) {
 				btnEdit.className = 'kt-btn kt-btn-light kt-btn-xs';
 				btnEdit.textContent = 'Edit';
 				btnEdit.addEventListener('click', () => {
-					// joga pro form
 					$('#cc-header').value = c.headerName || '';
 					$('#cc-id').value = c.id || '';
 					$('#cc-type').value = c.format || 'currency';
@@ -3744,7 +3825,11 @@ function togglePinnedColsFromCheckbox(silent = false) {
 					$('#cc-parts').value = (c.parts && JSON.stringify(c.parts)) || '';
 					$('#cc-only-level0').checked = !!c.onlyLevel0;
 					$('#cc-after').value = c.after || 'Revenue';
+
+					const miniEl = $('#cc-mini'); // <<<<<<
+					if (miniEl) miniEl.checked = !!c.mini; // <<<<<<
 				});
+
 				const btnRemove = document.createElement('button');
 				btnRemove.className = 'kt-btn kt-btn-danger kt-btn-xs';
 				btnRemove.textContent = 'Remove';
