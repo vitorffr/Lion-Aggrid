@@ -2115,8 +2115,8 @@ const LionCalcColumns = (() => {
 		return {
 			headerName,
 			colId: id,
-			minWidth: 120,
-			flex: 0.9,
+			minWidth: 150,
+			flex: 1,
 			pinned: 'right',
 			valueGetter: (p) => {
 				const row = p?.data || {};
@@ -3379,6 +3379,8 @@ function togglePinnedColsFromCheckbox(silent = false) {
 
 		// Define operadores padrão para popular o seletor de expressões
 		const DEFAULT_OPERATORS = [
+			{ value: 'custom', label: '✎ Custom Expression', template: '' },
+
 			{
 				value: 'divide',
 				label: '÷ Division (A / B)',
@@ -3414,7 +3416,6 @@ function togglePinnedColsFromCheckbox(silent = false) {
 				label: '⌀ Average ((A+B)/2)',
 				template: '(number({col1}) + number({col2})) / 2',
 			},
-			{ value: 'custom', label: '✎ Custom Expression', template: '' },
 		];
 
 		// Popula o seletor de expressões
@@ -4678,7 +4679,7 @@ function makeGrid() {
 	};
 	// Ative automaticamente a coluna composta (opcional):
 	try {
-		LionCompositeColumns.activate(['revenue_stack', 'profit_stack']);
+		LionCompositeColumns.activate();
 	} catch (e) {
 		console.warn(e);
 	}
