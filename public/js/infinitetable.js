@@ -1438,9 +1438,8 @@ StackBelowRenderer.prototype.init = function (p) {
 	// topo (opcional)
 	if (showTop) {
 		const topEl = document.createElement('span');
-		const topVal = p.valueFormatted != null ? p.valueFormatted : p.value;
-		const coerced = typeof topVal === 'number' ? topVal : number(topVal);
-		topEl.textContent = formatVal(Number.isFinite(coerced) ? coerced : topVal);
+		// Usa p.valueFormatted que já vem formatado corretamente pelo valueFormatter da coluna
+		topEl.textContent = p.valueFormatted != null ? p.valueFormatted : p.value;
 		this.eGui.appendChild(topEl);
 	}
 
@@ -1461,9 +1460,13 @@ StackBelowRenderer.prototype.init = function (p) {
 		const lab = String(row?.label ?? '').trim();
 		const valNum = Number.isFinite(row?.value) ? row.value : number(row?.value);
 
+		// Se a part já vem com valor pré-formatado (text ou labelWithValue), usa ele
+		// Isso permite que cada part tenha seu próprio formato
+		const preFormatted = row?.text || row?.labelWithValue;
+
 		line.textContent = partsLabelOnly
 			? lab || '' // só label
-			: (lab ? `${lab}: ` : '') + formatVal(valNum); // label + valor
+			: preFormatted || (lab ? `${lab}: ` : '') + formatVal(valNum); // usa pré-formatado ou formata
 		this.eGui.appendChild(line);
 	});
 };
@@ -1871,9 +1874,13 @@ function showKTModal({ title = 'Detalhes', content = '' } = {}) {
 		const modal = document.getElementById('calcColsModal');
 		if (modal) {
 			// Eventos custom comuns
-			modal.addEventListener('kt:modal:shown', populateColSelects, { passive: true });
+			modal.addEventListener('kt:modal:shown', populateColSelects, {
+				passive: true,
+			});
 			// Bootstrap (se estiver usando)
-			modal.addEventListener('shown.bs.modal', populateColSelects, { passive: true });
+			modal.addEventListener('shown.bs.modal', populateColSelects, {
+				passive: true,
+			});
 
 			// Fallback: observar aria-hidden -> 'false'
 			const obs = new MutationObserver((muts) => {
@@ -2169,7 +2176,10 @@ const LionCalcColumns = (() => {
 		} = _norm(cfg);
 
 		const totalFn = _compileExpr(expression);
-		const partFns = parts.map((p) => ({ label: p.label, fn: _compileExpr(p.expr) }));
+		const partFns = parts.map((p) => ({
+			label: p.label,
+			fn: _compileExpr(p.expr),
+		}));
 
 		const valueFormatter = (p) => {
 			const v0 = typeof p.value === 'number' ? p.value : number(p.value);
@@ -3755,7 +3765,16 @@ function togglePinnedColsFromCheckbox(silent = false) {
 				}
 			}
 
-			return { id, headerName, format, expression, parts, onlyLevel0, after, mini }; // <<<<<< retorna mini
+			return {
+				id,
+				headerName,
+				format,
+				expression,
+				parts,
+				onlyLevel0,
+				after,
+				mini,
+			}; // <<<<<< retorna mini
 		}
 
 		function clearForm() {
