@@ -3755,24 +3755,29 @@ async function copyToClipboard(text) {
 		}
 	}
 }
-// ===== INJECTION & BRIDGES (não quebra legado) =====
-function __mergeColumnDefs(baseDefs, injectedDefs) {
-	if (!Array.isArray(injectedDefs) || injectedDefs.length === 0) return baseDefs;
-	const byId = new Map();
+
+// ===== INJEÇÃO (não quebra legado) =====
+function _lionGetInject() {
+	// aceita window.__lionInject ou LionGrid.inject
+	return globalThis.__lionInject || (globalThis.LionGrid && globalThis.LionGrid.inject) || {};
+}
+function _lionMergeColumnDefs(baseDefs, injectedDefs) {
+	if (!Array.isArray(baseDefs)) baseDefs = [];
+	if (!Array.isArray(injectedDefs) || injectedDefs.length === 0) return baseDefs.slice();
+	const byKey = new Map();
 	const out = [];
 
-	// indexa base por colId/field/groupId
+	const keyOf = (d) => d?.colId || d?.field || d?.groupId || d?.headerName;
+
 	for (const d of baseDefs) {
-		const key = d.colId || d.field || d.groupId || d.headerName || '__g' + Math.random();
-		byId.set(key, d);
+		const k = keyOf(d) || '__g' + Math.random();
+		byKey.set(k, d);
 		out.push(d);
 	}
-
-	// injeta: se existir mesma chave, mescla; senão, adiciona ao final
 	for (const add of injectedDefs) {
-		const key = add.colId || add.field || add.groupId || add.headerName;
-		if (key && byId.has(key)) {
-			Object.assign(byId.get(key), add);
+		const k = keyOf(add);
+		if (k && byKey.has(k)) {
+			Object.assign(byKey.get(k), add); // mescla, preserva o original
 		} else {
 			out.push(add);
 		}
@@ -3780,76 +3785,97 @@ function __mergeColumnDefs(baseDefs, injectedDefs) {
 	return out;
 }
 
-function __getInjected() {
-	// Permite tanto window.__lionInject quanto LionGrid.inject (back compat)
-	const src = globalThis.__lionInject || (globalThis.LionGrid && globalThis.LionGrid.inject) || {};
-	return {
-		columnDefs: Array.isArray(src.columnDefs) ? src.columnDefs : null,
-		autoGroupColumnDef: src.autoGroupColumnDef || null,
-		gridOptions: src.gridOptions && typeof src.gridOptions === 'object' ? src.gridOptions : null,
-		endpoints: src.endpoints && typeof src.endpoints === 'object' ? src.endpoints : null,
-		drillEndpoints:
-			src.drillEndpoints && typeof src.drillEndpoints === 'object' ? src.drillEndpoints : null,
-	};
-}
-
-// ===== Auto-size e Pinned — expostos no global (toolbar, etc.) =====
-function __autoSizeAll(api, skipHeader = false) {
+// ===== Utilitários p/ toolbar (autosize/pinned) =====
+function _lionAutoSizeAll(api, skipHeader = true) {
 	try {
-		const allCols = api.getColumns?.() || [];
-		const keys = allCols.map((c) => c.getColId?.()).filter(Boolean);
-		if (typeof api.autoSizeColumns === 'function') {
-			api.autoSizeColumns(keys, skipHeader);
-		} else if (typeof api.autoSizeAllColumns === 'function') {
-			api.autoSizeAllColumns(skipHeader);
-		} else {
-			// fallback: sizeColumnsToFit
-			api.sizeColumnsToFit?.();
-		}
+		const cols = (api.getColumns?.() || []).map((c) => c.getColId?.()).filter(Boolean);
+		if (api.autoSizeColumns) api.autoSizeColumns(cols, skipHeader);
+		else if (api.autoSizeAllColumns) api.autoSizeAllColumns(skipHeader);
+		else api.sizeColumnsToFit?.();
 	} catch (e) {
-		console.warn('[LionGrid] autoSize fallback:', e);
+		console.warn('[LionGrid] autoSize:', e);
+	}
+}
+function _lionSetPinnedBottom(api, rows) {
+	try {
+		if (api.setPinnedBottomRowData) api.setPinnedBottomRowData(rows);
+		else api.setGridOption?.('pinnedBottomRowData', rows);
+	} catch (e) {
+		console.warn('[LionGrid] pinned bottom:', e);
 	}
 }
 
-function __setPinnedBottom(api, rows) {
-	try {
-		if (typeof api.setPinnedBottomRowData === 'function') {
-			api.setPinnedBottomRowData(rows);
-		} else if (typeof api.setGridOption === 'function') {
-			api.setGridOption('pinnedBottomRowData', rows);
-		}
-	} catch (e) {
-		console.warn('[LionGrid] pinned bottom fallback:', e);
-	}
-}
-
-/* =========================================
- * 21) Grid (Tree Data + SSRM) — versão que aceita entradas DINÂMICAS
- * =======================================*/
-/* =========================================
- * 21) Grid (Tree Data + SSRM)
- * =======================================*/
 function makeGrid() {
 	const AG = getAgGrid();
-
 	const gridDiv = document.getElementById('lionGrid');
 	if (!gridDiv) {
 		console.error('[LionGrid] #lionGrid não encontrado');
 		return null;
 	}
 	gridDiv.classList.add('ag-theme-quartz');
+	// permite injeção externa sem quebrar o legado
+	const __inj = _lionGetInject();
+	const autoGroupInjected = __inj.autoGroupColumnDef || null;
 
-	// ===== resolve injeções sem quebrar legado =====
-	const INJ = __getInjected();
-	const EP = Object.assign({}, ENDPOINTS, INJ.endpoints || {});
-	const DR = Object.assign({}, DRILL_ENDPOINTS, INJ.drillEndpoints || {});
-
-	// ===== autoGroup do original (mantido) =====
-	const autoGroupFinal =
-		INJ.autoGroupColumnDef ||
-		(typeof autoGroupColumnDef !== 'undefined' ? autoGroupColumnDef : null);
-
-	// ===== helpers de altura (originais) =====
+	const autoGroupColumnDef = {
+		headerName: 'Campaign',
+		colId: 'campaign',
+		filter: 'agTextColumnFilter',
+		floatingFilter: true,
+		sortable: false,
+		wrapText: true,
+		minWidth: 280,
+		pinned: 'left',
+		cellClass: (p) => ['camp-root', 'camp-child', 'camp-grand'][Math.min(p?.node?.level ?? 0, 2)],
+		cellClassRules: {
+			// aplica classe só na célula da coluna de grupo quando o PAI estiver em loading
+			'ag-cell-loading': (p) => !!p?.data?.__rowLoading,
+		},
+		tooltipValueGetter: (p) => {
+			const d = p.data || {};
+			if (p?.node?.level === 0) {
+				const name = d.__label || '';
+				const utm = d.utm_campaign || '';
+				return utm ? `${name} — ${utm}` : name;
+			}
+			return d.__label || '';
+		},
+		cellRendererParams: {
+			suppressCount: true,
+			innerRenderer: (p) => {
+				const d = p.data || {};
+				const label = d.__label || '';
+				const utm = d.utm_campaign || '';
+				if (p?.node?.level === 0 && (label || utm)) {
+					const wrap = document.createElement('span');
+					wrap.style.display = 'inline-flex';
+					wrap.style.flexDirection = 'column';
+					wrap.style.lineHeight = '1.25';
+					const l1 = document.createElement('span');
+					l1.textContent = label;
+					l1.style.fontWeight = '600';
+					wrap.appendChild(l1);
+					if (utm) {
+						const l2 = document.createElement('span');
+						l2.textContent = utm;
+						l2.style.fontSize = '9px';
+						l2.style.opacity = '0.75';
+						l2.style.letterSpacing = '0.2px';
+						wrap.appendChild(l2);
+					}
+					return wrap;
+				}
+				return label;
+			},
+		},
+		valueGetter: (p) => {
+			const d = p.data || {};
+			const name = d.__label || '';
+			const utm = d.utm_campaign || '';
+			return (name + ' ' + utm).trim();
+		},
+	};
+	// ===== [1] Medidor offscreen (singleton) =====
 	const _rowHeightMeasure = (() => {
 		let box = null;
 		return {
@@ -3879,33 +3905,45 @@ function makeGrid() {
 				const el = this.ensure();
 				el.style.width = Math.max(0, widthPx) + 'px';
 				el.textContent = text || '';
+				// scrollHeight retorna a altura “necessária”
 				return el.scrollHeight || 0;
 			},
 		};
 	})();
 
+	// ===== [2] Largura útil da coluna autoGroup =====
 	function getAutoGroupContentWidth(api) {
 		try {
 			const col =
 				api.getColumn('campaign') ||
 				api.getDisplayedCenterColumns().find((c) => c.getColId?.() === 'campaign');
 			if (!col) return 300;
+			const comp = api.getDisplayedColAfter ? api.getDisplayedColAfter(col) : null; // só p/ forçar layout
 			const colW = col.getActualWidth();
-			const padding = 16;
-			const iconArea = 28;
+			// padding interno do renderer (aprox) + ícones (seta/checkbox)
+			const padding = 16; // padding horizontal interno (left+right)
+			const iconArea = 28; // seta/checkbox/margens
 			return Math.max(40, colW - padding - iconArea);
 		} catch {
 			return 300;
 		}
 	}
+
+	// ===== [3] Texto que realmente aparece na célula (2 linhas possíveis) =====
 	function getCampaignCellText(p) {
 		const d = p?.data || {};
-		if ((p?.node?.level ?? 0) !== 0) return String(d.__label || '');
+		if ((p?.node?.level ?? 0) !== 0) {
+			// filhos/netos: só o label
+			return String(d.__label || '');
+		}
 		const label = String(d.__label || '');
 		const utm = String(d.utm_campaign || '');
+		// O innerRenderer mostra “label” na 1ª linha e “utm” (se houver) na 2ª.
 		return utm ? `${label}\n${utm}` : label;
 	}
-	const _rowHCache = new Map();
+
+	// ===== [4] Cache simples por rowId + largura =====
+	const _rowHCache = new Map(); // key -> height
 	function _cacheKey(p, width) {
 		const id =
 			p?.node?.id ||
@@ -3917,33 +3955,15 @@ function makeGrid() {
 		return id + '|' + Math.round(width);
 	}
 
-	const BASE_ROW_MIN = 50;
-	const VERT_PAD = 12;
-
-	// ===== defaultColDef preservando resizable/sort/filter =====
-	const defaultColDefFinal = Object.assign(
-		{
-			sortable: true,
-			filter: true,
-			resizable: true,
-			suppressHeaderMenuButton: false,
-			suppressHeaderFilterButton: false,
-		},
-		typeof defaultColDef !== 'undefined' ? defaultColDef : {}
-	);
-
-	// ===== ColumnDefs base + injeção (MERGE, não substitui) =====
-	const columnDefsFinal = __mergeColumnDefs(
-		Array.isArray(columnDefs) ? columnDefs : [],
-		INJ.columnDefs || []
-	);
+	// ===== [5] getRowHeight dinâmico por nº de linhas =====
+	const BASE_ROW_MIN = 50; // altura mínima p/ qualquer linha
+	const VERT_PAD = 12; // padding vertical total dentro da célula (ajuste fino)
 
 	const gridOptions = {
 		floatingFiltersHeight: 35,
 		groupHeaderHeight: 35,
 		headerHeight: 62,
 		context: { showToast: (msg, type) => Toastify({ text: msg }).showToast() },
-
 		rowModelType: 'serverSide',
 		cacheBlockSize: 200,
 		treeData: true,
@@ -3958,10 +3978,13 @@ function makeGrid() {
 			return Math.random().toString(36).slice(2);
 		},
 
-		columnDefs: [].concat(columnDefsFinal),
-		autoGroupColumnDef: autoGroupFinal || undefined,
-		defaultColDef: defaultColDefFinal,
+		columnDefs: _lionMergeColumnDefs(
+			[].concat(columnDefs),
+			Array.isArray(__inj.columnDefs) ? __inj.columnDefs : []
+		),
+		autoGroupColumnDef: autoGroupInjected || autoGroupColumnDef,
 
+		defaultColDef,
 		rowSelection: {
 			mode: 'multiRow',
 			checkboxes: { enabled: true, header: true },
@@ -3976,12 +3999,17 @@ function makeGrid() {
 
 		rowHeight: BASE_ROW_MIN,
 		getRowHeight: (p) => {
+			// Só precisa medir de verdade a coluna "Campaign". As outras usam 1 linha.
 			const w = getAutoGroupContentWidth(p.api);
 			const key = _cacheKey(p, w);
 			if (_rowHCache.has(key)) return _rowHCache.get(key);
+
 			const text = getCampaignCellText(p);
+			// mede a altura necessária para renderizar esse texto com a largura atual
 			const textH = _rowHeightMeasure.measure(text, w);
+			// soma padding e garante mínimo
 			const h = Math.max(BASE_ROW_MIN, textH + VERT_PAD);
+
 			_rowHCache.set(key, h);
 			return h;
 		},
@@ -4002,9 +4030,12 @@ function makeGrid() {
 			_rowHCache.clear();
 			gridOptions.api?.resetRowHeights();
 		},
-
 		animateRows: true,
-		sideBar: { toolPanels: ['columns', 'filters'], defaultToolPanel: null, position: 'right' },
+		sideBar: {
+			toolPanels: ['columns', 'filters'],
+			defaultToolPanel: null,
+			position: 'right',
+		},
 		theme: createAgTheme(),
 
 		getContextMenuItems: (params) => {
@@ -4064,7 +4095,6 @@ function makeGrid() {
 			]);
 			const field = params.colDef?.field;
 			if (!field || !MODAL_FIELDS.has(field)) return;
-
 			const vfmt = params.valueFormatted;
 			let display;
 			if (vfmt != null && vfmt !== '') display = String(vfmt);
@@ -4092,7 +4122,10 @@ function makeGrid() {
 					display =
 						n == null
 							? ''
-							: new Intl.NumberFormat(locale, { style: 'currency', currency }).format(n);
+							: new Intl.NumberFormat(locale, {
+									style: 'currency',
+									currency,
+							  }).format(n);
 				} else if (
 					['impressions', 'clicks', 'visitors', 'conversions', 'real_conversions'].includes(
 						field
@@ -4109,6 +4142,8 @@ function makeGrid() {
 		},
 
 		onGridReady(params) {
+			// Don't restore state on initial load to prevent grid loading issues
+			// State will be restored via presets or manual reset if needed
 			console.log('[GridReady] Grid initialized successfully');
 
 			const dataSource = {
@@ -4123,20 +4158,33 @@ function makeGrid() {
 						} = req.request;
 						const filterModelWithGlobal = buildFilterModelWithGlobal(filterModel);
 
-						// ===== Nível 0: campanhas (cache + filtro/sort no front) =====
+						// =========================================
+						// Nível 0 — CAMPANHAS
+						// => FULL 1x em cache; filtro/sort no FRONT a cada getRows
+						// =========================================
 						if (groupKeys.length === 0) {
 							if (!ROOT_CACHE) {
-								let res = await fetch(EP.SSRM, {
+								// Carrega dataset completo, SEM sort/filter (serão no front)
+								let res = await fetch(ENDPOINTS.SSRM, {
 									method: 'POST',
 									headers: { 'Content-Type': 'application/json' },
 									credentials: 'same-origin',
 									body: JSON.stringify({ mode: 'full' }),
 								});
-								if (!res.ok) res = await fetch(EP.SSRM, { credentials: 'same-origin' });
+								if (!res.ok) {
+									// Fallback GET
+									res = await fetch(ENDPOINTS.SSRM, {
+										credentials: 'same-origin',
+									});
+								}
 								const data = await res.json().catch(() => ({ rows: [] }));
 								const rowsRaw = Array.isArray(data.rows) ? data.rows : [];
 								ROOT_CACHE = { rowsRaw };
+								// dentro do getRows, nível raiz (groupKeys.length === 0)
+								console.debug('filterModel keys:', Object.keys(filterModel || {}));
 							}
+
+							// Aplica filtros e ordenação no cliente
 							const all = ROOT_CACHE.rowsRaw;
 							const filtered = frontApplyFilters(all, filterModelWithGlobal);
 							const ordered = frontApplySort(filtered, sortModel || []);
@@ -4145,10 +4193,14 @@ function makeGrid() {
 							const totalCount = rowsNorm.length;
 							const slice = rowsNorm.slice(startRow, Math.min(endRow, totalCount));
 
+							// Totais (já respeitando filtros atuais)
 							const totals = computeClientTotals(ordered);
 							const currency = getAppCurrency();
 							const locale = currency === 'USD' ? 'en-US' : 'pt-BR';
-							const nfCur = new Intl.NumberFormat(locale, { style: 'currency', currency });
+							const nfCur = new Intl.NumberFormat(locale, {
+								style: 'currency',
+								currency,
+							});
 
 							const pinnedTotal = {
 								id: '__pinned_total__',
@@ -4196,20 +4248,27 @@ function makeGrid() {
 							if (typeof pinnedTotal.ctr === 'number')
 								pinnedTotal.ctr = (pinnedTotal.ctr * 100).toFixed(2) + '%';
 
-							const apiTarget = req.api ?? params.api;
-							__setPinnedBottom(apiTarget, [pinnedTotal]);
+							try {
+								const targetApi = req.api ?? params.api;
+								targetApi?.setPinnedBottomRowData?.([pinnedTotal]) ||
+									targetApi?.setGridOption?.('pinnedBottomRowData', [pinnedTotal]);
+							} catch (e) {
+								console.warn('Erro ao aplicar pinned bottom row:', e);
+							}
 
 							req.success({ rowData: slice, rowCount: totalCount });
 							return;
 						}
 
-						// ===== Nível 1: adsets (DRILL) =====
+						// =========================================
+						// Nível 1 — ADSETS (continua SSRM/DRILL)
+						// =========================================
 						if (groupKeys.length === 1) {
-							const t0 = performance.now();
+							const t0 = performance.now(); // NEW
 							const campaignId = groupKeys[0];
-							const parentId = `c:${campaignId}`;
-							const apiTarget = req.api ?? params.api;
-							setParentRowLoading(apiTarget, parentId, true);
+							const parentId = `c:${campaignId}`; // NEW
+							const apiTarget = req.api ?? params.api; // já usado acima
+							setParentRowLoading(apiTarget, parentId, true); // NEW
 
 							const qs = new URLSearchParams({
 								campaign_id: campaignId,
@@ -4220,25 +4279,34 @@ function makeGrid() {
 								filterModel: JSON.stringify(filterModelWithGlobal || {}),
 							});
 
+							// NEW — latência fake opcional
 							if (DRILL_FAKE_NETWORK_MS > 0) await sleep(DRILL_FAKE_NETWORK_MS);
 
-							const data = await fetchJSON(`${DR.ADSETS}?${qs.toString()}`);
+							const data = await fetchJSON(`${DRILL_ENDPOINTS.ADSETS}?${qs.toString()}`);
 							const rows = (data.rows || []).map(normalizeAdsetRow);
 
+							// NEW — garante spinner mínimo
 							await withMinSpinner(t0, DRILL_MIN_SPINNER_MS);
 
-							req.success({ rowData: rows, rowCount: data.lastRow ?? rows.length });
+							req.success({
+								rowData: rows,
+								rowCount: data.lastRow ?? rows.length,
+							});
+
+							// NEW — desliga loading do pai
 							setParentRowLoading(apiTarget, parentId, false);
 							return;
 						}
 
-						// ===== Nível 2: ads (DRILL) =====
+						// =========================================
+						// Nível 2 — ADS (continua SSRM/DRILL)
+						// =========================================
 						if (groupKeys.length === 2) {
-							const t0 = performance.now();
+							const t0 = performance.now(); // NEW
 							const adsetId = groupKeys[1];
-							const parentId = `s:${adsetId}`;
-							const apiTarget = req.api ?? params.api;
-							setParentRowLoading(apiTarget, parentId, true);
+							const parentId = `s:${adsetId}`; // NEW
+							const apiTarget = req.api ?? params.api; // NEW
+							setParentRowLoading(apiTarget, parentId, true); // NEW
 
 							const qs = new URLSearchParams({
 								adset_id: adsetId,
@@ -4249,14 +4317,21 @@ function makeGrid() {
 								filterModel: JSON.stringify(filterModelWithGlobal || {}),
 							});
 
+							// NEW — latência fake opcional
 							if (DRILL_FAKE_NETWORK_MS > 0) await sleep(DRILL_FAKE_NETWORK_MS);
 
-							const data = await fetchJSON(`${DR.ADS}?${qs.toString()}`);
+							const data = await fetchJSON(`${DRILL_ENDPOINTS.ADS}?${qs.toString()}`);
 							const rows = (data.rows || []).map(normalizeAdRow);
 
+							// NEW — garante spinner mínimo
 							await withMinSpinner(t0, DRILL_MIN_SPINNER_MS);
 
-							req.success({ rowData: rows, rowCount: data.lastRow ?? rows.length });
+							req.success({
+								rowData: rows,
+								rowCount: data.lastRow ?? rows.length,
+							});
+
+							// NEW — desliga loading do pai
 							setParentRowLoading(apiTarget, parentId, false);
 							return;
 						}
@@ -4274,41 +4349,36 @@ function makeGrid() {
 			} else {
 				params.api.setGridOption?.('serverSideDatasource', dataSource);
 			}
-
-			// ===== Reaplica calc/composite columns com API já viva =====
+			// reexecuta calc/composite e autosize com a API já viva
 			try {
-				if (globalThis.LionCalcColumns && typeof LionCalcColumns.recompute === 'function') {
+				if (globalThis.LionCalcColumns?.recompute) {
 					LionCalcColumns.recompute(params.api);
 				}
 			} catch (e) {
 				console.warn('[LionCalcColumns] recompute falhou:', e);
 			}
 			try {
-				if (
-					globalThis.LionCompositeColumns &&
-					typeof LionCompositeColumns.activate === 'function'
-				) {
-					LionCompositeColumns.activate(); // usa o default registrado no core
+				if (globalThis.LionCompositeColumns?.activate) {
+					LionCompositeColumns.activate(); // usa configuração padrão do core
 				}
 			} catch (e) {
 				console.warn('[CompositeColumns] activate falhou:', e);
 			}
+			try {
+				_lionAutoSizeAll(params.api, true); // autosize inicial
+			} catch {}
 
-			// ===== Autosize inicial opcional =====
 			setTimeout(() => {
 				try {
-					__autoSizeAll(params.api, true);
+					params.api.sizeColumnsToFit();
 				} catch {}
 			}, 0);
-
-			// sinal global (back compat para toolbars)
 			setTimeout(() => {
 				globalThis.dispatchEvent(new CustomEvent('lionGridReady'));
 			}, 100);
 		},
 	};
 
-	// cria grid (AG v31+ ou legacy)
 	const apiOrInstance =
 		typeof AG.createGrid === 'function'
 			? AG.createGrid(gridDiv, gridOptions)
@@ -4316,40 +4386,33 @@ function makeGrid() {
 
 	const api = gridOptions.api || apiOrInstance;
 
-	// ===== API global (mantida) =====
 	globalThis.LionGrid = globalThis.LionGrid || {};
 	globalThis.LionGrid.api = api;
+	// atalhos opcionais p/ toolbar antiga
+	globalThis.LionGrid.autoSizeAll = (skipHeader = true) => _lionAutoSizeAll(api, skipHeader);
+	globalThis.LionGrid.setPinnedBottom = (rows) => _lionSetPinnedBottom(api, rows);
 
-	// bridges úteis p/ toolbar antiga
-	globalThis.LionGrid.autoSizeAll = (skipHeader = true) => __autoSizeAll(api, skipHeader);
-	globalThis.LionGrid.togglePinned = (enabled) => {
-		const rows = enabled ? (api.getPinnedBottomRowCount?.() ? null : []) : [];
-		// se quiser desligar, passa [] (ou null) — aqui só placeholder para compat
-		__setPinnedBottom(api, rows || []);
-	};
-
-	// reset layout (legado)
 	globalThis.LionGrid.resetLayout = function () {
 		try {
 			sessionStorage.removeItem(GRID_STATE_KEY);
-			api.setState?.({}, []);
+			api.setState({}, []);
+			// Force grid refresh after reset
 			setTimeout(() => {
-				api.sizeColumnsToFit?.();
-				api.resetRowHeights?.();
+				api.sizeColumnsToFit();
+				api.resetRowHeights();
 			}, 50);
 			showToast('Layout Reset', 'info');
 		} catch {}
 	};
+	// Ative automaticamente a coluna composta (opcional):
+	try {
+		LionCompositeColumns.activate();
+	} catch (e) {
+		console.warn(e);
+	}
 
 	return { api, gridDiv };
 }
-
-// expõe o factory para o bootstrap externo
-globalThis.LionGrid = Object.assign(globalThis.LionGrid || {}, {
-	makeGrid,
-	getAppCurrency, // útil para formatters externos, se quiser
-});
-
 /* =========================================
  * 22) Page module (mount)
  * =======================================*/

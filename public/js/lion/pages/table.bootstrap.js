@@ -528,11 +528,4 @@ globalThis.__lionInject = {
 	},
 };
 
-// 2) Inicializa a grid quando o DOM estiver pronto
-document.addEventListener('DOMContentLoaded', () => {
-	try {
-		makeGrid(); // mesma API de antes
-	} catch (e) {
-		console.error('[Bootstrap] Falha ao iniciar grid:', e);
-	}
-});
+makeGrid(); // mesma API de antes
