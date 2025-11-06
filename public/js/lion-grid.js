@@ -1,133 +1,46 @@
-/* public/js/lion-grid.js
- *
- * Lion Grid — AG Grid (TreeData + SSRM)
- * -------------------------------------
- * - NÃO remove nada: apenas reordenação e documentação.
- * - Mesma API pública (globalThis.LionGrid), mesmos endpoints e renderers.
- * - Comentários JSDoc adicionados para funções-chave.
- *
- * Estrutura:
- *  1) Constantes & Config
- *  2) Estado Global (moeda / quick filter)
- *  3) Utilidades (sleep/spinner, parsing, edição silenciosa)
- *  4) Toast
- *  5) CSS de Loading (IIFE)
- *  6) AG Grid: acesso + licença (IIFE)
- *  7) Helpers/Formatters (HTML/numérico/moedas, badges)
- *  8) Utils de status/loading por célula
- *  9) Renderers (status pill, chips, profile, revenue)
- * 10) Backend API (update*, fetchJSON, toggleFeature)
- * 11) Modal simples (KTUI-like)
- * 12) Tema (createAgTheme)
- * 13) Colunas (defaultColDef, defs)
- * 14) SSRM refresh compat
- * 15) Global Quick Filter (IIFE)
- * 16) State (load/apply saved)
- * 17) Toggle de colunas pinadas (getSelectionColId/togglePinnedColsFromCheckbox)
- * 18) Toolbar (presets, tamanho colunas, binds) (IIFE)
- * 19) Normalizadores (tree)
- * 20) Clipboard
- * 21) Grid (makeGrid)
- * 22) Page module (mount)
- */
+import {
+	withMinSpinner,
+	getAppCurrency,
+	isPinnedOrTotal,
+	showToast,
+	sleep,
+	stripHtml,
+	strongText,
+	intFmt,
+	toNumberBR,
+	frontToNumberBR,
+	frontToNumberFirst,
+	number,
+	sumNum,
+	safeDiv,
+	numBR,
+	cc_currencyFormat,
+	cc_percentFormat,
+	currencyFormatter,
+	copyToClipboard,
+} from './lion/utils.js';
 
 /* =========================================
- * 1) Constantes & Config
+ * 0) Endpoints & Drilldown knobs
  * =======================================*/
 const ENDPOINTS = { SSRM: '/api/ssrm/?clean=1&mode=full' };
 const DRILL_ENDPOINTS = { ADSETS: '/api/adsets/', ADS: '/api/ads/' };
 const DRILL = { period: 'TODAY' };
 
-/* ========= Grid State (sessionStorage) ========= */
-const GRID_STATE_KEY = 'lion.aggrid.state.v1';
-const GRID_STATE_IGNORE_ON_RESTORE = ['pagination', 'scroll', 'rowSelection', 'focusedCell'];
-
-// === Fake network & min spinner ===
-
-// NEW — knobs só do drilldown:
+// === Fake network & min spinner (drilldown) ===
 const DRILL_MIN_SPINNER_MS = 900; // mínimo que o spinner fica visível ao abrir filhos
 const DRILL_FAKE_NETWORK_MS = 0; // latência fake extra (ex.: 800 ou 1200)
-/**
- * Garante spinner mínimo num fluxo async.
- * @param {number} startMs performance.now() no início
- * @param {number} minMs   ms mínimo de spinner
- */
-async function withMinSpinner(startMs, minMs) {
-	const elapsed = performance.now() - startMs;
-	if (elapsed < minMs) await sleep(minMs - elapsed);
-}
+
 /* =========================================
- * 3) Utilidades (tempo/edição/parsing)
+ * 1) Estado Global
  * =======================================*/
-/**
- * Sleep async
- * @param {number} ms
- */
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-// === Cache local do nível 0 (campanhas) - carrega tudo de uma vez ===
-let ROOT_CACHE = null;
-
+let ROOT_CACHE = null; // Cache local do nível 0 (campanhas)
 let LION_CURRENCY = 'BRL'; // 'BRL' | 'USD'
 
-// { rowsRaw: [] }
-const toNumberBR = (s) => {
-	if (s == null) return null;
-	if (typeof s === 'number') return s;
-	const raw = String(s)
-		.replace(/[^\d,.-]/g, '')
-		.replace(/\./g, '')
-		.replace(',', '.');
-	const n = parseFloat(raw);
-	return Number.isFinite(n) ? n : null;
-};
-/* =========================================
- * 2) Estado Global
- * =======================================*/
-// Moeda global da aplicação
-
-// 🔍 QUICK FILTER global (vai em filterModel._global.filter)
-export let GLOBAL_QUICK_FILTER = ''; // alimentado pelo #quickFilter
-function showToast(msg, type = 'info') {
-	const colors = {
-		info: 'linear-gradient(90deg,#06b6d4,#3b82f6)',
-		success: 'linear-gradient(90deg,#22c55e,#16a34a)',
-		warning: 'linear-gradient(90deg,#f59e0b,#eab308)',
-		danger: 'linear-gradient(90deg,#ef4444,#dc2626)',
-	};
-	if (globalThis.Toastify) {
-		Toastify({
-			text: msg,
-			duration: 2200,
-			close: true,
-			gravity: 'bottom',
-			position: 'right',
-			stopOnFocus: true,
-			backgroundColor: colors[type] || colors.info,
-		}).showToast();
-	} else {
-		console.log(`[Toast] ${msg}`);
-	}
-}
-/**
- * Altera a moeda da aplicação em runtime.
- * @param {'USD'|'BRL'} mode
- */
-function setLionCurrency(mode) {
-	const m = String(mode || '').toUpperCase();
-	if (m === 'USD' || m === 'BRL') LION_CURRENCY = m;
-	else console.warn('[Currency] modo inválido:', mode);
-}
-function getAppCurrency() {
-	return LION_CURRENCY;
-}
+export let GLOBAL_QUICK_FILTER = ''; // 🔍 QUICK FILTER global (vai em filterModel._global.filter)
 
 /* =========================================
- * 4) Toast (fallback console)
- * =======================================*/
-
-/* =========================================
- * 5) CSS de Loading (injeção automática)
+ * 3) CSS de Loading (injeção automática)
  * =======================================*/
 (function ensureLoadingStyles() {
 	if (document.getElementById('lion-loading-styles')) return;
@@ -143,52 +56,15 @@ function getAppCurrency() {
 .lion-status-menu__item:hover { background: rgba(255,255,255,.06); }
 .lion-status-menu__item.is-active::before { content:"●"; font-size:10px; line-height:1; }
 @keyframes lion-spin { to { transform: rotate(360deg); } }
-.lion-editable-pen{
-  display:inline-flex; align-items:center;
-  margin-left:6px;
-  opacity:.45;
-  pointer-events:none; /* não rouba clique (entra em edição normal) */
-  font-size:12px; line-height:1;
-}
+.lion-editable-pen{ display:inline-flex; align-items:center; margin-left:6px; opacity:.45; pointer-events:none; font-size:12px; line-height:1; }
 .ag-cell:hover .lion-editable-pen{ opacity:.85 }
-.lion-editable-ok{
-  display:inline-flex; align-items:center;
-  margin-left:6px;
-  opacity:.9;
-  pointer-events:none;
-  font-size:12px; line-height:1;
-}
+.lion-editable-ok{ display:inline-flex; align-items:center; margin-left:6px; opacity:.9; pointer-events:none; font-size:12px; line-height:1; }
 .ag-cell:hover .lion-editable-ok{ opacity:1 }
-
-.lion-editable-err{
-  display:inline-flex; align-items:center;
-  margin-left:6px;
-  opacity:.95;
-  pointer-events:none;
-  font-size:12px; line-height:1;
-  color:#ef4444; /* vermelho */
-}
+.lion-editable-err{ display:inline-flex; align-items:center; margin-left:6px; opacity:.95; pointer-events:none; font-size:12px; line-height:1; color:#ef4444; }
 .ag-cell:hover .lion-editable-err{ opacity:1 }
-/* célula em erro */
-.ag-cell.lion-cell-error{
-  background: rgba(239, 68, 68, 0.12);           /* vermelho suave */
-  box-shadow: inset 0 0 0 1px rgba(239,68,68,.35);
-  transition: background .2s ease, box-shadow .2s ease;
-}
-
-/* deixa o valor em foco mais evidente no erro (opcional) */
-.ag-cell.lion-cell-error .lion-editable-val{
-  color: #ef4444;
-  font-weight: 600;
-}
-
-/* se quiser que o hover não “apague” o vermelho (opcional) */
-.ag-cell.lion-cell-error.ag-cell-focus,
-.ag-cell.lion-cell-error:hover{
-  background: rgba(239, 68, 68, 0.18);
-  box-shadow: inset 0 0 0 1px rgba(239,68,68,.5);
-}
-
+.ag-cell.lion-cell-error{ background: rgba(239, 68, 68, 0.12); box-shadow: inset 0 0 0 1px rgba(239,68,68,.35); transition: background .2s ease, box-shadow .2s ease; }
+.ag-cell.lion-cell-error .lion-editable-val{ color: #ef4444; font-weight: 600; }
+.ag-cell.lion-cell-error.ag-cell-focus, .ag-cell.lion-cell-error:hover{ background: rgba(239, 68, 68, 0.18); box-shadow: inset 0 0 0 1px rgba(239,68,68,.5); }
 `;
 	const el = document.createElement('style');
 	el.id = 'lion-loading-styles';
@@ -197,7 +73,7 @@ function getAppCurrency() {
 })();
 
 /* =========================================
- * 6) AG Grid: acesso + licença
+ * 4) AG Grid: acesso + licença
  * =======================================*/
 function getAgGrid() {
 	const AG = globalThis.agGrid;
@@ -215,47 +91,8 @@ function getAgGrid() {
 })();
 
 /* =========================================
- * 7) Helpers/Formatters (HTML/numérico/moedas, badges)
+ * 5) Helpers de sort/filter no FRONT (reutilizáveis)
  * =======================================*/
-export const stripHtml = (s) =>
-	typeof s === 'string'
-		? s
-				.replace(/<[^>]*>/g, ' ')
-				.replace(/\s+/g, ' ')
-				.trim()
-		: s;
-
-const strongText = (s) => {
-	if (typeof s !== 'string') return s;
-	const m = s.match(/<strong[^>]*>(.*?)<\/strong>/i);
-	return stripHtml(m ? m[1] : s);
-};
-
-const intFmt = new Intl.NumberFormat('pt-BR');
-
-/* ==== FRONT sort/filter (raiz) ==== */
-function frontToNumberBR(v) {
-	if (v == null) return null;
-	if (typeof v === 'number') return Number.isFinite(v) ? v : null;
-	const s = String(v).trim();
-	if (!s) return null;
-	const sign = s.includes('-') ? -1 : 1;
-	const only = s
-		.replace(/[^\d,.-]/g, '')
-		.replace(/\./g, '')
-		.replace(',', '.');
-	const n = Number(only);
-	return Number.isFinite(n) ? sign * n : null;
-}
-function frontToNumberFirst(s) {
-	if (s == null) return null;
-	const str = String(s);
-	const m = str.match(/-?\d{1,3}(?:\.\d{3})*,\d{2}/) || str.match(/-?\d+(?:\.\d+)?/);
-	if (!m) return null;
-	const clean = m[0].replace(/\./g, '').replace(',', '.');
-	const n = parseFloat(clean);
-	return Number.isFinite(n) ? n : null;
-}
 function frontApplySort(rows, sortModel) {
 	if (!Array.isArray(sortModel) || !sortModel.length) return rows;
 	const orderStatus = ['ACTIVE', 'PAUSED', 'DISABLED', 'CLOSED'];
@@ -277,7 +114,7 @@ function frontApplySort(rows, sortModel) {
 				continue;
 			}
 
-			// revenue: pega primeiro número da string (ex.: "R$ 2.553,34 (R$ 341,69 | R$ 2.895,03)")
+			// revenue: pega primeiro número da string
 			if (colId === 'revenue') {
 				const an = frontToNumberFirst(av);
 				const bn = frontToNumberFirst(bv);
@@ -306,7 +143,6 @@ function frontApplySort(rows, sortModel) {
 }
 function frontApplyFilters(rows, filterModel) {
 	if (!filterModel || typeof filterModel !== 'object') return rows;
-
 	const globalFilter = String(filterModel._global?.filter || '')
 		.trim()
 		.toLowerCase();
@@ -411,7 +247,6 @@ function frontApplyFilters(rows, filterModel) {
 					}
 				};
 			}
-
 			return () => true;
 		});
 
@@ -427,34 +262,9 @@ function frontApplyFilters(rows, filterModel) {
 	});
 }
 
-function pickStatusColor(raw) {
-	const s = String(raw || '')
-		.trim()
-		.toLowerCase();
-	return s === 'active' ? 'success' : 'secondary';
-}
-
-/* ===== Totais no CLIENTE (usados no nível 0) ===== */
-function numBR(x) {
-	const n1 = toNumberBR(x);
-	if (n1 != null) return n1;
-	const n2 = parseCurrencyFlexible(x, getAppCurrency());
-	return Number.isFinite(n2) ? n2 : null;
-}
-
-function sumNum(arr, pick) {
-	let acc = 0;
-	for (let i = 0; i < arr.length; i++) {
-		const v = pick(arr[i]);
-		if (Number.isFinite(v)) acc += v;
-	}
-	return acc;
-}
-
-function safeDiv(num, den) {
-	return den > 0 ? num / den : 0;
-}
-
+/* =========================================
+ * 6) Totais no CLIENTE (nível 0)
+ * =======================================*/
 function computeClientTotals(rows) {
 	const spent_sum = sumNum(rows, (r) => numBR(r.spent));
 	const fb_revenue_sum = sumNum(rows, (r) => numBR(r.fb_revenue));
@@ -496,67 +306,22 @@ function computeClientTotals(rows) {
 		mx_total,
 	};
 }
-/** ===== Calculated Columns Helpers (safe eval básico) ===== */
-function number(x) {
-	const n1 = toNumberBR(x);
-	if (Number.isFinite(n1)) return n1;
-	const n2 = parseCurrencyFlexible(x, getAppCurrency());
-	return Number.isFinite(n2) ? n2 : 0;
-}
-/**
- * Parser tolerante a BRL/USD (string → number)
- * @param {string|number|null} value
- * @param {'USD'|'BRL'} [mode]
- * @returns {number|null}
- */
-function parseCurrencyFlexible(value, mode = getAppCurrency()) {
-	if (value == null || value === '') return null;
-	if (typeof value === 'number') return Number.isFinite(value) ? value : null;
-	let s = String(value).trim();
-	s = s.replace(/[^\d.,\-+]/g, '');
-	if (!s) return null;
-	const lastDot = s.lastIndexOf('.');
-	const lastComma = s.lastIndexOf(',');
-	const hasSep = lastDot !== -1 || lastComma !== -1;
-	let normalized;
-	if (!hasSep) {
-		normalized = s.replace(/[^\d\-+]/g, '');
-	} else {
-		const decSep = lastDot > lastComma ? '.' : ',';
-		const i = s.lastIndexOf(decSep);
-		const intPart = s.slice(0, i).replace(/[^\d\-+]/g, '');
-		const fracPart = s.slice(i + 1).replace(/[^\d]/g, '');
-		normalized = intPart + (fracPart ? '.' + fracPart : '');
-	}
-	const n = parseFloat(normalized);
-	return Number.isFinite(n) ? n : null;
-}
 
+/* =========================================
+ * 7) Calculated Columns Helpers (safe eval)
+ * =======================================*/
 /**
  * Avaliador SEGURO de expressões aritméticas sobre o row.
- * Suporta: + - * / () espaços e identificadores [A-Za-z_]\w* (campos do row) e helper number.
- * Ex.: "number(fb_revenue) + number(push_revenue) - number(spent)"
+ * Suporta: + - * / () espaços e identificadores [A-Za-z_]\w* e helper number.
  */
 function cc_evalExpression(expr, row) {
 	if (!expr || typeof expr !== 'string') return null;
-
-	// Somente dígitos/letras/_ e operadores básicos + parênteses e espaços
-	// (IMPORTANTE: sem '.' para impedir cadeias tipo obj.constructor etc)
-	if (!/^[\w\s()+\-*/]+$/.test(expr)) return null;
-
-	// Tokeniza apenas identificadores (palavras que começam por letra ou _)
+	if (!/^[\w\s()+\-*/]+$/.test(expr)) return null; // whitelist
 	const tokens = expr.match(/[A-Za-z_]\w*/g) || [];
-
-	// Campos permitidos: chaves do row + helper number
 	const allowed = new Set(['number', ...Object.keys(row || {})]);
-
-	// Se houver qualquer identificador fora da whitelist, bloqueia
-	for (const t of tokens) {
-		if (!allowed.has(t)) return null;
-	}
+	for (const t of tokens) if (!allowed.has(t)) return null;
 
 	try {
-		/* eslint-disable no-new-func */
 		const keys = [...allowed].filter((k) => k !== 'number');
 		const fn = new Function(
 			'number',
@@ -573,53 +338,19 @@ function cc_evalExpression(expr, row) {
 	}
 }
 
-/** Formata número como moeda atual (BRL/USD) */
-function cc_currencyFormat(n) {
-	if (!Number.isFinite(n)) return '';
-	const cur = getAppCurrency();
-	const locale = cur === 'USD' ? 'en-US' : 'pt-BR';
-	return new Intl.NumberFormat(locale, {
-		style: 'currency',
-		currency: cur,
-	}).format(n);
-}
-function cc_percentFormat(n, digits = 1) {
-	if (!Number.isFinite(n)) return '';
-	return (n * 100).toFixed(digits) + '%';
-}
-
 /* =========================================
- * 8) Utils de status/loading por célula
+ * 8) Utils de status/loading por célula (placeholder da seção)
  * =======================================*/
-// 👇 drop-in p/ usar no lugar onde você chamava redrawRows
+// (mantido como no original — drop-in para substituir redrawRows quando usado)
 
 /* =========================================
  * 9) Renderers
  * =======================================*/
-function isPinnedOrTotal(params) {
-	return (
-		params?.node?.rowPinned === 'bottom' ||
-		params?.node?.rowPinned === 'top' ||
-		params?.data?.__nodeType === 'total' ||
-		params?.node?.group === true
-	);
-}
+
 const REVENUE_LABELS = ['A', 'B'];
 
-/** ===== StackBelowRenderer: valor principal + linhas auxiliares abaixo =====
- * Uso:
- *  cellRenderer: StackBelowRenderer,
- *  cellRendererParams: {
- *    getParts: (p) => [
- *      { label: 'Facebook', value: number(p.data.fb_revenue) },
- *      { label: 'Push',     value: number(p.data.push_revenue) },
- *    ],
- *    format: 'currency', // 'int' | 'raw'
- *    onlyLevel0: true,   // mostra apenas nas campanhas (nó nível 0)
- *  }
- */
+/** Renderer: valor principal + linhas auxiliares abaixo */
 function StackBelowRenderer() {}
-
 StackBelowRenderer.prototype.init = function (p) {
 	this.p = p;
 	this.eGui = document.createElement('span');
@@ -651,7 +382,6 @@ StackBelowRenderer.prototype.init = function (p) {
 		return String(v);
 	};
 
-	// topo (opcional)
 	if (showTop) {
 		const topEl = document.createElement('span');
 		const topVal = p.valueFormatted != null ? p.valueFormatted : p.value;
@@ -660,7 +390,6 @@ StackBelowRenderer.prototype.init = function (p) {
 		this.eGui.appendChild(topEl);
 	}
 
-	// partes
 	const partsFn = p?.colDef?.cellRendererParams?.getParts;
 	let parts = [];
 	try {
@@ -673,17 +402,12 @@ StackBelowRenderer.prototype.init = function (p) {
 		const line = document.createElement('span');
 		line.style.fontSize = '11px';
 		line.style.opacity = '0.85';
-
 		const lab = String(row?.label ?? '').trim();
 		const valNum = Number.isFinite(row?.value) ? row.value : number(row?.value);
-
-		line.textContent = partsLabelOnly
-			? lab || '' // só label
-			: (lab ? `${lab}: ` : '') + formatVal(valNum); // label + valor
+		line.textContent = partsLabelOnly ? lab || '' : (lab ? `${lab}: ` : '') + formatVal(valNum);
 		this.eGui.appendChild(line);
 	});
 };
-
 StackBelowRenderer.prototype.getGui = function () {
 	return this.eGui;
 };
@@ -692,6 +416,9 @@ StackBelowRenderer.prototype.refresh = function (p) {
 	return true;
 };
 
+/* =========================================
+ * 10) Fetch JSON helper
+ * =======================================*/
 async function fetchJSON(url, opts) {
 	const res = await fetch(url, {
 		headers: { 'Content-Type': 'application/json' },
@@ -758,82 +485,50 @@ function showKTModal({ title = 'Detalhes', content = '' } = {}) {
 	modal.querySelector('.kt-modal-body > pre').textContent = content;
 	openKTModal('#lionKtModal');
 }
+
 /* ========= Calculated Columns: populate selects (Col 1 / Col 2) ========= */
 (function CalcColsPopulate() {
-	// Referências fixas aos elementos do modal
 	const $col1 = document.getElementById('cc-col1');
 	const $col2 = document.getElementById('cc-col2');
 	const $reload = document.getElementById('cc-reload');
-
-	// Guarda última seleção do usuário para tentar preservar ao recarregar
 	let lastSelection = { col1: null, col2: null };
 
-	// Util: tenta descobrir api a partir do seu setup
 	function resolveGridApis() {
-		// 1) Padrão AG Grid (gridOptions globais)
-		if (globalThis.gridOptions?.api) {
-			return { api: globalThis.gridOptions.api };
-		}
-		// 2) Seu wrapper LionGrid (comum nos seus projetos)
-		if (globalThis.LionGrid?.api) {
-			return { api: globalThis.LionGrid.api };
-		}
-		// 3) Caso você exponha via função
+		if (globalThis.gridOptions?.api) return { api: globalThis.gridOptions.api };
+		if (globalThis.LionGrid?.api) return { api: globalThis.LionGrid.api };
 		if (typeof globalThis.getAgGridApis === 'function') {
 			const apis = globalThis.getAgGridApis();
 			if (apis?.api) return { api: apis.api };
 		}
 		return { api: null };
 	}
-
-	// Heurística: esta coluna é explicitamente "calculável"/numérica?
 	function _isCalculableByDef(def) {
 		if (!def) return false;
-
-		// Identificador explícito (preferencial)
 		if (def.calcEligible === true) return true;
 		if (def.calcType === 'numeric') return true;
-
-		// Sinais comuns do AG Grid / tipagem
 		if (def.valueType === 'number') return true;
 		if (def.cellDataType === 'number') return true;
 		if (def.type === 'numericColumn') return true;
 		if (def.filter === 'agNumberColumnFilter') return true;
-
-		// Se tiver um valueParser que converte para número, geralmente é numérica
 		if (typeof def.valueParser === 'function') return true;
-
 		return false;
 	}
-
-	// Extrai colunas "selecionáveis": só folhas com header/field úteis e calculáveis
 	function getSelectableColumns(api) {
 		if (!api) return [];
-
-		// 1) Preferir as colunas atualmente exibidas (ordem visual)
 		let defs = [];
 		try {
 			const displayed = api.getAllDisplayedColumns?.() || [];
-			if (displayed.length) {
+			if (displayed.length)
 				defs = displayed.map((gc) => gc.getColDef?.() || gc.colDef || null).filter(Boolean);
-			}
 		} catch (_) {}
-
-		// 2) Fallbacks para obter colDefs
 		if (!defs.length) {
 			const columnState = api.getColumnState?.() || [];
 			const viaState = columnState
 				.map((s) => api.getColumn?.(s.colId)?.getColDef?.())
 				.filter(Boolean);
-			if (viaState.length) {
-				defs = viaState;
-			} else {
-				const fromApi = api.getColumnDefs?.() || [];
-				defs = (fromApi || []).flatMap(flattenColDefs);
-			}
+			if (viaState.length) defs = viaState;
+			else defs = (api.getColumnDefs?.() || []).flatMap(flattenColDefs);
 		}
-
-		// 3) Filtrar apenas folhas válidas
 		const deny = new Set(['ag-Grid-AutoColumn', 'ag-Grid-RowGroup', '__autoGroup']);
 		defs = defs.filter((def) => {
 			if (!def) return false;
@@ -844,22 +539,15 @@ function showKTModal({ title = 'Detalhes', content = '' } = {}) {
 			if (String(field).startsWith('__')) return false;
 			if (def.checkboxSelection) return false;
 			if (def.rowGroup || def.pivot) return false;
-			// Evitar colunas de seleção/ação
 			const h = String(header).toLowerCase();
 			if (h.includes('select') || h.includes('ação') || h.includes('action')) return false;
-
 			return true;
 		});
-
-		// 4) Manter só as que são explicitamente calculáveis (identificador)
 		defs = defs.filter(_isCalculableByDef);
-
-		// 5) Mapear p/ {field, headerName} e deduplicar por field mantendo ordem
 		const mapped = defs.map((def) => ({
 			field: String(def.field || def.colId),
 			headerName: String(def.headerName || def.field || def.colId),
 		}));
-
 		const seen = new Set();
 		const unique = [];
 		for (const it of mapped) {
@@ -869,43 +557,27 @@ function showKTModal({ title = 'Detalhes', content = '' } = {}) {
 		}
 		return unique;
 	}
-
-	// Achata colDefs aninhados (caso você tenha groups)
 	function flattenColDefs(defOrArray) {
 		const out = [];
 		const walk = (arr) => {
 			(arr || []).forEach((def) => {
-				if (def?.children?.length) {
-					walk(def.children);
-				} else {
-					out.push(def);
-				}
+				if (def?.children?.length) walk(def.children);
+				else out.push(def);
 			});
 		};
 		if (Array.isArray(defOrArray)) walk(defOrArray);
 		else if (defOrArray) walk([defOrArray]);
 		return out;
 	}
-
-	// Renderiza <option> em um <select> usando Option()/append,
-	// preserva seleção anterior e re-hidrata o KT select.
 	function fillSelect(selectEl, items, keepValue) {
 		if (!selectEl) return;
-
-		// 1) Guardar seleção atual (se existir)
 		const current = selectEl.value || null;
 		const desired = keepValue ?? current ?? '';
-
-		// 2) Limpar opções existentes
 		while (selectEl.options.length) selectEl.remove(0);
-
-		// 3) Placeholder
 		const placeholderText =
 			selectEl.getAttribute('data-kt-select-placeholder') ||
 			selectEl.getAttribute('title') ||
 			'Select';
-
-		// Se existir um valor válido para manter, não deixamos o placeholder como selected/disabled.
 		const hasDesired = desired && items.some((it) => it.field === desired);
 		const ph = new Option(placeholderText, '');
 		if (!hasDesired) {
@@ -913,20 +585,12 @@ function showKTModal({ title = 'Detalhes', content = '' } = {}) {
 			ph.selected = true;
 		}
 		selectEl.add(ph);
-
-		// 4) Opções reais
 		for (const it of items) {
 			const label = `${String(it.headerName)} (${String(it.field)})`;
 			const opt = new Option(label, String(it.field));
 			selectEl.add(opt);
 		}
-
-		// 5) Restaura seleção se ainda existir
-		if (hasDesired) {
-			selectEl.value = desired;
-		}
-
-		// 6) Re-hidratar/refresh do KT Select para refletir placeholder/seleção
+		if (hasDesired) selectEl.value = desired;
 		try {
 			selectEl.dispatchEvent(new CustomEvent('kt:select:refresh', { bubbles: true }));
 			if (window.KT?.select?.refresh) window.KT.select.refresh(selectEl);
@@ -934,29 +598,18 @@ function showKTModal({ title = 'Detalhes', content = '' } = {}) {
 			selectEl.dispatchEvent(new Event('change', { bubbles: true }));
 		} catch (_) {}
 	}
-
-	// Popula os dois selects (Col1/Col2)
 	function populateColSelects() {
 		const { api } = resolveGridApis();
 		if (!$col1 || !$col2) return;
-
-		if (!api) {
-			return;
-		}
-
+		if (!api) return;
 		const items = getSelectableColumns(api);
-
-		// Preserva última seleção se possível
 		if (!$col1.value) lastSelection.col1 = lastSelection.col1 || null;
 		else lastSelection.col1 = $col1.value;
 		if (!$col2.value) lastSelection.col2 = lastSelection.col2 || null;
 		else lastSelection.col2 = $col2.value;
-
 		fillSelect($col1, items, lastSelection.col1);
 		fillSelect($col2, items, lastSelection.col2);
 	}
-
-	// Util: escape básico para option text (mantido caso precise)
 	function escapeHtml(s) {
 		return String(s)
 			.replaceAll('&', '&amp;')
@@ -965,8 +618,6 @@ function showKTModal({ title = 'Detalhes', content = '' } = {}) {
 			.replaceAll('"', '&quot;')
 			.replaceAll("'", '&#39;');
 	}
-
-	// Bind de eventos (reload + quando o modal abrir)
 	function bindEventsOnce() {
 		if ($reload) {
 			$reload.addEventListener(
@@ -978,16 +629,10 @@ function showKTModal({ title = 'Detalhes', content = '' } = {}) {
 			);
 			document.getElementById('cc-save')?.setAttribute('data-kt-modal-dismiss', '#calcColsModal');
 		}
-
-		// Quando o modal abrir (via data-kt-modal), repopula para refletir o estado atual da grid
 		const modal = document.getElementById('calcColsModal');
 		if (modal) {
-			// Eventos custom comuns
 			modal.addEventListener('kt:modal:shown', populateColSelects, { passive: true });
-			// Bootstrap (se estiver usando)
 			modal.addEventListener('shown.bs.modal', populateColSelects, { passive: true });
-
-			// Fallback: observar aria-hidden -> 'false'
 			const obs = new MutationObserver((muts) => {
 				for (const m of muts) {
 					if (m.type === 'attributes' && m.attributeName === 'aria-hidden') {
@@ -998,13 +643,7 @@ function showKTModal({ title = 'Detalhes', content = '' } = {}) {
 			obs.observe(modal, { attributes: true });
 		}
 	}
-
-	// Exponha uma função global opcional para você chamar manualmente após o gridReady
-	globalThis.CalcColsUI = {
-		populateSelects: populateColSelects,
-	};
-
-	// Inicializa na carga do DOM
+	globalThis.CalcColsUI = { populateSelects: populateColSelects };
 	if (document.readyState === 'loading') {
 		document.addEventListener('DOMContentLoaded', () => {
 			bindEventsOnce();
@@ -1038,53 +677,38 @@ function createAgTheme() {
 		spacing: 6,
 	});
 }
-/** ===== LionCompositeColumns: registrar/ativar colunas calculadas/compostas =====
- * - Mantém um registry de colunas extras.
- * - Permite ativar/desativar dinamicamente: LionCompositeColumns.activate(['revenue_stack'])
- * - Insere a nova coluna dentro do grupo "Metrics & Revenue" logo após 'Revenue'.
- */
-/** ===== LionCompositeColumns (versão que preserva funções) =====
- * - Mantém registry de colunas extras.
- * - Evita JSON clone (que remove functions).
- * - Copia apenas arrays de topo e reatribui via setColumnDefs.
- */
+
+/* =========================================
+ * 12.1) Composite Columns registry
+ * =======================================*/
 const LionCompositeColumns = (() => {
 	const registry = new Map();
-
 	function register(id, builder) {
 		registry.set(String(id), builder);
 	}
-
 	function _ensureApi() {
 		const api = globalThis.LionGrid?.api;
 		if (!api) throw new Error('[CompositeColumns] Grid API indisponível');
 		return api;
 	}
-
 	function _getColumnDefs(api) {
-		// Pega as colDefs atuais (com funções intactas)
 		if (typeof api.getColumnDefs === 'function') return api.getColumnDefs() || [];
 		const cols = api.getColumns?.() || [];
 		return cols.map((c) => c.getColDef?.()).filter(Boolean);
 	}
-
 	function _setColumnDefs(api, defs) {
-		if (typeof api.setGridOption === 'function') {
-			api.setGridOption('columnDefs', defs);
-		} else if (typeof api.setColumnDefs === 'function') {
-			api.setColumnDefs(defs);
-		} else {
+		if (typeof api.setGridOption === 'function') api.setGridOption('columnDefs', defs);
+		else if (typeof api.setColumnDefs === 'function') api.setColumnDefs(defs);
+		else {
 			const colApi = api.getColumnApi?.();
 			if (colApi?.setColumnDefs) colApi.setColumnDefs(defs);
 			else throw new Error('api.setColumnDefs is not available');
 		}
 	}
-
 	function _findGroup(defs, groupId) {
 		for (const d of defs) if (d?.groupId === groupId) return d;
 		return null;
 	}
-
 	function _insertAfter(children, newDef, afterFieldOrHeader) {
 		const key = String(afterFieldOrHeader || '').trim();
 		if (!key) {
@@ -1099,64 +723,42 @@ const LionCompositeColumns = (() => {
 		if (idx === -1) children.push(newDef);
 		else children.splice(idx + 1, 0, newDef);
 	}
-
 	function activate(ids = []) {
 		const api = _ensureApi();
-
-		// 1) Referência atual das defs
 		const defsRef = _getColumnDefs(api);
-
-		// 2) Cria NOVO array de topo (preserva objetos e suas funções)
 		const newDefs = defsRef.slice();
-
-		// 3) Localiza o grupo alvo por referência dentro de newDefs
 		const group = _findGroup(newDefs, 'grp-metrics-rev');
 		if (!group || !Array.isArray(group.children)) {
 			console.warn('[CompositeColumns] Grupo "Metrics & Revenue" não encontrado');
 			return;
 		}
-
-		// 4) Duplica o array de children (shallow) e reatribui, preservando cada child (com funções)
 		const newChildren = group.children.slice();
-
-		// 5) Constrói e insere colunas
 		ids.forEach((id) => {
 			const builder = registry.get(String(id));
 			if (!builder) return;
 			const colDef = builder();
 			if (!colDef || typeof colDef !== 'object') return;
-
 			const colKey = String(colDef.colId || colDef.field);
 			const exists = newChildren.some((c) => String(c.colId || c.field) === colKey);
 			if (exists) return;
-
-			// usa meta __after (ou headerName/field) para posicionar; fallback = 'Revenue'
 			const afterKey = (colDef.__after && String(colDef.__after).trim()) || 'Revenue';
-
 			_insertAfter(newChildren, colDef, afterKey);
 		});
-
-		// 6) Ratribui os children atualizados no MESMO objeto de grupo
 		group.children = newChildren;
-
-		// 7) Aplica
 		_setColumnDefs(api, newDefs);
 		try {
 			api.sizeColumnsToFit?.();
 		} catch {}
 		return true;
 	}
-
 	function deactivate(ids = []) {
 		const api = _ensureApi();
 		const defsRef = _getColumnDefs(api);
 		const newDefs = defsRef.slice();
 		const group = _findGroup(newDefs, 'grp-metrics-rev');
 		if (!group || !Array.isArray(group.children)) return;
-
 		const idsSet = new Set(ids.map(String));
 		const newChildren = group.children.filter((c) => !idsSet.has(String(c.colId || c.field)));
-
 		group.children = newChildren;
 		_setColumnDefs(api, newDefs);
 		try {
@@ -1164,31 +766,14 @@ const LionCompositeColumns = (() => {
 		} catch {}
 		return true;
 	}
-
 	return { register, activate, deactivate };
 })();
-/** Formatter de moeda dinâmico (BRL/USD) para AG Grid. */
-function currencyFormatter(p) {
-	const currency = getAppCurrency();
-	const locale = currency === 'USD' ? 'en-US' : 'pt-BR';
-	let n = typeof p.value === 'number' ? p.value : parseCurrencyFlexible(p.value, currency);
-	if (!Number.isFinite(n)) return p.value ?? '';
-	return new Intl.NumberFormat(locale, { style: 'currency', currency }).format(n);
-}
-/** ===== Registro: Coluna "Revenue (Stack)" — id: revenue_stack =====
- * Total = fb_revenue + push_revenue (calculado no front), e mostra as duas linhas abaixo.
- * Só exibe o stack no nível 0 (campanhas).
- */
 
 /* =========================================
  * 12.5) Calculated Columns (user-defined)
- * - Permite criar colunas calculáveis no grupo "Metrics & Revenue".
- * - Persistência em localStorage.
- * - Integra com LionCompositeColumns (activate/deactivate).
  * =======================================*/
 const LionCalcColumns = (() => {
 	const LS_KEY = 'lion.aggrid.calcCols.v1';
-
 	function _read() {
 		try {
 			return JSON.parse(localStorage.getItem(LS_KEY) || '[]');
@@ -1199,50 +784,39 @@ const LionCalcColumns = (() => {
 	function _write(arr) {
 		localStorage.setItem(LS_KEY, JSON.stringify(Array.isArray(arr) ? arr : []));
 	}
-
 	function _autoWrapFields(expr) {
 		if (!expr) return expr;
 		if (/\bnumber\s*\(/.test(expr)) return expr;
 		return expr.replace(/\b([a-zA-Z_]\w*)(?!\s*\()/g, 'number($1)');
 	}
-
 	function _compileExpr(expr) {
 		const src = String(expr || '').trim();
 		if (!src) return null;
 		const wrapped = _autoWrapFields(src);
 		return (row) => cc_evalExpression(wrapped, row);
 	}
-
 	function _norm(cfg) {
 		const id = String(cfg.id || '').trim();
 		const headerName = String(cfg.headerName || id || 'Calc').trim();
 		const expression = String(cfg.expression || '').trim();
-
 		const format = (cfg.format || 'currency').toLowerCase();
 		const partsFormat = (
 			cfg.partsFormat || (format === 'percent' ? 'currency' : format)
 		).toLowerCase();
-
 		const onlyLevel0 = cfg.onlyLevel0 ?? cfg.onlyRoot ?? true;
 		const after = cfg.after || 'Revenue';
 		const totalLabel = String(cfg.totalLabel ?? 'Total').trim();
-
-		// ÚNICA FLAG:
 		const mini = !!cfg.mini;
-
-		// Tudo deriva de mini:
-		const hideTop = mini; // esconde o número “grandão”
-		const includeTotalAsPart = mini; // injeta Total nas linhas pequenas
-		const partsLabelOnly = false; // linhas pequenas SEMPRE com número
+		const hideTop = mini;
+		const includeTotalAsPart = mini;
+		const partsLabelOnly = false;
 		const maxParts = 0;
-
 		const parts = Array.isArray(cfg.parts)
 			? cfg.parts.map((p) => ({
 					label: String(p.label || '').trim(),
 					expr: String(p.expr || '').trim(),
 			  }))
 			: [];
-
 		return {
 			id,
 			headerName,
@@ -1260,7 +834,6 @@ const LionCalcColumns = (() => {
 			maxParts,
 		};
 	}
-
 	function _fmtBy(fmt, n) {
 		if (!Number.isFinite(n)) return '—';
 		if (fmt === 'int') return intFmt.format(Math.round(n));
@@ -1268,7 +841,6 @@ const LionCalcColumns = (() => {
 		if (fmt === 'percent') return cc_percentFormat(n);
 		return cc_currencyFormat(n);
 	}
-
 	function _buildColDef(cfg) {
 		const {
 			id,
@@ -1286,10 +858,8 @@ const LionCalcColumns = (() => {
 			partsLabelOnly,
 			maxParts,
 		} = _norm(cfg);
-
 		const totalFn = _compileExpr(expression);
 		const partFns = parts.map((p) => ({ label: p.label, fn: _compileExpr(p.expr) }));
-
 		const valueFormatter = (p) => {
 			const v0 = typeof p.value === 'number' ? p.value : number(p.value);
 			const v = Number.isFinite(v0) ? v0 : null;
@@ -1299,17 +869,14 @@ const LionCalcColumns = (() => {
 			if (format === 'percent') return cc_percentFormat(v);
 			return currencyFormatter({ value: v });
 		};
-
 		const tooltipValueGetter = (p) => {
 			const row = p?.data || {};
 			const tot = totalFn ? totalFn(row) : null;
 			const lines = [`${totalLabel}: ${_fmtBy(format, tot)}`];
-			for (const { label, fn } of partFns) {
+			for (const { label, fn } of partFns)
 				lines.push(`${label || ''}: ${_fmtBy(partsFormat, fn ? fn(row) : null)}`);
-			}
 			return lines.join('\n');
 		};
-
 		return {
 			headerName,
 			colId: id,
@@ -1334,32 +901,25 @@ const LionCalcColumns = (() => {
 						: partsFormat === 'percent'
 						? 'percent'
 						: 'currency',
-
-				// chaves “de compatibilidade” para renderers diferentes:
-				showTop: !hideTop, // mini => false
-				partsLabelOnly: !!partsLabelOnly, // sempre false
-				showLabels: mini, // dica explícita pro renderer
-				forceShowLabels: mini, // belt & suspenders
+				showTop: !hideTop,
+				partsLabelOnly: !!partsLabelOnly,
+				showLabels: mini,
+				forceShowLabels: mini,
 				maxParts: Number(maxParts) || 0,
-
 				getParts: (p) => {
 					const row = p?.data || {};
 					const list = [];
-
-					// Sempre calcular os valores para podermos montar `text`
 					const pushPart = (label, value, isTotal, fmt) => {
 						const formatted = Number.isFinite(value) ? _fmtBy(fmt, value) : '—';
-						// retornamos múltiplos campos para cobrir renderers diferentes
 						list.push({
-							label, // rótulo puro
-							name: label, // alias comum
-							value, // número “cru” (renderer pode usar)
-							text: `${label}: ${formatted}`, // fallback textual
-							labelWithValue: `${label}: ${formatted}`, // outro alias textual
+							label,
+							name: label,
+							value,
+							text: `${label}: ${formatted}`,
+							labelWithValue: `${label}: ${formatted}`,
 							isTotal: !!isTotal,
 						});
 					};
-
 					if (includeTotalAsPart) {
 						const tot = totalFn ? totalFn(row) : null;
 						pushPart(totalLabel, tot, true, format);
@@ -1374,20 +934,16 @@ const LionCalcColumns = (() => {
 			__after: after,
 		};
 	}
-
 	function _registerAndActivate(cfg) {
 		const colDef = _buildColDef(cfg);
 		if (!colDef) return false;
-
 		LionCompositeColumns.register(colDef.colId, () => colDef);
-
 		console.log(`[CalcCols] Registering "${colDef.colId}":`, {
 			showTop: colDef.cellRendererParams?.showTop,
 			showLabels: colDef.cellRendererParams?.showLabels,
 			forceShowLabels: colDef.cellRendererParams?.forceShowLabels,
 			onlyLevel0: colDef.cellRendererParams?.onlyLevel0,
 		});
-
 		try {
 			return LionCompositeColumns.activate([colDef.colId]) || true;
 		} catch (e) {
@@ -1395,7 +951,6 @@ const LionCalcColumns = (() => {
 			return false;
 		}
 	}
-
 	function _migrateLegacyColumn(cfg) {
 		if (cfg.parts && cfg.parts.length > 0) return cfg;
 		const fieldMatches = (cfg.expression || '').match(/\b([a-zA-Z_]\w*)(?!\s*\()/g);
@@ -1413,11 +968,9 @@ const LionCalcColumns = (() => {
 		}
 		return cfg;
 	}
-
 	function add(config) {
 		let cfg = _norm(config);
 		cfg = _migrateLegacyColumn(cfg);
-
 		if (!cfg.id || !cfg.expression) {
 			showToast('Config inválida (id/expressão obrigatórios)', 'danger');
 			return false;
@@ -1432,18 +985,15 @@ const LionCalcColumns = (() => {
 				return false;
 			}
 		}
-
 		const bag = _read();
 		const idx = bag.findIndex((c) => String(c.id) === cfg.id);
 		if (idx >= 0) bag[idx] = cfg;
 		else bag.push(cfg);
 		_write(bag);
-
 		const ok = _registerAndActivate(cfg);
 		if (ok) showToast(`Coluna "${cfg.headerName}" pronta`, 'success');
 		return !!ok;
 	}
-
 	function remove(id) {
 		const key = String(id || '').trim();
 		if (!key) return;
@@ -1454,16 +1004,13 @@ const LionCalcColumns = (() => {
 		_write(bag);
 		showToast(`Coluna removida: ${key}`, 'info');
 	}
-
 	function list() {
 		return _read();
 	}
-
 	function activateAll() {
 		const bag = _read();
 		const migrated = [];
 		let cnt = 0;
-
 		for (const cfg of bag) {
 			const m = _migrateLegacyColumn(cfg);
 			if (m.parts && m.parts.length > 0 && (!cfg.parts || cfg.parts.length === 0)) cnt++;
@@ -1475,7 +1022,6 @@ const LionCalcColumns = (() => {
 			console.log(`[CalcCols] Migrated ${cnt} column(s)`);
 		}
 	}
-
 	function getAvailableFields() {
 		return [
 			'revenue',
@@ -1497,7 +1043,6 @@ const LionCalcColumns = (() => {
 			'ctr',
 		];
 	}
-
 	function exportForPreset() {
 		return _read().map((cfg) => _migrateLegacyColumn(cfg));
 	}
@@ -1515,7 +1060,6 @@ const LionCalcColumns = (() => {
 		}
 		_write([]);
 	}
-
 	return {
 		add,
 		remove,
@@ -1527,7 +1071,6 @@ const LionCalcColumns = (() => {
 		clear,
 	};
 })();
-
 globalThis.LionCalcColumns = LionCalcColumns;
 
 /* =========================================
@@ -1546,13 +1089,10 @@ const defaultColDef = {
 	enableValue: true,
 	suppressHeaderFilterButton: true,
 };
-
 function isPinnedOrGroup(params) {
 	return params?.node?.rowPinned || params?.node?.group;
 }
-
-/* ======= ColumnDefs ======= */
-const columnDefs = [];
+const columnDefs = []; // (placeholder conforme original)
 
 /* =========================================
  * 14) SSRM refresh compat
@@ -1586,14 +1126,12 @@ function setParentRowLoading(api, parentId, on) {
 		input.focus();
 		input.select?.();
 	}
-
 	function applyGlobalFilter(val) {
 		GLOBAL_QUICK_FILTER = String(val || '');
 		const api = globalThis.LionGrid?.api;
 		if (!api) return;
 		refreshSSRM(api);
 	}
-
 	function init() {
 		const input = document.getElementById('quickFilter');
 		if (!input) return;
@@ -1607,7 +1145,6 @@ function setParentRowLoading(api, parentId, on) {
 		});
 		if (input.value) applyGlobalFilter(input.value.trim());
 	}
-
 	window.addEventListener(
 		'keydown',
 		(e) => {
@@ -1622,13 +1159,15 @@ function setParentRowLoading(api, parentId, on) {
 		},
 		{ capture: true }
 	);
-
 	globalThis.addEventListener('lionGridReady', init);
 })();
 
 /* =========================================
  * 16) State (load/apply)
  * =======================================*/
+const GRID_STATE_KEY = 'lion.aggrid.state.v1';
+const GRID_STATE_IGNORE_ON_RESTORE = ['pagination', 'scroll', 'rowSelection', 'focusedCell'];
+
 function buildFilterModelWithGlobal(baseFilterModel) {
 	const fm = { ...(baseFilterModel || {}) };
 	const gf = (GLOBAL_QUICK_FILTER || '').trim();
@@ -1649,13 +1188,11 @@ function applySavedStateIfAny(api) {
 	const saved = loadSavedState();
 	if (!saved) return false;
 	try {
-		// Clear potentially corrupted state before applying
 		sessionStorage.removeItem(GRID_STATE_KEY);
 		api.setState(saved, GRID_STATE_IGNORE_ON_RESTORE);
 		return true;
 	} catch (e) {
 		console.warn('[GridState] restore failed, clearing saved state:', e);
-		// Clear corrupted state
 		sessionStorage.removeItem(GRID_STATE_KEY);
 		return false;
 	}
@@ -1696,10 +1233,7 @@ function togglePinnedColsFromCheckbox(silent = false) {
 		{ colId: 'mx', pinned: checked ? 'right' : null },
 		{ colId: 'profit', pinned: checked ? 'right' : null },
 	];
-	api.applyColumnState({
-		state: [...leftPins, ...rightPins],
-		defaultState: { pinned: null },
-	});
+	api.applyColumnState({ state: [...leftPins, ...rightPins], defaultState: { pinned: null } });
 	if (!silent)
 		showToast(checked ? 'Columns Pinned' : 'Columns Unpinned', checked ? 'success' : 'info');
 }
@@ -1785,14 +1319,12 @@ function togglePinnedColsFromCheckbox(silent = false) {
 			sel.value = activePreset;
 		else sel.value = '';
 	}
+
 	// ===== Calculated Columns Modal (KTUI) =====
 	(function setupCalcColsModal() {
 		const $ = (sel) => document.querySelector(sel);
-
-		// Define operadores padrão para popular o seletor de expressões
 		const DEFAULT_OPERATORS = [
 			{ value: 'custom', label: '✎ Custom Expression', template: '' },
-
 			{
 				value: 'divide',
 				label: '÷ Division (A / B)',
@@ -1803,11 +1335,7 @@ function togglePinnedColsFromCheckbox(silent = false) {
 				label: '× Multiplication (A × B)',
 				template: 'number({col1}) * number({col2})',
 			},
-			{
-				value: 'add',
-				label: '+ Addition (A + B)',
-				template: 'number({col1}) + number({col2})',
-			},
+			{ value: 'add', label: '+ Addition (A + B)', template: 'number({col1}) + number({col2})' },
 			{
 				value: 'subtract',
 				label: '− Subtraction (A − B)',
@@ -1830,15 +1358,10 @@ function togglePinnedColsFromCheckbox(silent = false) {
 			},
 		];
 
-		// Popula o seletor de expressões
 		function populateExpressionSelect() {
 			const sel = $('#cc-format');
 			if (!sel) return;
-
-			// Limpa opções existentes
 			sel.innerHTML = '';
-
-			// Adiciona operadores padrão
 			DEFAULT_OPERATORS.forEach((op) => {
 				const option = document.createElement('option');
 				option.value = op.value;
@@ -1846,8 +1369,6 @@ function togglePinnedColsFromCheckbox(silent = false) {
 				option.dataset.template = op.template;
 				sel.appendChild(option);
 			});
-
-			// Reinicializa o KTUI select se disponível
 			if (globalThis.KT && KT.Select && KT.Select.getOrCreateInstance) {
 				try {
 					const instance = KT.Select.getOrCreateInstance(sel);
@@ -1861,33 +1382,23 @@ function togglePinnedColsFromCheckbox(silent = false) {
 			}
 		}
 
-		// Popula os seletores de colunas com as colunas disponíveis na grid
 		function populateColumnSelects() {
 			const api = ensureApi();
 			if (!api) return;
-
 			const col1Sel = $('#cc-col1');
 			const col2Sel = $('#cc-col2');
 			if (!col1Sel || !col2Sel) return;
-
-			// Obtém todas as colunas da grid
 			const allCols = api.getColumns?.() || [];
 			const colOptions = allCols
 				.filter((col) => {
 					const colDef = col.getColDef?.();
-					// Filtra apenas colunas de dados (não de grupo, etc)
 					return colDef && colDef.field && !colDef.hide;
 				})
 				.map((col) => {
 					const colDef = col.getColDef?.();
-					return {
-						field: colDef.field,
-						label: colDef.headerName || colDef.field,
-					};
+					return { field: colDef.field, label: colDef.headerName || colDef.field };
 				})
 				.sort((a, b) => a.label.localeCompare(b.label));
-
-			// Popula ambos os seletores
 			[col1Sel, col2Sel].forEach((sel) => {
 				sel.innerHTML = '';
 				colOptions.forEach((col) => {
@@ -1896,8 +1407,6 @@ function togglePinnedColsFromCheckbox(silent = false) {
 					option.textContent = col.label;
 					sel.appendChild(option);
 				});
-
-				// Reinicializa o KTUI select se disponível
 				if (globalThis.KT && KT.Select && KT.Select.getOrCreateInstance) {
 					try {
 						const instance = KT.Select.getOrCreateInstance(sel);
@@ -1912,57 +1421,39 @@ function togglePinnedColsFromCheckbox(silent = false) {
 			});
 		}
 
-		// Atualiza a expressão baseada nos campos selecionados
 		function updateExpressionFromSelects() {
 			const formatSel = $('#cc-format');
 			const col1Sel = $('#cc-col1');
 			const col2Sel = $('#cc-col2');
 			const exprInput = $('#cc-expression');
 			const partsInput = $('#cc-parts');
-
 			if (!formatSel || !col1Sel || !col2Sel || !exprInput) return;
-
 			const selectedOp = formatSel.options[formatSel.selectedIndex];
 			const template = selectedOp?.dataset?.template;
-
-			// Se é custom ou não tem template, não faz nada
 			if (!template || formatSel.value === 'custom') return;
-
 			const col1 = col1Sel.value;
 			const col2 = col2Sel.value;
-
 			if (col1 && col2) {
 				const expression = template.replace(/{col1}/g, col1).replace(/{col2}/g, col2);
 				exprInput.value = expression;
-
-				// Auto-gerar parts para stacked rendering
 				if (partsInput) {
-					// Busca os labels das colunas selecionadas
 					const col1Label = col1Sel.options[col1Sel.selectedIndex]?.textContent || col1;
 					const col2Label = col2Sel.options[col2Sel.selectedIndex]?.textContent || col2;
-
 					const parts = [
-						{
-							label: col1Label.replace(/number/gi, '').trim(),
-							expr: col1,
-						},
-						{
-							label: col2Label.replace(/number/gi, '').trim(),
-							expr: col2,
-						},
+						{ label: col1Label.replace(/number/gi, '').trim(), expr: col1 },
+						{ label: col2Label.replace(/number/gi, '').trim(), expr: col2 },
 					];
 					partsInput.value = JSON.stringify(parts, null, 2);
 				}
 			}
 		}
 
-		// Fallback: abre/fecha caso KTUI JS não esteja exposto (defensivo)
 		function modalShow(selector) {
 			const el = document.querySelector(selector);
 			if (!el) return;
-			if (globalThis.KT && KT.Modal && KT.Modal.getOrCreateInstance) {
+			if (globalThis.KT && KT.Modal && KT.Modal.getOrCreateInstance)
 				KT.Modal.getOrCreateInstance(el).show();
-			} else {
+			else {
 				el.classList.remove('hidden');
 				el.style.display = 'block';
 				el.setAttribute('aria-hidden', 'false');
@@ -1972,9 +1463,9 @@ function togglePinnedColsFromCheckbox(silent = false) {
 		function modalHide(selector) {
 			const el = document.querySelector(selector);
 			if (!el) return;
-			if (globalThis.KT && KT.Modal && KT.Modal.getOrCreateInstance) {
+			if (globalThis.KT && KT.Modal && KT.Modal.getOrCreateInstance)
 				KT.Modal.getOrCreateInstance(el).hide();
-			} else {
+			else {
 				el.style.display = 'none';
 				el.classList.add('hidden');
 				el.classList.remove('kt-modal--open');
@@ -1982,16 +1473,12 @@ function togglePinnedColsFromCheckbox(silent = false) {
 			}
 		}
 
-		// Abre via botão da toolbar caso o data-kt falhe (defensivo)
 		const btn = document.getElementById('btnCalcCols');
 		if (btn) {
 			btn.addEventListener('click', (e) => {
-				// Se KTUI já tratar pelo data-kt, beleza; se não, abrimos no fallback:
 				const sel = btn.getAttribute('data-kt-modal-toggle') || '#calcColsModal';
-				// pequeno delay para não "competir" com o handler do KTUI
 				setTimeout(() => {
 					modalShow(sel);
-					// Limpa e popula os seletores quando o modal é aberto
 					clearForm();
 					populateExpressionSelect();
 					populateColumnSelects();
@@ -2000,33 +1487,22 @@ function togglePinnedColsFromCheckbox(silent = false) {
 			});
 		}
 
-		// Event listeners para os seletores
 		const formatSel = $('#cc-format');
 		const col1Sel = $('#cc-col1');
 		const col2Sel = $('#cc-col2');
+		if (formatSel) formatSel.addEventListener('change', updateExpressionFromSelects);
+		if (col1Sel) col1Sel.addEventListener('change', updateExpressionFromSelects);
+		if (col2Sel) col2Sel.addEventListener('change', updateExpressionFromSelects);
 
-		if (formatSel) {
-			formatSel.addEventListener('change', updateExpressionFromSelects);
-		}
-		if (col1Sel) {
-			col1Sel.addEventListener('change', updateExpressionFromSelects);
-		}
-		if (col2Sel) {
-			col2Sel.addEventListener('change', updateExpressionFromSelects);
-		}
-
-		// Também inicializa quando o modal é exibido via evento KTUI
 		const modalEl = document.getElementById('calcColsModal');
-		if (modalEl) {
+		if (modalEl)
 			modalEl.addEventListener('show.kt.modal', () => {
 				clearForm();
 				populateExpressionSelect();
 				populateColumnSelects();
 				renderList();
 			});
-		}
 
-		// Elements
 		const list = $('#cc-list');
 		const empty = $('#cc-empty');
 		const saveBtn = $('#cc-save');
@@ -2034,9 +1510,7 @@ function togglePinnedColsFromCheckbox(silent = false) {
 		const resetBtn = $('#cc-reset-form');
 		const activateAllBtn = $('#cc-activate-all');
 
-		// Inicializa os seletores na primeira carga
 		if (typeof document !== 'undefined') {
-			// Espera o DOM estar pronto
 			if (document.readyState === 'loading') {
 				document.addEventListener('DOMContentLoaded', () => {
 					setTimeout(() => {
@@ -2052,7 +1526,6 @@ function togglePinnedColsFromCheckbox(silent = false) {
 			}
 		}
 
-		// Helpers
 		function readForm() {
 			const headerName = ($('#cc-header')?.value || '').trim();
 			let id = ($('#cc-id')?.value || '').trim();
@@ -2060,11 +1533,10 @@ function togglePinnedColsFromCheckbox(silent = false) {
 			const expression = ($('#cc-expression')?.value || '').trim();
 			const onlyLevel0 = !!$('#cc-only-level0')?.checked;
 			const after = ($('#cc-after')?.value || 'Revenue').trim() || 'Revenue';
-			const mini = !!$('#cc-mini')?.checked; // <<<<<<<<<< LIGA O MINI
+			const mini = !!$('#cc-mini')?.checked;
 
-			if (!id && headerName) {
+			if (!id && headerName)
 				id = headerName.toLowerCase().replace(/\s+/g, '_').replace(/[^\w]/g, '');
-			}
 
 			let parts = [];
 			const raw = ($('#cc-parts')?.value || '').trim();
@@ -2076,34 +1548,26 @@ function togglePinnedColsFromCheckbox(silent = false) {
 					parts = null;
 				}
 			}
-
-			return { id, headerName, format, expression, parts, onlyLevel0, after, mini }; // <<<<<< retorna mini
+			return { id, headerName, format, expression, parts, onlyLevel0, after, mini };
 		}
-
 		function clearForm() {
 			$('#cc-header').value = '';
 			$('#cc-id').value = '';
-
 			const formatSel = $('#cc-format');
 			if (formatSel && formatSel.options.length > 0) formatSel.selectedIndex = 0;
-
 			const col1Sel = $('#cc-col1');
 			const col2Sel = $('#cc-col2');
 			if (col1Sel && col1Sel.options.length > 0) col1Sel.selectedIndex = 0;
 			if (col2Sel && col2Sel.options.length > 0) col2Sel.selectedIndex = 0;
-
 			$('#cc-expression').value = '';
 			$('#cc-parts').value = '[]';
 			$('#cc-only-level0').checked = true;
 			$('#cc-after').value = 'Revenue';
 			$('#cc-type').value = 'currency';
-
-			const miniEl = $('#cc-mini'); // <<<<<<
-			if (miniEl) miniEl.checked = false; // <<<<<< (padrão desativado)
-
+			const miniEl = $('#cc-mini');
+			if (miniEl) miniEl.checked = false;
 			updateExpressionFromSelects();
 		}
-
 		function renderList() {
 			if (!list) return;
 			const items = globalThis.LionCalcColumns?.list?.() || [];
@@ -2130,7 +1594,6 @@ function togglePinnedColsFromCheckbox(silent = false) {
 				btnApply.textContent = 'Activate';
 				btnApply.addEventListener('click', () => {
 					try {
-						// Re-registra e ativa este ID (reuse da API existente)
 						globalThis.LionCalcColumns?.add?.(c);
 					} catch (e) {
 						console.warn(e);
@@ -2147,11 +1610,9 @@ function togglePinnedColsFromCheckbox(silent = false) {
 					$('#cc-parts').value = (c.parts && JSON.stringify(c.parts)) || '';
 					$('#cc-only-level0').checked = !!c.onlyLevel0;
 					$('#cc-after').value = c.after || 'Revenue';
-
-					const miniEl = $('#cc-mini'); // <<<<<<
-					if (miniEl) miniEl.checked = !!c.mini; // <<<<<<
+					const miniEl = $('#cc-mini');
+					if (miniEl) miniEl.checked = !!c.mini;
 				});
-
 				const btnRemove = document.createElement('button');
 				btnRemove.className = 'kt-btn kt-btn-danger kt-btn-xs';
 				btnRemove.textContent = 'Remove';
@@ -2170,11 +1631,10 @@ function togglePinnedColsFromCheckbox(silent = false) {
 			}
 		}
 
-		// Actions
 		saveBtn?.addEventListener('click', (e) => {
 			e.preventDefault();
 			const cfg = readForm();
-			if (!cfg) return; // Erro já tratado no readForm
+			if (!cfg) return;
 			if (!cfg.id || !cfg.expression) {
 				showToast('ID e Expression são obrigatórios', 'danger');
 				return;
@@ -2190,18 +1650,15 @@ function togglePinnedColsFromCheckbox(silent = false) {
 				console.warn(err);
 			}
 		});
-
 		resetBtn?.addEventListener('click', (e) => {
 			e.preventDefault();
 			clearForm();
 		});
-
 		reloadBtn?.addEventListener('click', (e) => {
 			e.preventDefault();
 			populateColumnSelects();
 			renderList();
 		});
-
 		activateAllBtn?.addEventListener('click', (e) => {
 			e.preventDefault();
 			try {
@@ -2211,8 +1668,6 @@ function togglePinnedColsFromCheckbox(silent = false) {
 				showToast('Falha ao ativar todas', 'danger');
 			}
 		});
-
-		// Quando o modal abrir, sincroniza lista
 		document.addEventListener('click', (ev) => {
 			const t = ev.target;
 			if (!(t instanceof Element)) return;
@@ -2226,14 +1681,6 @@ function togglePinnedColsFromCheckbox(silent = false) {
 				}, 50);
 			}
 		});
-
-		// Se quiser abrir via atalho:
-		// window.addEventListener('keydown', (e) => {
-		//   if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'c') {
-		//     modalShow('#calcColsModal');
-		//     renderList();
-		//   }
-		// });
 	})();
 
 	function saveAsPreset() {
@@ -2247,41 +1694,28 @@ function togglePinnedColsFromCheckbox(silent = false) {
 		} catch {}
 		if (!state) return showToast("Couldn't capture grid state", 'danger');
 		const calcColumns = globalThis.LionCalcColumns?.exportForPreset?.() || [];
-
 		const bag = readPresets();
-		bag[name] = {
-			v: PRESET_VERSION,
-			name,
-			createdAt: Date.now(),
-			grid: state,
-			calcColumns: calcColumns,
-		};
+		bag[name] = { v: PRESET_VERSION, name, createdAt: Date.now(), grid: state, calcColumns };
 		writePresets(bag);
 		refreshPresetUserSelect();
 		const sel = byId('presetUserSelect');
 		if (sel) sel.value = name;
 		showToast(`Preset "${name}" saved`, 'success');
 	}
-
 	function applyPresetUser(name) {
 		if (!name) return;
 		const bag = readPresets();
 		const p = bag[name];
 		if (!p?.grid) return showToast('Preset not found', 'warning');
-		// Limpa colunas calculadas antes de aplicar preset
 		globalThis.LionCalcColumns?.clear?.();
-
-		// Restaura colunas calculadas do preset (se houver)
 		if (Array.isArray(p.calcColumns) && p.calcColumns.length > 0) {
 			globalThis.LionCalcColumns?.importFromPreset?.(p.calcColumns);
 		}
-
 		setState(p.grid, ['pagination', 'scroll', 'rowSelection', 'focusedCell']);
 		localStorage.setItem(LS_KEY_ACTIVE_PRESET, name);
 		refreshPresetUserSelect();
 		showToast(`Preset "${name}" applied`, 'success');
 	}
-
 	function deletePreset() {
 		const sel = byId('presetUserSelect');
 		const name = sel?.value || '';
@@ -2295,7 +1729,6 @@ function togglePinnedColsFromCheckbox(silent = false) {
 		refreshPresetUserSelect();
 		showToast(`Preset "${name}" removed`, 'info');
 	}
-
 	function downloadPreset() {
 		const sel = byId('presetUserSelect');
 		const name = sel?.value || '';
@@ -2303,9 +1736,7 @@ function togglePinnedColsFromCheckbox(silent = false) {
 		const bag = readPresets();
 		const p = bag[name];
 		if (!p) return showToast('Preset not found', 'warning');
-		const blob = new Blob([JSON.stringify(p, null, 2)], {
-			type: 'application/json;charset=utf-8',
-		});
+		const blob = new Blob([JSON.stringify(p, null, 2)], { type: 'application/json;charset=utf-8' });
 		const url = URL.createObjectURL(blob);
 		const a = document.createElement('a');
 		a.href = url;
@@ -2316,7 +1747,6 @@ function togglePinnedColsFromCheckbox(silent = false) {
 		URL.revokeObjectURL(url);
 		showToast(`Preset "${name}" downloaded`, 'success');
 	}
-
 	function uploadPreset() {
 		const input = byId('presetFileInput');
 		if (!input) return;
@@ -2395,8 +1825,6 @@ function togglePinnedColsFromCheckbox(silent = false) {
 		}
 		applyPresetUser(v);
 	});
-
-	// === Calculated Columns: botões opcionais (se existirem no HTML) ===
 	byId('btnAddCalcCol')?.addEventListener('click', () => {
 		try {
 			LionCalcColumns.openQuickBuilder();
@@ -2429,16 +1857,13 @@ function togglePinnedColsFromCheckbox(silent = false) {
 				console.log(`[Preset] Auto-aplicado: "${activePreset}"`);
 			}
 		} else {
-			// No preset active - apply complete initialization like resetLayout
 			const api = globalThis.LionGrid?.api;
 			if (api) {
 				try {
-					// Apply complete grid initialization (same as resetLayout but without clearing storage)
 					api.setState({}, []);
 					api.resetColumnState?.();
 					api.setFilterModel?.(null);
 					api.setSortModel?.([]);
-					// Apply pinned columns
 					setTimeout(() => {
 						togglePinnedColsFromCheckbox(true);
 					}, 50);
@@ -2469,11 +1894,10 @@ function normalizeCampaignRow(r) {
 		__nodeType: 'campaign',
 		__groupKey: utm,
 		__label: label,
-		campaign: (label + ' ' + utm).trim(), // campo materializado
+		campaign: (label + ' ' + utm).trim(),
 		...r,
 	};
 }
-
 function normalizeAdsetRow(r) {
 	return {
 		__nodeType: 'adset',
@@ -2486,56 +1910,36 @@ function normalizeAdRow(r) {
 	return { __nodeType: 'ad', __label: stripHtml(r.name || '(ad)'), ...r };
 }
 
-/* =========================================
- * 20) Clipboard
- * =======================================*/
-async function copyToClipboard(text) {
-	try {
-		await navigator.clipboard.writeText(String(text ?? ''));
-		showToast('Copiado!', 'success');
-	} catch {
-		const ta = document.createElement('textarea');
-		ta.value = String(text ?? '');
-		ta.style.position = 'fixed';
-		ta.style.left = '-9999px';
-		document.body.appendChild(ta);
-		ta.select();
-		try {
-			document.execCommand('copy');
-			showToast('Copiado!', 'success');
-		} catch {
-			showToast('Falha ao copiar', 'danger');
-		} finally {
-			ta.remove();
-		}
-	}
-}
-
-/* =========================================
- * 21) Grid (Tree Data + SSRM)
- * =======================================*/
-
-/* =========================================
- * Fase 1 — Classe Tabela (esqueleto)
- * =======================================*/
-// public/js/lion/class/Tabela.js
-
-// public/js/class/Tabela.js
-// Classe fina para inicializar a grid do codigobase usando makeGrid(container, columnDefs, gridOptions)
-
-// public/js/class/Tabela.js
-// public/js/class/Tabela.js
-// public/js/class/Tabela.js
-// public/js/class/Tabela.js
-// public/js/class/Tabela.js
-// Classe que instancia o Lion Grid “codigobase todo” e permite substituir só o columnDefs dinamicamente.
-
+// export/class/Tabela.js
 export class Tabela {
 	constructor(columnDefs = [], opts = {}) {
-		this.container = opts.container;
+		this.container = opts.container || '#lionGrid';
 		this.columnDefs = Array.isArray(columnDefs) ? columnDefs : [];
 		this.gridDiv = null;
 		this.api = null;
+
+		// Endpoints configuráveis
+		this.endpoints = Object.assign(
+			{
+				SSRM: '/api/ssrm/?clean=1&mode=full',
+				ADSETS: '/api/adsets/',
+				ADS: '/api/ads/',
+			},
+			opts.endpoints || {}
+		);
+
+		// Knobs de drill configuráveis
+		this.drill = Object.assign(
+			{
+				period: 'TODAY',
+				minSpinnerMs: 900, // mínimo do spinner ao abrir filhos
+				fakeNetworkMs: 0, // latência fake extra
+			},
+			opts.drill || {}
+		);
+
+		// Seletor do checkbox de pinar colunas (caso queira customizar)
+		this.pinToggleSelector = opts.pinToggleSelector || '#pinToggle';
 	}
 
 	init() {
@@ -2796,7 +2200,7 @@ export class Tabela {
 				return items;
 			},
 
-			onCellClicked(params) {
+			onCellClicked: (params) => {
 				if (params?.node?.level > 0) return;
 				const isAutoGroupCol =
 					(typeof params.column?.isAutoRowGroupColumn === 'function' &&
@@ -2896,25 +2300,25 @@ export class Tabela {
 
 							// Nível 0 — CAMPANHAS
 							if (groupKeys.length === 0) {
-								if (!ROOT_CACHE) {
-									let res = await fetch(ENDPOINTS.SSRM, {
+								if (!globalThis.ROOT_CACHE) {
+									let res = await fetch(this.endpoints.SSRM, {
 										method: 'POST',
 										headers: { 'Content-Type': 'application/json' },
 										credentials: 'same-origin',
 										body: JSON.stringify({ mode: 'full' }),
 									});
 									if (!res.ok) {
-										res = await fetch(ENDPOINTS.SSRM, {
+										res = await fetch(this.endpoints.SSRM, {
 											credentials: 'same-origin',
 										});
 									}
 									const data = await res.json().catch(() => ({ rows: [] }));
 									const rowsRaw = Array.isArray(data.rows) ? data.rows : [];
-									ROOT_CACHE = { rowsRaw };
+									globalThis.ROOT_CACHE = { rowsRaw };
 									console.debug('filterModel keys:', Object.keys(filterModel || {}));
 								}
 
-								const all = ROOT_CACHE.rowsRaw;
+								const all = globalThis.ROOT_CACHE.rowsRaw;
 								const filtered = frontApplyFilters(all, filterModelWithGlobal);
 								const ordered = frontApplySort(filtered, sortModel || []);
 								const rowsNorm = ordered.map(normalizeCampaignRow);
@@ -2998,21 +2402,21 @@ export class Tabela {
 
 								const qs = new URLSearchParams({
 									campaign_id: campaignId,
-									period: DRILL.period,
+									period: this.drill.period,
 									startRow: String(startRow),
 									endRow: String(endRow),
 									sortModel: JSON.stringify(sortModel || []),
 									filterModel: JSON.stringify(filterModelWithGlobal || {}),
 								});
 
-								if (DRILL_FAKE_NETWORK_MS > 0) await sleep(DRILL_FAKE_NETWORK_MS);
+								if (this.drill.fakeNetworkMs > 0) await sleep(this.drill.fakeNetworkMs);
 
 								const data = await fetchJSON(
-									`${DRILL_ENDPOINTS.ADSETS}?${qs.toString()}`
+									`${this.endpoints.ADSETS}?${qs.toString()}`
 								);
 								const rows = (data.rows || []).map(normalizeAdsetRow);
 
-								await withMinSpinner(t0, DRILL_MIN_SPINNER_MS);
+								await withMinSpinner(t0, this.drill.minSpinnerMs);
 
 								req.success({ rowData: rows, rowCount: data.lastRow ?? rows.length });
 
@@ -3030,19 +2434,19 @@ export class Tabela {
 
 								const qs = new URLSearchParams({
 									adset_id: adsetId,
-									period: DRILL.period,
+									period: this.drill.period,
 									startRow: String(startRow),
 									endRow: String(endRow),
 									sortModel: JSON.stringify(sortModel || []),
 									filterModel: JSON.stringify(filterModelWithGlobal || {}),
 								});
 
-								if (DRILL_FAKE_NETWORK_MS > 0) await sleep(DRILL_FAKE_NETWORK_MS);
+								if (this.drill.fakeNetworkMs > 0) await sleep(this.drill.fakeNetworkMs);
 
-								const data = await fetchJSON(`${DRILL_ENDPOINTS.ADS}?${qs.toString()}`);
+								const data = await fetchJSON(`${this.endpoints.ADS}?${qs.toString()}`);
 								const rows = (data.rows || []).map(normalizeAdRow);
 
-								await withMinSpinner(t0, DRILL_MIN_SPINNER_MS);
+								await withMinSpinner(t0, this.drill.minSpinnerMs);
 
 								req.success({ rowData: rows, rowCount: data.lastRow ?? rows.length });
 
@@ -3108,6 +2512,23 @@ export class Tabela {
 			if (_api) this.api = _api;
 		} catch {}
 
+		// ===== Bind opcional do toggle de pinos (usa a função global já existente) =====
+		this._bindPinnedToggle();
+
 		return { api: this.api, gridDiv: this.gridDiv };
+	}
+
+	_bindPinnedToggle() {
+		const el = document.querySelector(this.pinToggleSelector);
+		if (!el) return;
+		if (!el.hasAttribute('data-init-bound')) {
+			el.checked = true;
+			el.addEventListener('change', () => togglePinnedColsFromCheckbox(false));
+			el.setAttribute('data-init-bound', '1');
+		}
+		// aplica silencioso no load
+		try {
+			togglePinnedColsFromCheckbox(true);
+		} catch {}
 	}
 }
