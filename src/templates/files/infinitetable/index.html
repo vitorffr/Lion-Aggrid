@@ -4,6 +4,7 @@
     href="https://cdn.jsdelivr.net/npm/toastify-js/src/toastify.min.css"
 />
 
+
 <div id="kv-page-root" class="kt-container-fluid py-6">
     <!-- Separador superior -->
     <div class="border-b border-border mb-4"></div>
@@ -142,15 +143,15 @@
         <div class="border-b border-border"></div>
     </div>
     <!-- Grid -->
-       <script  src="/public/js/lion-grid.js"></script>
+       <!-- <script  src="/public/js/lion-grid.js"></script> -->
 
   <!-- Bootstrap da página (define colunas, SSRM, datasource) -->
-  <script  src="/public/js/lion/pages/table.bootstrap.js"></script>
     <div
-        id="lionGrid"
+        id="table"
         class="ag-theme-quartz w-full rounded-lg border border-border mt-4 overflow-hidden"
         style="height: 73vh"
     ></div>
+    
 
     <!-- Modal: Calculated Columns -->
     <div
@@ -384,6 +385,8 @@
         type="text/javascript"
         src="https://cdn.jsdelivr.net/npm/toastify-js"
     ></script>
+      <script type="module" src="/public/js/lion/pages/table.bootstrap.js"></script>
+
   <!-- Seu CORE (carregar depois do AG Grid) -->
 
 
