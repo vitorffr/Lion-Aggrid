@@ -2642,12 +2642,21 @@ export class Table {
 
 			isServerSideGroup: (data) => data?.__nodeType === 'campaign' || data?.__nodeType === 'adset',
 			getServerSideGroupKey: (data) => data?.__groupKey ?? '',
-			getRowId: (p) => {
-				if (p.data?.__nodeType === 'campaign') return `c:${p.data.__groupKey}`;
-				if (p.data?.__nodeType === 'adset') return `s:${p.data.__groupKey}`;
-				if (p.data?.__nodeType === 'ad')
-					return `a:${p.data.id || p.data.story_id || p.data.__label}`;
-				return Math.random().toString(36).slice(2);
+			getRowId: function (params) {
+				// Garante IDs únicos para cada nó
+				if (params.data && params.data.__nodeType === 'campaign') {
+					return `c:${params.data.__groupKey}`;
+				}
+				if (params.data && params.data.__nodeType === 'adset') {
+					return `s:${params.data.__groupKey}`;
+				}
+				if (params.data && params.data.__nodeType === 'ad') {
+					return `a:${params.data.id || params.data.story_id || params.data.__label}`;
+				}
+				// fallback
+				return params.data && params.data.id != null
+					? String(params.data.id)
+					: `${Math.random()}`;
 			},
 
 			// IMPORTANTE: usa APENAS as colunas passadas para a classe
@@ -2741,11 +2750,10 @@ export class Table {
 
 			getContextMenuItems: (params) => {
 				const d = params.node?.data || {};
-				const isCampaign = params.node?.level === 0;
+				const colId = params.column?.getColDef?.().colId ?? params.column?.colId;
+				const isCampaignColumn = colId === 'ag-Grid-AutoColumn'; // ajustar se seu colId for diferente
 
-				// helper: tenta extrair via renderer ou via getParts() e monta linhas
 				function buildCopyWithPartsText(p) {
-					// 1) tenta pelo renderer (usa o método getCopyText que adicionamos no StackBelowRenderer)
 					try {
 						const inst = p.api.getCellRendererInstances({
 							rowNodes: [p.node],
@@ -2757,7 +2765,6 @@ export class Table {
 						}
 					} catch {}
 
-					// 2) fallback: monta usando colDef.cellRendererParams.getParts (se existir)
 					try {
 						const colDef = p.column?.getColDef?.() || p.colDef || {};
 						const getParts = colDef?.cellRendererParams?.getParts;
@@ -2783,7 +2790,6 @@ export class Table {
 								}) || [];
 
 							for (const it of parts) {
-								// prioriza texto pronto; senão, "Label: valor"
 								const txt =
 									it?.text ||
 									it?.labelWithValue ||
@@ -2803,25 +2809,21 @@ export class Table {
 						}
 						return lines.join('\n') || String(top || '');
 					} catch {
-						// 3) último recurso
 						return String(p.valueFormatted ?? p.value ?? '');
 					}
 				}
 
-				const items = [];
-
-				// Itens padrões que você já tinha
-				items.push(
+				const items = [
 					'cut',
 					'copy',
 					'copyWithHeaders',
 					'copyWithGroupHeaders',
 					'export',
-					'separator'
-				);
+					'separator',
+				];
 
-				// Copiar "Campaign" e "UTM" quando clicar na coluna de grupo (nível 0)
-				if (isCampaign) {
+				// Somente na coluna campaign
+				if (isCampaignColumn) {
 					const label = d.__label || d.campaign_name || '';
 					const utm = d.utm_campaign || '';
 					if (label) {
@@ -2840,7 +2842,7 @@ export class Table {
 					}
 				}
 
-				// === NOVO: "Copy with parts" (só aparece quando fizer sentido) ===
+				// “Copy with parts” como antes
 				(function maybeAddCopyWithParts() {
 					const colDef = params.column?.getColDef?.() || params.colDef || {};
 					const hasRenderer =
@@ -2867,25 +2869,46 @@ export class Table {
 			},
 
 			onCellClicked: (params) => {
-				if (params?.node?.level > 0) return;
+				const node = params.node;
+				const eventTarget = params.event?.target;
+
+				// Se nó estiver carregando, ignora qualquer clique
+				if (node?.data?.__rowLoading) {
+					return;
+				}
+
+				// Apenas roots de campanha/adset devem expandir/colapsar
+				if (node.group) {
+					// Se clicou fora do ícone de expandir/contrair
+					const clickedExpanderOrCheckbox = !!eventTarget?.closest?.(
+						'.ag-group-expanded, .ag-group-contracted, .ag-group-checkbox'
+					);
+					if (!clickedExpanderOrCheckbox) {
+						// Inverte estado expandido
+						node.setExpanded(!node.expanded);
+						return;
+					}
+				}
+
+				// Após lidar com expand/collapse, se nível > 0, ignora para modal
+				if (node.level > 0) return;
+
 				const isAutoGroupCol =
 					(typeof params.column?.isAutoRowGroupColumn === 'function' &&
 						params.column.isAutoRowGroupColumn()) ||
 					params.colDef?.colId === 'ag-Grid-AutoColumn' ||
 					!!params.colDef?.showRowGroup ||
 					params?.column?.getColId?.() === 'campaign';
-				const clickedExpanderOrCheckbox = !!params.event?.target?.closest?.(
-					'.ag-group-expanded, .ag-group-contracted, .ag-group-checkbox'
-				);
-				if (
-					isAutoGroupCol &&
-					!clickedExpanderOrCheckbox &&
-					params?.data?.__nodeType === 'campaign'
-				) {
+				const clickedExpander = clickedExpanderOrCheckbox;
+				// Reusar a variável
+
+				if (isAutoGroupCol && !clickedExpander && params?.data?.__nodeType === 'campaign') {
 					const label = params.data.__label || '(no name)';
 					showKTModal({ title: 'Campaign', content: label });
 					return;
 				}
+
+				// Modal para campos específicos
 				const MODAL_FIELDS = new Set([
 					'profile_name',
 					'bc_name',
@@ -2899,14 +2922,18 @@ export class Table {
 				]);
 				const field = params.colDef?.field;
 				if (!field || !MODAL_FIELDS.has(field)) return;
-				const vfmt = params.valueFormatted;
+
 				let display;
-				if (vfmt != null && vfmt !== '') display = String(vfmt);
-				else {
+				const vfmt = params.valueFormatted;
+				if (vfmt != null && vfmt !== '') {
+					display = String(vfmt);
+				} else {
 					const val = params.value;
-					if (typeof val === 'string') display = stripHtml(val);
-					else if (val == null) display = '';
-					else if (
+					if (typeof val === 'string') {
+						display = stripHtml(val);
+					} else if (val == null) {
+						display = '';
+					} else if (
 						[
 							'account_limit',
 							'bid',
@@ -2943,8 +2970,11 @@ export class Table {
 						display = Number.isFinite(n) ? intFmt.format(n) : String(val);
 					} else if (field === 'account_status' || field === 'campaign_status') {
 						display = strongText(String(val || ''));
-					} else display = String(val);
+					} else {
+						display = String(val);
+					}
 				}
+
 				const title = params.colDef?.headerName || 'Details';
 				showKTModal({ title: 'Details', content: display || '(empty)' });
 			},
@@ -2981,7 +3011,6 @@ export class Table {
 									const data = await res.json().catch(() => ({ rows: [] }));
 									const rowsRaw = Array.isArray(data.rows) ? data.rows : [];
 									globalThis.ROOT_CACHE = { rowsRaw };
-									console.debug('filterModel keys:', Object.keys(filterModel || {}));
 								}
 
 								const all = globalThis.ROOT_CACHE.rowsRaw;
@@ -3033,23 +3062,26 @@ export class Table {
 									'cpa_fb',
 									'real_cpa',
 									'mx',
-								])
+								]) {
 									pinnedTotal[k] = nfCur.format(Number(pinnedTotal[k]) || 0);
+								}
 								for (const k of [
 									'impressions',
 									'clicks',
 									'visitors',
 									'conversions',
 									'real_conversions',
-								])
+								]) {
 									pinnedTotal[k] = intFmt.format(Number(pinnedTotal[k]) || 0);
-								if (typeof pinnedTotal.ctr === 'number')
+								}
+								if (typeof pinnedTotal.ctr === 'number') {
 									pinnedTotal.ctr = (pinnedTotal.ctr * 100).toFixed(2) + '%';
+								}
 
+								const targetApi = req.api ?? params.api;
 								try {
-									const targetApi = req.api ?? params.api;
-									targetApi?.setPinnedBottomRowData?.([pinnedTotal]) ||
-										targetApi?.setGridOption?.('pinnedBottomRowData', [pinnedTotal]);
+									targetApi.setPinnedBottomRowData?.([pinnedTotal]) ||
+										targetApi.setGridOption?.('pinnedBottomRowData', [pinnedTotal]);
 								} catch (e) {
 									console.warn('Error applying pinned bottom row:', e);
 								}
@@ -3060,10 +3092,20 @@ export class Table {
 
 							// Nível 1 — ADSETS
 							if (groupKeys.length === 1) {
-								const t0 = performance.now();
 								const campaignId = groupKeys[0];
 								const parentId = `c:${campaignId}`;
 								const apiTarget = req.api ?? params.api;
+								const parentNode = apiTarget.getRowNode(parentId);
+
+								// Bloqueio durante carregamento caso:
+								if (parentNode?.data?.__rowLoading) {
+									// Permite se estiver fechado
+									if (parentNode.expanded) {
+										req.success({ rowData: [], rowCount: 0 });
+										return;
+									}
+								}
+
 								setParentRowLoading(apiTarget, parentId, true);
 
 								const qs = new URLSearchParams({
@@ -3082,7 +3124,11 @@ export class Table {
 								);
 								const rows = (data.rows || []).map(normalizeAdsetRow);
 
-								await withMinSpinner(t0, this.drill.minSpinnerMs);
+								await withMinSpinner(req.request, this.drill.minSpinnerMs);
+
+								if (parentNode && typeof parentNode.setExpanded === 'function') {
+									parentNode.setExpanded(true, true);
+								}
 
 								req.success({ rowData: rows, rowCount: data.lastRow ?? rows.length });
 
@@ -3092,10 +3138,18 @@ export class Table {
 
 							// Nível 2 — ADS
 							if (groupKeys.length === 2) {
-								const t0 = performance.now();
 								const adsetId = groupKeys[1];
 								const parentId = `s:${adsetId}`;
 								const apiTarget = req.api ?? params.api;
+								const parentNode = apiTarget.getRowNode(parentId);
+
+								if (parentNode?.data?.__rowLoading) {
+									if (parentNode.expanded) {
+										req.success({ rowData: [], rowCount: 0 });
+										return;
+									}
+								}
+
 								setParentRowLoading(apiTarget, parentId, true);
 
 								const qs = new URLSearchParams({
@@ -3112,7 +3166,11 @@ export class Table {
 								const data = await fetchJSON(`${this.endpoints.ADS}?${qs.toString()}`);
 								const rows = (data.rows || []).map(normalizeAdRow);
 
-								await withMinSpinner(t0, this.drill.minSpinnerMs);
+								await withMinSpinner(req.request, this.drill.minSpinnerMs);
+
+								if (parentNode && typeof parentNode.setExpanded === 'function') {
+									parentNode.setExpanded(true, true);
+								}
 
 								req.success({ rowData: rows, rowCount: data.lastRow ?? rows.length });
 
@@ -3120,6 +3178,7 @@ export class Table {
 								return;
 							}
 
+							// Fallback vazio
 							req.success({ rowData: [], rowCount: 0 });
 						} catch (e) {
 							console.error('[TREE SSRM] getRows failed:', e);
