@@ -304,7 +304,7 @@ export function currencyFormatter(p) {
 export async function copyToClipboard(text) {
 	try {
 		await navigator.clipboard.writeText(String(text ?? ''));
-		showToast('Copiado!', 'success');
+		showToast('Copied!', 'success');
 	} catch {
 		const ta = document.createElement('textarea');
 		ta.value = String(text ?? '');
@@ -314,9 +314,9 @@ export async function copyToClipboard(text) {
 		ta.select();
 		try {
 			document.execCommand('copy');
-			showToast('Copiado!', 'success');
+			showToast('Copied!', 'success');
 		} catch {
-			showToast('Falha ao copiar', 'danger');
+			showToast('Failed to copy', 'danger');
 		} finally {
 			ta.remove();
 		}

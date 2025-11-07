@@ -143,7 +143,7 @@ async function toggleFeature(feature, value) {
 	});
 	const data = await res.json();
 	if (res.ok && data.ok) {
-		showToast(data.message || 'Aplicado', 'success');
+		showToast(data.message || 'Applied', 'success');
 		return true;
 	}
 	const msg = data?.error || `Erro (${res.status})`;
@@ -829,8 +829,9 @@ StatusSliderRenderer.prototype.init = function (p) {
 				clearCellError(p.node, colId);
 				p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
 				if (this._userInteracted) {
-					const scopeLabel = scope === 'ad' ? 'Ad' : scope === 'adset' ? 'Adset' : 'Campanha';
-					const msg = nextVal === 'ACTIVE' ? `${scopeLabel} ativado` : `${scopeLabel} pausado`;
+					const scopeLabel = scope === 'ad' ? 'Ad' : scope === 'adset' ? 'Adset' : 'Campaign';
+					const msg =
+						nextVal === 'ACTIVE' ? `${scopeLabel} activated` : `${scopeLabel} paused`;
 					showToast(msg, 'success');
 				}
 			} catch (e) {
@@ -843,7 +844,7 @@ StatusSliderRenderer.prototype.init = function (p) {
 				p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
 				markCellError(p.node, colId);
 				p.api.refreshCells({ rowNodes: [p.node], columns: [colId], force: true });
-				showToast(`Falha ao salvar status: ${e?.message || e}`, 'danger');
+				showToast(`Failed to save status: ${e?.message || e}`, 'danger');
 			}
 		} finally {
 			setCellBusy(false);
@@ -1158,7 +1159,7 @@ const columnDefs = [
 						if (!Number.isFinite(newN) || newN < 0) {
 							setCellSilently(p, 'budget', p.oldValue);
 							markCellError(p.node, 'budget'); // 👈 erro: input inválido
-							showToast('Budget inválido', 'danger');
+							showToast('Invalid budget', 'danger');
 							nudgeRenderer(p, 'budget');
 							return;
 						}
@@ -1184,13 +1185,13 @@ const columnDefs = [
 						markCellJustSaved(p.node, 'budget');
 						nudgeRenderer(p, 'budget');
 
-						showToast('Budget atualizado', 'success');
+						showToast('Budget updated', 'success');
 					} catch (e) {
 						setCellSilently(p, 'budget', p.oldValue);
 						markCellError(p.node, 'budget'); // 👈 erro: exceção no backend
 						nudgeRenderer(p, 'budget'); // 👈 col certa
 
-						showToast(`Erro ao salvar Budget: ${e?.message || e}`, 'danger');
+						showToast(`Error saving budget: ${e?.message || e}`, 'danger');
 					} finally {
 						setCellLoading(p.node, 'budget', false);
 						p.api.refreshCells({ rowNodes: [p.node], columns: ['budget'] });
@@ -1232,7 +1233,7 @@ const columnDefs = [
 							markCellError(p.node, 'bid'); // 👈 erro: input inválido
 							nudgeRenderer(p, 'bid'); // 👈 col certa
 
-							showToast('Bid inválido', 'danger');
+							showToast('Invalid bid', 'danger');
 							return;
 						}
 
@@ -1263,7 +1264,7 @@ const columnDefs = [
 						markCellError(p.node, 'bid'); // 👈 erro: exceção no backend
 						nudgeRenderer(p, 'bid'); // 👈 col certa
 
-						showToast(`Erro ao salvar Bid: ${e?.message || e}`, 'danger');
+						showToast(`Error saving bid: ${e?.message || e}`, 'danger');
 					} finally {
 						setCellLoading(p.node, 'bid', false);
 						p.api.refreshCells({ rowNodes: [p.node], columns: ['bid'] });
@@ -1344,7 +1345,7 @@ const columnDefs = [
 							p.api.stopEditing(false); // encerra editor sem re-commit
 							setCellValueNoEvent(p, 'bid_type', oldV); // rollback “mudo”
 							markCellError(p.node, 'bid_type');
-							showToast('Bid Type inválido', 'danger');
+							showToast('Invalid bid type', 'danger');
 							return;
 						}
 
@@ -1365,12 +1366,12 @@ const columnDefs = [
 						setCellValueNoEvent(p, 'bid_type', newV); // aplica valor final sem reentrar
 						clearCellError(p.node, 'bid_type');
 						markCellJustSaved(p.node, 'bid_type');
-						showToast('Bid Type atualizado', 'success');
+						showToast('Bid type updated', 'success');
 					} catch (e) {
 						p.api.stopEditing(false);
 						setCellValueNoEvent(p, 'bid_type', p.oldValue);
 						markCellError(p.node, 'bid_type');
-						showToast(`Erro ao salvar Bid Type: ${e?.message || e}`, 'danger');
+						showToast(`Error saving bid type: ${e?.message || e}`, 'danger');
 					} finally {
 						setCellLoading(p.node, 'bid_type', false);
 						if (p?.data) p.data.__suppress_bid_type = false; // limpa trava

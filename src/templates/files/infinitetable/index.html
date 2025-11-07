@@ -258,69 +258,80 @@
 </div>
 
 
-                        <label class="kt-input">
-                            <span class="text-sm opacity-80 whitespace-nowrap"
-                                >Custom Expression</span
-                            >
-                            <input
-                                id="cc-expression"
-                                type="text"
-                                placeholder="number(revenue) / number(clicks)"
-                            />
-                        </label>
+                       <label class="kt-input">
+  <span class="text-sm opacity-80 whitespace-nowrap">Custom Expression</span>
+  <input
+    id="cc-expression"
+    type="text"
+    placeholder="number(revenue) / number(clicks)"
+title="Syntax: number(field) with + - * /, parentheses, and decimal constants (e.g., 0.25).&#10;Not allowed: [] {} % ^ && || comparisons, strings, commas.&#10;Examples:&#10;EPC = number(revenue) / number(clicks)&#10;ROI% = (number(revenue) / number(spent)) * 100&#10;Profit = number(revenue) - number(spent)&#10;Weighted EPC = (0.7*number(fb_revenue)+0.3*number(push_revenue))/number(clicks)"
+  />
+</label>
 
-                        <label class="kt-input">
-                            <span class="text-sm opacity-80 whitespace-nowrap"
-                                >Stacked Parts</span
-                            >
-                            <input
-                                id="cc-parts"
-                                type="text"
-                                placeholder='[{"label":"EPC FB","expr":"number(fb_revenue)/number(clicks)"}]'
-                            />
-                        
-                        </label>
+<label class="kt-input">
+  <span class="text-sm opacity-80 whitespace-nowrap">Stacked Parts</span>
+  <input
+    id="cc-parts"
+    type="text"
+    placeholder='[{"label":"EPC FB","expr":"number(fb_revenue)/number(clicks)"}]'
+title='Parts shown under the main value. Provide a JSON array of objects: [{"label":"...","expr":"..."}].&#10;Expression syntax (in each "expr"): number(field) with + - * /, parentheses, and decimal constants (e.g., 0.25).&#10;Not allowed inside expr: % ^ && || comparisons, strings, commas.&#10;Note: [] and {} are only for the JSON structure here—do not use them inside the math expression.&#10;Example:&#10;[{"label":"FB","expr":"number(fb_revenue)"},{"label":"Push","expr":"number(push_revenue)"},{"label":"EPC","expr":"number(revenue)/number(clicks)"}]'
+  />
+</label>
+
 
                       <div class="flex items-center gap-3">
-  <label class="inline-flex items-center gap-2">
-    <input
-      id="cc-only-level0"
-      type="checkbox"
-      class="kt-checkbox"
-      checked
-    />
-    <span class="text-sm">Only root</span>
-  </label>
+<label class="inline-flex items-center gap-2">
+  <input
+    id="cc-only-level0"
+    type="checkbox"
+    class="kt-checkbox"
+    checked
+  />
+  <span class="text-sm"
+        title="Show this calculated column only at the root level (campaigns). Hidden for adsets/ads.">
+    Only root
+  </span>
+</label>
 
-  <!-- <label class="inline-flex items-center gap-2">
-    <input
-      id="cc-stacked"
-      type="checkbox"
-      class="kt-checkbox"
-      checked
-    />
-    <span class="text-sm">Stacked</span>
-  </label> -->
+<!-- (opcional) Stacked — se reativar, já com tooltip -->
+<!--
+<label class="inline-flex items-center gap-2">
+  <input
+    id="cc-stacked"
+    type="checkbox"
+    class="kt-checkbox"
+    checked
+  />
+  <span class="text-sm"
+        title="Display the parts stacked below the main value (scrollable if needed).">
+    Stacked
+  </span>
+</label>
+-->
 
-  <!-- NOVO: Mini -->
-  <label class="inline-flex items-center gap-2">
-    <input
-      id="cc-mini"
-      type="checkbox"
-      class="kt-checkbox"
-    />
-    <span class="text-sm">Mini (labels + Total)</span>
-  </label>
+<label class="inline-flex items-center gap-2">
+  <input
+    id="cc-mini"
+    type="checkbox"
+    class="kt-checkbox"
+  />
+  <span class="text-sm"
+        title="Compact display: hide the top value, show labels below, and include Total as a part.">
+    Mini (labels + Total)
+  </span>
+</label>
 
-  <label class="kt-input flex-1">
-    <span class="text-sm opacity-80 whitespace-nowrap">Insert after</span>
-    <input
-      id="cc-after"
-      type="text"
-      placeholder="Revenue"
-      value="Revenue"
-    />
-  </label>
+
+<label class="kt-input flex-1">
+  <span class="text-sm opacity-80 whitespace-nowrap">Insert after</span>
+  <input
+    id="cc-after"
+    type="text"
+    placeholder="Revenue"
+    value="Revenue"
+title="Placement: the new column will be inserted RIGHT AFTER this one. Accepts header, field, or colId (ignores accents/case). Examples: Revenue · Spent · Profit."
+  />
+</label>
 </div>
 
 

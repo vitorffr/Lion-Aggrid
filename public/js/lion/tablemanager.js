@@ -106,8 +106,7 @@ export let GLOBAL_QUICK_FILTER = ''; // 🔍 QUICK FILTER global (vai em filterM
  * =======================================*/
 function getAgGrid() {
 	const AG = globalThis.agGrid;
-	if (!AG)
-		throw new Error('AG Grid UMD não carregado. Verifique a ORDEM dos scripts e o path do CDN.');
+	if (!AG) throw new Error('AG Grid UMD not loaded. Check the script ORDER and the CDN path.');
 	return AG;
 }
 (function applyAgGridLicense() {
@@ -343,22 +342,87 @@ function computeClientTotals(rows) {
  * Avaliador SEGURO de expressões aritméticas sobre o row.
  * Suporta: + - * / () espaços e identificadores [A-Za-z_]\w* e helper number.
  */
+/**
+ * Avaliador SEGURO de expressões aritméticas sobre o row.
+ * Suporta: + - * / () espaços, identificadores [A-Za-z_]\w*, helper number,
+ * e **números decimais** (ex.: 0.5, 1.25, .75).
+ * Não permite: %, ^, [], {}, strings, vírgulas, acessos com ponto (a.b).
+ */
 function cc_evalExpression(expr, row) {
-	if (!expr || typeof expr !== 'string') return null;
-	if (!/^[\w\s()+\-*/]+$/.test(expr)) return null; // whitelist
-	const tokens = expr.match(/[A-Za-z_]\w*/g) || [];
-	const allowed = new Set(['number', ...Object.keys(row || {})]);
-	for (const t of tokens) if (!allowed.has(t)) return null;
+	if (typeof expr !== 'string' || !expr.trim()) return null;
 
+	// === 1) Tokenização segura ===
+	// Tokens permitidos:
+	//  - números decimais: 123, 123.45, .5
+	//  - identificadores: campaign_revenue, fb_revenue, _x1
+	//  - operadores: + - * / ( )
+	//  - espaço
+	const TOK_NUMBER = /(?:\d+\.\d+|\d+|\.\d+)/y;
+	const TOK_IDENT = /[A-Za-z_]\w*/y;
+	const TOK_OP = /[+\-*/()]/y;
+	const TOK_SPACE = /\s+/y;
+
+	const s = expr.trim();
+	const tokens = [];
+	let i = 0;
+
+	while (i < s.length) {
+		TOK_SPACE.lastIndex = TOK_NUMBER.lastIndex = TOK_IDENT.lastIndex = TOK_OP.lastIndex = i;
+
+		if (TOK_SPACE.test(s)) {
+			i = TOK_SPACE.lastIndex;
+			continue;
+		}
+
+		if (TOK_NUMBER.test(s)) {
+			const t = s.slice(i, TOK_NUMBER.lastIndex);
+			tokens.push({ type: 'num', value: t });
+			i = TOK_NUMBER.lastIndex;
+			continue;
+		}
+
+		if (TOK_IDENT.test(s)) {
+			const t = s.slice(i, TOK_IDENT.lastIndex);
+			tokens.push({ type: 'id', value: t });
+			i = TOK_IDENT.lastIndex;
+			continue;
+		}
+
+		if (TOK_OP.test(s)) {
+			const t = s.slice(i, TOK_OP.lastIndex);
+			tokens.push({ type: 'op', value: t });
+			i = TOK_OP.lastIndex;
+			continue;
+		}
+
+		// Qualquer outro caractere (inclui ponto fora de número, %, ^, [], {}, aspas, vírgula, etc.)
+		return null;
+	}
+
+	if (!tokens.length) return null;
+
+	// === 2) Valida identificadores e constrói lista de permitidos ===
+	const allowedIdSet = new Set(['number', ...Object.keys(row || {})]);
+	for (const tk of tokens) {
+		if (tk.type === 'id' && !allowedIdSet.has(tk.value)) return null;
+	}
+
+	// === 3) Reconstrói expressão “sanitizada” (sem espaços extras) ===
+	// Mantemos a ordem original, apenas juntando os lexemas aprovados.
+	const safeExpr = tokens.map((t) => t.value).join('');
+
+	// === 4) Executa com escopo controlado ===
 	try {
-		const keys = [...allowed].filter((k) => k !== 'number');
+		// Passa todos os campos do row como variáveis locais
+		const keys = [...allowedIdSet].filter((k) => k !== 'number');
 		const fn = new Function(
 			'number',
 			'row',
 			`
-      const { ${keys.join(', ')} } = row;
-      return (${expr});
-    `
+        "use strict";
+        const { ${keys.join(', ')} } = row;
+        return (${safeExpr});
+      `
 		);
 		const val = fn(number, row || {});
 		return Number.isFinite(val) ? val : null;
@@ -478,7 +542,7 @@ StackBelowRenderer.prototype.init = function (p) {
 		if (txt) {
 			navigator.clipboard?.writeText(txt).catch(() => {});
 			try {
-				showToast('Copiado!', 'success');
+				showToast('Copied!', 'success');
 			} catch {}
 		}
 	});
@@ -536,7 +600,7 @@ function ensureKtModalDom() {
 <div class="kt-modal hidden" data-kt-modal="true" id="lionKtModal" aria-hidden="true">
   <div class="kt-modal-content max-w-[420px] top-[10%]">
     <div class="kt-modal-header">
-      <h3 class="kt-modal-title">Detalhes</h3>
+      <h3 class="kt-modal-title">Details</h3>
       <button type="button" class="kt-modal-close" aria-label="Close" data-kt-modal-dismiss="#lionKtModal">✕</button>
     </div>
     <div class="kt-modal-body">
@@ -568,7 +632,7 @@ function closeKTModal(selector = '#lionKtModal') {
 	el.classList.add('hidden');
 	el.setAttribute('aria-hidden', 'true');
 }
-function showKTModal({ title = 'Detalhes', content = '' } = {}) {
+function showKTModal({ title = 'Details', content = '' } = {}) {
 	ensureKtModalDom();
 	const modal = document.querySelector('#lionKtModal');
 	if (!modal) return;
@@ -1239,16 +1303,16 @@ const LionCalcColumns = (() => {
 		let cfg = _norm(config);
 		cfg = _migrateLegacyColumn(cfg);
 		if (!cfg.id || !cfg.expression) {
-			showToast('Config inválida (id/expressão obrigatórios)', 'danger');
+			showToast('Invalid config (id/expression required)', 'danger');
 			return false;
 		}
 		if (!_compileExpr(cfg.expression)) {
-			showToast('Expressão inválida', 'danger');
+			showToast('Invalid expression', 'danger');
 			return false;
 		}
 		for (const p of cfg.parts) {
 			if (p.expr && !_compileExpr(p.expr)) {
-				showToast(`Parte inválida: ${p.label || '(sem rótulo)'}`, 'danger');
+				showToast(`Invalid part: ${p.label || '(no label)'}`, 'danger');
 				return false;
 			}
 		}
@@ -1258,7 +1322,7 @@ const LionCalcColumns = (() => {
 		else bag.push(cfg);
 		_write(bag);
 		const ok = _registerAndActivate(cfg);
-		if (ok) showToast(`Coluna "${cfg.headerName}" pronta`, 'success');
+		if (ok) showToast(`Column "${cfg.headerName}" ready`, 'success');
 		return !!ok;
 	}
 	function remove(id) {
@@ -1269,7 +1333,7 @@ const LionCalcColumns = (() => {
 		} catch {}
 		const bag = _read().filter((c) => String(c.id) !== key);
 		_write(bag);
-		showToast(`Coluna removida: ${key}`, 'info');
+		showToast(`Column removed: ${key}`, 'info');
 	}
 	function list() {
 		return _read();
@@ -1514,7 +1578,7 @@ function togglePinnedColsFromCheckbox(silent = false) {
 	function ensureApi() {
 		const api = globalThis.LionGrid?.api;
 		if (!api) {
-			console.warn('Grid API ainda não disponível');
+			console.warn('Grid API not available yet');
 			return null;
 		}
 		return api;
@@ -1884,7 +1948,7 @@ function togglePinnedColsFromCheckbox(silent = false) {
 				try {
 					parts = JSON.parse(raw);
 				} catch {
-					showToast('Parts JSON inválido', 'danger');
+					showToast('Invalid Parts JSON', 'danger');
 					parts = null;
 				}
 			}
@@ -1977,7 +2041,7 @@ function togglePinnedColsFromCheckbox(silent = false) {
 			const cfg = readForm();
 			if (!cfg) return;
 			if (!cfg.id || !cfg.expression) {
-				showToast('ID e Expression são obrigatórios', 'danger');
+				showToast('ID and Expression are required', 'danger');
 				return;
 			}
 
@@ -2022,9 +2086,9 @@ function togglePinnedColsFromCheckbox(silent = false) {
 				// 5) atualiza a lista do modal (na próxima abertura)
 				renderList();
 
-				showToast('Calculated column salva e aplicada!', 'success');
+				showToast('Calculated column saved and applied!', 'success');
 			} catch (err) {
-				showToast('Falha ao salvar coluna', 'danger');
+				showToast('Failed to save column ', 'danger');
 				console.warn(err);
 			}
 		});
@@ -2042,9 +2106,9 @@ function togglePinnedColsFromCheckbox(silent = false) {
 			e.preventDefault();
 			try {
 				globalThis.LionCalcColumns?.activateAll?.();
-				showToast('Todas as colunas calculadas ativadas', 'success');
+				showToast('All calculated columns activated', 'success');
 			} catch (err) {
-				showToast('Falha ao ativar todas', 'danger');
+				showToast('Failed to activate all', 'danger');
 			}
 		});
 		document.addEventListener('click', (ev) => {
@@ -2233,7 +2297,7 @@ function togglePinnedColsFromCheckbox(silent = false) {
 			const p = bag[activePreset];
 			if (p?.grid) {
 				setState(p.grid, ['pagination', 'scroll', 'rowSelection', 'focusedCell']);
-				console.log(`[Preset] Auto-aplicado: "${activePreset}"`);
+				console.log(`[Preset] Auto-applied: "${activePreset}"`);
 			}
 		} else {
 			const api = globalThis.LionGrid?.api;
@@ -2262,12 +2326,87 @@ function togglePinnedColsFromCheckbox(silent = false) {
 		applyPresetUser,
 	});
 })();
+document.getElementById('calcColsModal')?.addEventListener(
+	'click',
+	(e) => {
+		if (e.target.id !== 'calcColsModal') return;
+		const el = e.currentTarget;
+		try {
+			if (window.KT?.Modal?.getOrCreateInstance) {
+				window.KT.Modal.getOrCreateInstance(el).hide();
+				return;
+			}
+		} catch {}
+		el.style.display = 'none';
+		el.classList.add('hidden');
+		el.classList.remove('kt-modal--open');
+		el.setAttribute('aria-hidden', 'true');
+	},
+	{ passive: true }
+);
+// Make the "Close" button and the top-right "X" close the modal (calcColsModal)
+(function bindCalcColsModalClose() {
+	const modal = document.getElementById('calcColsModal');
+	if (!modal) return;
+
+	function hideModal() {
+		// Prefer KT if present
+		try {
+			if (window.KT?.Modal?.getOrCreateInstance) {
+				window.KT.Modal.getOrCreateInstance(modal).hide();
+				return;
+			}
+		} catch {}
+		// Fallback manual
+		modal.style.display = 'none';
+		modal.classList.add('hidden');
+		modal.classList.remove('kt-modal--open');
+		modal.setAttribute('aria-hidden', 'true');
+	}
+
+	// Wire both the "Close" button and the X icon
+	const closeBtns = modal.querySelectorAll(
+		'[data-kt-modal-dismiss="#calcColsModal"], .kt-modal-close'
+	);
+	closeBtns.forEach((btn) => {
+		btn.addEventListener(
+			'click',
+			(e) => {
+				e.preventDefault();
+				hideModal();
+			},
+			{ passive: true }
+		);
+	});
+})();
+
+// (opcional) ESC fecha também
+document.addEventListener(
+	'keydown',
+	(e) => {
+		if (e.key !== 'Escape') return;
+		const el = document.getElementById('calcColsModal');
+		if (!el || el.getAttribute('aria-hidden') !== 'false') return;
+
+		try {
+			if (window.KT?.Modal?.getOrCreateInstance) {
+				window.KT.Modal.getOrCreateInstance(el).hide();
+				return;
+			}
+		} catch {}
+		el.style.display = 'none';
+		el.classList.add('hidden');
+		el.classList.remove('kt-modal--open');
+		el.setAttribute('aria-hidden', 'true');
+	},
+	{ passive: true }
+);
 
 /* =========================================
  * 19) Normalizadores (TreeData)
  * =======================================*/
 function normalizeCampaignRow(r) {
-	const label = stripHtml(r.campaign_name || '(sem nome)');
+	const label = stripHtml(r.campaign_name || '(no name)');
 	const utm = String(r.utm_campaign || r.id || '');
 	return {
 		__nodeType: 'campaign',
@@ -2329,7 +2468,7 @@ export class Table {
 		const AG = getAgGrid();
 		this.gridDiv = document.querySelector(this.container);
 		if (!this.gridDiv) {
-			console.error('[LionGrid] #lionGrid não encontrado');
+			console.error('[LionGrid] #lionGrid not found');
 			return null;
 		}
 		this.gridDiv.classList.add('ag-theme-quartz');
@@ -2687,14 +2826,14 @@ export class Table {
 					const utm = d.utm_campaign || '';
 					if (label) {
 						items.push({
-							name: 'Copiar Campaign',
+							name: 'Copy Campaign',
 							action: () => copyToClipboard(label),
 							icon: '<span class="ag-icon ag-icon-copy"></span>',
 						});
 					}
 					if (utm) {
 						items.push({
-							name: 'Copiar UTM',
+							name: 'Copy UTM',
 							action: () => copyToClipboard(utm),
 							icon: '<span class="ag-icon ag-icon-copy"></span>',
 						});
@@ -2717,7 +2856,7 @@ export class Table {
 							const txt = buildCopyWithPartsText(params);
 							copyToClipboard(txt);
 							try {
-								showToast('Copiado (com partes)', 'success');
+								showToast('Copied (with parts)', 'success');
 							} catch {}
 						},
 						icon: '<span class="ag-icon ag-icon-copy"></span>',
@@ -2743,7 +2882,7 @@ export class Table {
 					!clickedExpanderOrCheckbox &&
 					params?.data?.__nodeType === 'campaign'
 				) {
-					const label = params.data.__label || '(sem nome)';
+					const label = params.data.__label || '(no name)';
 					showKTModal({ title: 'Campaign', content: label });
 					return;
 				}
@@ -2806,8 +2945,8 @@ export class Table {
 						display = strongText(String(val || ''));
 					} else display = String(val);
 				}
-				const title = params.colDef?.headerName || 'Detalhes';
-				showKTModal({ title, content: display || '(vazio)' });
+				const title = params.colDef?.headerName || 'Details';
+				showKTModal({ title: 'Details', content: display || '(empty)' });
 			},
 
 			onGridReady: (params) => {
@@ -2912,7 +3051,7 @@ export class Table {
 									targetApi?.setPinnedBottomRowData?.([pinnedTotal]) ||
 										targetApi?.setGridOption?.('pinnedBottomRowData', [pinnedTotal]);
 								} catch (e) {
-									console.warn('Erro ao aplicar pinned bottom row:', e);
+									console.warn('Error applying pinned bottom row:', e);
 								}
 
 								req.success({ rowData: slice, rowCount: totalCount });

@@ -489,7 +489,9 @@ async function loadAssetJSON(request, env, assetPath) {
 		if (!res || !res.ok) {
 			const body = await res?.text?.().catch(() => '');
 			throw new Error(
-				`[ASSETS] ${res?.status || 'ERR'} ao ler ${assetPath}: ${body?.slice?.(0, 200) || ''}`
+				`[ASSETS] ${res?.status || 'ERR'} while reading ${assetPath}: ${
+					body?.slice?.(0, 200) || ''
+				}`
 			);
 		}
 		const json = await res.json();
@@ -522,13 +524,13 @@ async function loadAssetJSON(request, env, assetPath) {
 		return json;
 	}
 
-	throw new Error('ASSETS não configurado e DEV fallback desativado.');
+	throw new Error('ASSETS not configured and DEV fallback disabled.');
 }
 
 // Manifest → partes (decodifica por streaming para reduzir cópias)
 async function loadJoinedAssetJSON(request, env, manifestPath) {
 	const manRes = await fetchAsset(env, manifestPath);
-	if (!manRes.ok) throw new Error(`[ASSETS] ${manRes.status} ao ler manifest ${manifestPath}`);
+	if (!manRes.ok) throw new Error(`[ASSETS] ${manRes.status} while reading manifest ${manifestPath}`);
 	const manifest = await manRes.json(); // { parts: [{file, size, sha256?}], ... }
 	if (!manifest || !Array.isArray(manifest.parts) || !manifest.parts.length) {
 		throw new Error(`Manifest inválido em ${manifestPath}`);
@@ -541,7 +543,7 @@ async function loadJoinedAssetJSON(request, env, manifestPath) {
 	for (const p of manifest.parts) {
 		const filePath = `${baseDir}/${p.file}`; // ex: /constants/teste.part00.json
 		const res = await fetchAsset(env, filePath);
-		if (!res.ok || !res.body) throw new Error(`Falha ao ler parte: ${p.file}`);
+		if (!res.ok || !res.body) throw new Error(`Failed to read part: ${p.file}`);
 
 		const reader = res.body.getReader();
 		while (true) {
@@ -730,7 +732,7 @@ async function adsets(req, env) {
 		).toUpperCase();
 
 		const full = await loadAssetJSON(reqForAssets, env, '/constants/adsets.json');
-		if (!Array.isArray(full)) throw new Error('adsets.json inválido (esperado array).');
+		if (!Array.isArray(full)) throw new Error('Invalid ads.json (expected array).');
 
 		// full já vem indexado pelo cache loader; overlay pode alterar campos visíveis,
 		// mas __search é usado só em filtro global (não muda no overlay).
@@ -781,7 +783,7 @@ async function ads(req, env) {
 		).toUpperCase();
 
 		const full = await loadAssetJSON(reqForAssets, env, '/constants/ads.json');
-		if (!Array.isArray(full)) throw new Error('ads.json inválido (esperado array).');
+		if (!Array.isArray(full)) throw new Error('Invalid adsets.json (expected array).');
 
 		let rows = filterByParentAndPeriod(full, { idKey: 'idchild', idValue: adsetId, period });
 		rows = overlayAdArray(rows);
@@ -998,7 +1000,7 @@ async function ssrm(req, env) {
 		const skipTotals = (u.searchParams.get('totals') ?? '').toString() === '0';
 
 		const full = await loadDump(reqForAssets, env);
-		if (!Array.isArray(full)) throw new Error('Dump JSON inválido (esperado array).');
+		if (!Array.isArray(full)) throw new Error('Invalid dump JSON (expected array).');
 
 		// FAST-PATH: sem sort e sem filtros e não-full → fatia antes de mapear tudo
 		const wantFast = mode !== 'full' && !sortModel?.length && !hasFilters(filterModel);
@@ -1085,7 +1087,7 @@ async function testToggle(req, env) {
 		const success = Math.random() < 0.75;
 		if (!success) {
 			return new Response(
-				JSON.stringify({ ok: false, error: `Mock: falha ao aplicar "${feature}"` }),
+				JSON.stringify({ ok: false, error: `Mock: failed to apply "${feature}"` }),
 				{
 					headers: { 'Content-Type': 'application/json' },
 				}
@@ -1096,7 +1098,7 @@ async function testToggle(req, env) {
 			JSON.stringify({
 				ok: true,
 				applied: { feature, value },
-				message: `Aplicado "${feature}" = ${JSON.stringify(value)}`,
+				message: `Applied "${feature}" = ${JSON.stringify(value)}`,
 			}),
 			{ headers: { 'Content-Type': 'application/json' } }
 		);
