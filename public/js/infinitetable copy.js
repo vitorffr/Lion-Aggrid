@@ -2419,7 +2419,7 @@ const defaultColDef = {
 	filter: 'agTextColumnFilter',
 	floatingFilter: true,
 	resizable: true,
-	cellClass: (p) => 'lion-center-cell',
+	cellClass: 'lion-center-cell', // classe fixa — sem função
 	wrapHeaderText: true,
 	autoHeaderHeight: true,
 	enableRowGroup: true,

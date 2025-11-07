@@ -18,7 +18,7 @@ import {
 	cc_percentFormat,
 	currencyFormatter,
 	copyToClipboard,
-} from './lion/utils.js';
+} from './utils.js';
 
 /* =========================================
  * 0) Endpoints & Drilldown knobs
@@ -65,6 +65,35 @@ export let GLOBAL_QUICK_FILTER = ''; // 🔍 QUICK FILTER global (vai em filterM
 .ag-cell.lion-cell-error{ background: rgba(239, 68, 68, 0.12); box-shadow: inset 0 0 0 1px rgba(239,68,68,.35); transition: background .2s ease, box-shadow .2s ease; }
 .ag-cell.lion-cell-error .lion-editable-val{ color: #ef4444; font-weight: 600; }
 .ag-cell.lion-cell-error.ag-cell-focus, .ag-cell.lion-cell-error:hover{ background: rgba(239, 68, 68, 0.18); box-shadow: inset 0 0 0 1px rgba(239,68,68,.5); }
+
+/* ===== Centralização real para células que podem quebrar linha ===== */
+/* 1) Remove o viés de -1px do tema nas colunas marcadas como 'lion-center-cell' */
+.ag-theme-quartz :where(.ag-ltr) .ag-center-cols-container
+  .ag-cell.lion-center-cell:not(.ag-cell-inline-editing):not([col-id="ag-Grid-AutoColumn"]):not([col-id="campaign"]) {
+  padding-left: var(--ag-cell-horizontal-padding) !important;
+  padding-right: var(--ag-cell-horizontal-padding) !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;      /* texto multi-linha centraliza */
+}
+
+/* 2) Faz os wrappers ocuparem a largura toda */
+.ag-theme-quartz .ag-center-cols-container
+  .ag-cell.lion-center-cell:not(.ag-cell-inline-editing) .ag-cell-wrapper {
+  width: 100%;
+}
+
+/* 3) Garante que o conteúdo (quebrando linha) centralize */
+.ag-theme-quartz .ag-center-cols-container
+  .ag-cell.lion-center-cell:not(.ag-cell-inline-editing) .ag-cell-value {
+  display: block;          /* evita inline-size encolhendo */
+  width: 100%;             /* ocupa a célula toda */
+  text-align: center;      /* linhas quebradas centralizadas */
+  white-space: normal;     /* habilita wrap */
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
 `;
 	const el = document.createElement('style');
 	el.id = 'lion-loading-styles';
@@ -349,15 +378,18 @@ function cc_evalExpression(expr, row) {
 
 const REVENUE_LABELS = ['A', 'B'];
 
-/** Renderer: valor principal + linhas auxiliares abaixo */
+/** Renderer: valor principal + linhas auxiliares abaixo (com scroll nas partes) */
+/** Renderer: valor principal + linhas auxiliares abaixo (com scroll nas partes) */
 function StackBelowRenderer() {}
 StackBelowRenderer.prototype.init = function (p) {
 	this.p = p;
-	this.eGui = document.createElement('span');
-	this.eGui.style.display = 'inline-flex';
-	this.eGui.style.flexDirection = 'column';
-	this.eGui.style.lineHeight = '1.15';
-	this.eGui.style.gap = '2px';
+
+	// root do renderer
+	const wrap = document.createElement('span');
+	wrap.style.display = 'inline-flex';
+	wrap.style.flexDirection = 'column';
+	wrap.style.lineHeight = '1.15';
+	wrap.style.gap = '2px';
 
 	const lvl = p?.node?.level ?? -1;
 	const params = p?.colDef?.cellRendererParams || {};
@@ -367,10 +399,16 @@ StackBelowRenderer.prototype.init = function (p) {
 	const maxParts = Number(params.maxParts) || 0; // 0 = sem limite
 	const fmtKey = String(params.format || 'raw');
 
+	// Altura máxima do bloco das PARTES (scroll)
+	const partsMaxHeight = Number(params.partsMaxHeight) > 0 ? Number(params.partsMaxHeight) : 72;
+
 	if (isPinnedOrTotal(p) || (onlyLevel0 && lvl !== 0)) {
 		const span = document.createElement('span');
 		span.textContent = stripHtml(p.value ?? '');
-		this.eGui.appendChild(span);
+		wrap.appendChild(span);
+		this.topEl = span;
+		this.partsBox = null;
+		this.eGui = wrap;
 		return;
 	}
 
@@ -382,13 +420,28 @@ StackBelowRenderer.prototype.init = function (p) {
 		return String(v);
 	};
 
+	// Linha do topo (valor principal)
+	this.topEl = null;
 	if (showTop) {
 		const topEl = document.createElement('span');
 		const topVal = p.valueFormatted != null ? p.valueFormatted : p.value;
 		const coerced = typeof topVal === 'number' ? topVal : number(topVal);
 		topEl.textContent = formatVal(Number.isFinite(coerced) ? coerced : topVal);
-		this.eGui.appendChild(topEl);
+		wrap.appendChild(topEl);
+		this.topEl = topEl;
 	}
+
+	// Container SCROLLÁVEL das partes
+	const partsBox = document.createElement('span');
+	partsBox.className = 'lion-stack-scroll';
+	partsBox.style.display = 'inline-flex';
+	partsBox.style.flexDirection = 'column';
+	partsBox.style.gap = '2px';
+	partsBox.style.maxHeight = partsMaxHeight + 'px';
+	partsBox.style.overflowY = 'auto';
+	partsBox.style.paddingRight = '2px';
+	partsBox.style.contain = 'content';
+	this.partsBox = partsBox;
 
 	const partsFn = p?.colDef?.cellRendererParams?.getParts;
 	let parts = [];
@@ -405,8 +458,23 @@ StackBelowRenderer.prototype.init = function (p) {
 		const lab = String(row?.label ?? '').trim();
 		const valNum = Number.isFinite(row?.value) ? row.value : number(row?.value);
 		line.textContent = partsLabelOnly ? lab || '' : (lab ? `${lab}: ` : '') + formatVal(valNum);
-		this.eGui.appendChild(line);
+		partsBox.appendChild(line);
 	});
+
+	if (partsBox.childNodes.length > 0) wrap.appendChild(partsBox);
+
+	// atalho: duplo-clique copia exatamente o que está renderizado
+	wrap.addEventListener('dblclick', () => {
+		const txt = this.getCopyText();
+		if (txt) {
+			navigator.clipboard?.writeText(txt).catch(() => {});
+			try {
+				showToast('Copiado!', 'success');
+			} catch {}
+		}
+	});
+
+	this.eGui = wrap;
 };
 StackBelowRenderer.prototype.getGui = function () {
 	return this.eGui;
@@ -414,6 +482,20 @@ StackBelowRenderer.prototype.getGui = function () {
 StackBelowRenderer.prototype.refresh = function (p) {
 	this.init(p);
 	return true;
+};
+
+// <- NOVO: retorna o texto exatamente como aparece (topo + cada linha das partes)
+StackBelowRenderer.prototype.getCopyText = function () {
+	const lines = [];
+	const t = (el) => (el ? String(el.textContent || '').trim() : '');
+	const push = (s) => {
+		if (s && s !== '—') lines.push(s);
+	};
+	push(t(this.topEl));
+	if (this.partsBox) {
+		for (const child of this.partsBox.childNodes) push(t(child));
+	}
+	return lines.join('\n');
 };
 
 /* =========================================
@@ -681,21 +763,28 @@ function createAgTheme() {
 /* =========================================
  * 12.1) Composite Columns registry
  * =======================================*/
+/* =========================================
+ * 12.1) Composite Columns registry (corrigido)
+ * =======================================*/
 const LionCompositeColumns = (() => {
 	const registry = new Map();
+
 	function register(id, builder) {
 		registry.set(String(id), builder);
 	}
+
 	function _ensureApi() {
 		const api = globalThis.LionGrid?.api;
 		if (!api) throw new Error('[CompositeColumns] Grid API indisponível');
 		return api;
 	}
+
 	function _getColumnDefs(api) {
 		if (typeof api.getColumnDefs === 'function') return api.getColumnDefs() || [];
 		const cols = api.getColumns?.() || [];
 		return cols.map((c) => c.getColDef?.()).filter(Boolean);
 	}
+
 	function _setColumnDefs(api, defs) {
 		if (typeof api.setGridOption === 'function') api.setGridOption('columnDefs', defs);
 		else if (typeof api.setColumnDefs === 'function') api.setColumnDefs(defs);
@@ -705,67 +794,198 @@ const LionCompositeColumns = (() => {
 			else throw new Error('api.setColumnDefs is not available');
 		}
 	}
+
 	function _findGroup(defs, groupId) {
 		for (const d of defs) if (d?.groupId === groupId) return d;
 		return null;
 	}
-	function _insertAfter(children, newDef, afterFieldOrHeader) {
-		const key = String(afterFieldOrHeader || '').trim();
-		if (!key) {
-			children.push(newDef);
+
+	// --- helpers globais internos ---
+	function _normKey(s) {
+		return String(s || '')
+			.toLowerCase()
+			.normalize('NFD')
+			.replace(/[\u0300-\u036f]/g, '')
+			.replace(/[^a-z0-9]/g, '');
+	}
+
+	function _walkDefs(defs, visit, parentCtx = null) {
+		(defs || []).forEach((d, idx) => {
+			const ctx = { parent: parentCtx?.node || null, arr: defs, idx, node: d };
+			if (d && Array.isArray(d.children) && d.children.length) {
+				_walkDefs(d.children, visit, ctx);
+			} else {
+				visit(d, ctx);
+			}
+		});
+	}
+
+	function _buildColIndex(allDefs) {
+		const map = new Map();
+		_walkDefs(allDefs, (leaf, ctx) => {
+			const keys = [
+				_normKey(leaf?.colId),
+				_normKey(leaf?.field),
+				_normKey(leaf?.headerName),
+			].filter(Boolean);
+			keys.forEach((k) => {
+				if (!map.has(k)) map.set(k, { arr: ctx.arr, idx: ctx.idx, leaf });
+			});
+		});
+		return map;
+	}
+	// Mapeia sinônimos comuns -> chaves canônicas
+	function _aliasList(raw) {
+		const s = String(raw || '')
+			.trim()
+			.toLowerCase();
+		const base = [raw]; // mantém o original
+		const map = {
+			revenue: ['revenue', 'receita', 'receitas', 'rev', 'fat', 'faturamento'],
+			spent: [
+				'spent',
+				'gasto',
+				'gastos',
+				'spend',
+				'despesa',
+				'despesas',
+				'cost',
+				'custo',
+				'custos',
+			],
+			profit: ['profit', 'lucro', 'resultado', 'ganho', 'ganhos'],
+			mx: ['mx', 'roi', 'roas', 'retorno'],
+			ctr: ['ctr', 'taxadeclique', 'taxa de clique'],
+			clicks: ['clicks', 'cliques', 'clique'],
+		};
+		for (const [k, arr] of Object.entries(map)) {
+			if (arr.includes(s)) return [k, ...arr];
+		}
+		return base;
+	}
+
+	// Escolhe o “hit” no índice aceitando: (1) match exato normalizado, (2) substring
+	function _pickHitByTargets(allDefs, idxMap, afterTargets) {
+		const norm = (x) =>
+			(x == null ? '' : String(x))
+				.toLowerCase()
+				.normalize('NFD')
+				.replace(/[\u0300-\u036f]/g, '')
+				.replace(/[^a-z0-9]/g, '');
+
+		// 1) tenta exact match por qualquer alvo (inclui aliases)
+		for (const raw of afterTargets.flatMap(_aliasList)) {
+			const key = norm(raw);
+			if (key && idxMap.has(key)) return idxMap.get(key);
+		}
+
+		// 2) tenta substring match em headerName/field/colId
+		const leaves = [];
+		_walkDefs(allDefs, (leaf, ctx) => leaves.push({ leaf, ctx }));
+		for (const raw of afterTargets.flatMap(_aliasList)) {
+			const needle = norm(raw);
+			if (!needle) continue;
+			for (const { leaf, ctx } of leaves) {
+				const bag = [leaf?.headerName, leaf?.field, leaf?.colId].map(norm).filter(Boolean);
+				if (bag.some((s) => s.includes(needle))) return { arr: ctx.arr, idx: ctx.idx, leaf };
+			}
+		}
+
+		return null; // nada encontrado
+	}
+
+	// afterKey pode ser string ou array de strings
+	function _insertAfter(allDefs, newDef, afterKey, fallbackGroupNode /* opcional */) {
+		const targets = (Array.isArray(afterKey) ? afterKey : [afterKey]).filter(
+			(k) => k != null && String(k).trim() !== ''
+		);
+
+		const idxMap = _buildColIndex(allDefs);
+		const hit = _pickHitByTargets(allDefs, idxMap, targets);
+
+		if (hit) {
+			const { arr, idx } = hit;
+			arr.splice(idx + 1, 0, newDef); // insere ao lado do alvo, no mesmo pai
 			return;
 		}
-		const idx = children.findIndex((c) => {
-			const cid = String(c.colId || c.field || '').trim();
-			const hn = String(c.headerName || '').trim();
-			return cid === key || hn === key;
-		});
-		if (idx === -1) children.push(newDef);
-		else children.splice(idx + 1, 0, newDef);
+
+		if (fallbackGroupNode && Array.isArray(fallbackGroupNode.children)) {
+			fallbackGroupNode.children.push(newDef);
+			return;
+		}
+		allDefs.push(newDef); // fallback final
+	}
+
+	function _removeCols(allDefs, idsSet) {
+		// remove folhas com colId/field em qualquer nível
+		function filterArray(arr) {
+			for (let i = arr.length - 1; i >= 0; i--) {
+				const d = arr[i];
+				if (d?.children?.length) {
+					filterArray(d.children);
+					// se um grupo ficar vazio, mantemos o grupo (AG Grid lida com grupo vazio)
+				} else {
+					const key = String(d?.colId || d?.field || '');
+					if (key && idsSet.has(key)) arr.splice(i, 1);
+				}
+			}
+		}
+		filterArray(allDefs);
 	}
 	function activate(ids = []) {
 		const api = _ensureApi();
 		const defsRef = _getColumnDefs(api);
-		const newDefs = defsRef.slice();
-		const group = _findGroup(newDefs, 'grp-metrics-rev');
-		if (!group || !Array.isArray(group.children)) {
-			console.warn('[CompositeColumns] Grupo "Metrics & Revenue" não encontrado');
-			return;
-		}
-		const newChildren = group.children.slice();
-		ids.forEach((id) => {
+		const newDefs = Array.isArray(defsRef) ? defsRef.slice() : [];
+		const fallbackGroupNode = _findGroup(newDefs, 'grp-metrics-rev');
+
+		// só constrói o índice uma vez; atualizamos quando inserir
+		let idxMap = _buildColIndex(newDefs);
+
+		for (const id of ids) {
 			const builder = registry.get(String(id));
-			if (!builder) return;
+			if (!builder) continue;
+
 			const colDef = builder();
-			if (!colDef || typeof colDef !== 'object') return;
-			const colKey = String(colDef.colId || colDef.field);
-			const exists = newChildren.some((c) => String(c.colId || c.field) === colKey);
-			if (exists) return;
-			const afterKey = (colDef.__after && String(colDef.__after).trim()) || 'Revenue';
-			_insertAfter(newChildren, colDef, afterKey);
-		});
-		group.children = newChildren;
+			if (!colDef || typeof colDef !== 'object') continue;
+
+			const colKey = _normKey(String(colDef.colId || colDef.field || ''));
+			if (!colKey) continue;
+
+			// evita duplicar
+			if (idxMap.has(colKey)) continue;
+
+			// alvo pode vir como __afterId (field/colId) OU __after (label/array)
+			let afterRaw = colDef.__afterId || colDef.__after || 'Revenue';
+			const afterTargets = Array.isArray(afterRaw) ? afterRaw : [afterRaw];
+
+			_insertAfter(newDefs, colDef, afterTargets, fallbackGroupNode);
+
+			// reindexa após inserir
+			idxMap = _buildColIndex(newDefs);
+		}
+
 		_setColumnDefs(api, newDefs);
 		try {
 			api.sizeColumnsToFit?.();
 		} catch {}
 		return true;
 	}
+
 	function deactivate(ids = []) {
 		const api = _ensureApi();
 		const defsRef = _getColumnDefs(api);
-		const newDefs = defsRef.slice();
-		const group = _findGroup(newDefs, 'grp-metrics-rev');
-		if (!group || !Array.isArray(group.children)) return;
+		const newDefs = Array.isArray(defsRef) ? defsRef.slice() : [];
 		const idsSet = new Set(ids.map(String));
-		const newChildren = group.children.filter((c) => !idsSet.has(String(c.colId || c.field)));
-		group.children = newChildren;
+
+		_removeCols(newDefs, idsSet);
+
 		_setColumnDefs(api, newDefs);
 		try {
 			api.sizeColumnsToFit?.();
 		} catch {}
 		return true;
 	}
+
 	return { register, activate, deactivate };
 })();
 
@@ -882,16 +1102,54 @@ const LionCalcColumns = (() => {
 			colId: id,
 			minWidth: 150,
 			flex: 1,
-			pinned: 'right',
+			pinned: null,
 			valueGetter: (p) => {
 				const row = p?.data || {};
 				const val = totalFn ? totalFn(row) : null;
 				return Number.isFinite(val) ? val : null;
 			},
 			valueFormatter,
-			tooltipValueGetter,
+			clipboardValueGetter: (p) => {
+				// 1) tenta extrair do renderer (DOM -> top + partes)
+				try {
+					const inst = p.api.getCellRendererInstances({
+						rowNodes: [p.node],
+						columns: [p.column],
+					})?.[0];
+					if (inst && typeof inst.getCopyText === 'function') {
+						const txt = inst.getCopyText();
+						if (txt && txt.trim()) return txt;
+					}
+				} catch {}
+
+				// 2) fallback (sem renderer): monta com total + partes
+				try {
+					const row = p?.data || {};
+					const tot = typeof totalFn === 'function' ? totalFn(row) : null;
+					const partsNow = p?.colDef?.cellRendererParams?.getParts
+						? p.colDef.cellRendererParams.getParts({ data: row })
+						: [];
+					const lines = [];
+					lines.push(`${totalLabel}: ${_fmtBy(format, tot)}`);
+					for (const it of partsNow) {
+						const v = Number.isFinite(it?.value) ? it.value : null;
+						const fmt = it?.isTotal ? format : partsFormat;
+						const label = String(it?.label || it?.name || '').trim();
+						const line = label ? `${label}: ${_fmtBy(fmt, v)}` : _fmtBy(fmt, v);
+						if (line && line !== '—') lines.push(line);
+					}
+					return lines.join('\n');
+				} catch {
+					// 3) último recurso: valor bruto
+					const v = p.valueFormatted ?? p.value ?? '';
+					return String(v);
+				}
+			},
+
 			cellRenderer: StackBelowRenderer,
 			cellRendererParams: {
+				partsMaxHeight: 40, // em px (ex.: 96, 120, 160)
+
 				onlyLevel0: !!onlyLevel0,
 				format:
 					partsFormat === 'int'
@@ -1089,6 +1347,7 @@ const defaultColDef = {
 	enableValue: true,
 	suppressHeaderFilterButton: true,
 };
+
 function isPinnedOrGroup(params) {
 	return params?.node?.rowPinned || params?.node?.group;
 }
@@ -1385,28 +1644,100 @@ function togglePinnedColsFromCheckbox(silent = false) {
 		function populateColumnSelects() {
 			const api = ensureApi();
 			if (!api) return;
-			const col1Sel = $('#cc-col1');
-			const col2Sel = $('#cc-col2');
+
+			// ===== helpers para repetir a mesma lógica do CalcColsPopulate =====
+			function _isCalculableByDef(def) {
+				if (!def) return false;
+				if (def.calcEligible === true) return true;
+				if (def.calcType === 'numeric') return true;
+				if (def.valueType === 'number') return true;
+				if (def.cellDataType === 'number') return true;
+				if (def.type === 'numericColumn') return true;
+				if (def.filter === 'agNumberColumnFilter') return true;
+				if (typeof def.valueParser === 'function') return true;
+				return false;
+			}
+			function _flattenColDefs(defOrArray) {
+				const out = [];
+				const walk = (arr) => {
+					(arr || []).forEach((def) => {
+						if (def?.children?.length) walk(def.children);
+						else out.push(def);
+					});
+				};
+				if (Array.isArray(defOrArray)) walk(defOrArray);
+				else if (defOrArray) walk([defOrArray]);
+				return out;
+			}
+			function _getSelectableColumns() {
+				let defs = [];
+				try {
+					const displayed = api.getAllDisplayedColumns?.() || [];
+					if (displayed.length) {
+						defs = displayed
+							.map((gc) => gc.getColDef?.() || gc.colDef || null)
+							.filter(Boolean);
+					}
+				} catch {}
+				if (!defs.length) {
+					const columnState = api.getColumnState?.() || [];
+					const viaState = columnState
+						.map((s) => api.getColumn?.(s.colId)?.getColDef?.())
+						.filter(Boolean);
+					if (viaState.length) defs = viaState;
+					else defs = (api.getColumnDefs?.() || []).flatMap(_flattenColDefs);
+				}
+
+				const deny = new Set(['ag-Grid-AutoColumn', 'ag-Grid-RowGroup', '__autoGroup']);
+				defs = defs.filter((def) => {
+					if (!def) return false;
+					const field = def.field || def.colId;
+					const header = def.headerName || field;
+					if (!field || !header) return false;
+					if (deny.has(field)) return false;
+					if (String(field).startsWith('__')) return false;
+					if (def.checkboxSelection) return false;
+					if (def.rowGroup || def.pivot) return false;
+					const h = String(header).toLowerCase();
+					if (h.includes('select') || h.includes('ação') || h.includes('action')) return false;
+					return true;
+				});
+
+				// mantém apenas as numéricas/calculáveis
+				defs = defs.filter(_isCalculableByDef);
+
+				// map + dedup por field
+				const mapped = defs.map((def) => ({
+					field: String(def.field || def.colId),
+					label: String(def.headerName || def.field || def.colId),
+				}));
+				const seen = new Set();
+				const unique = [];
+				for (const it of mapped) {
+					if (seen.has(it.field)) continue;
+					seen.add(it.field);
+					unique.push(it);
+				}
+				// ordena por label visível
+				unique.sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'));
+				return unique;
+			}
+
+			// ===== aplica no <select> do modal =====
+			const col1Sel = document.querySelector('#cc-col1');
+			const col2Sel = document.querySelector('#cc-col2');
 			if (!col1Sel || !col2Sel) return;
-			const allCols = api.getColumns?.() || [];
-			const colOptions = allCols
-				.filter((col) => {
-					const colDef = col.getColDef?.();
-					return colDef && colDef.field && !colDef.hide;
-				})
-				.map((col) => {
-					const colDef = col.getColDef?.();
-					return { field: colDef.field, label: colDef.headerName || colDef.field };
-				})
-				.sort((a, b) => a.label.localeCompare(b.label));
+
+			const options = _getSelectableColumns();
 			[col1Sel, col2Sel].forEach((sel) => {
 				sel.innerHTML = '';
-				colOptions.forEach((col) => {
-					const option = document.createElement('option');
-					option.value = col.field;
-					option.textContent = col.label;
-					sel.appendChild(option);
-				});
+				for (const col of options) {
+					const opt = document.createElement('option');
+					opt.value = col.field;
+					opt.textContent = `${col.label} (${col.field})`;
+					sel.appendChild(opt);
+				}
+				// reinit KT select se existir
 				if (globalThis.KT && KT.Select && KT.Select.getOrCreateInstance) {
 					try {
 						const instance = KT.Select.getOrCreateInstance(sel);
@@ -1909,9 +2240,9 @@ function normalizeAdsetRow(r) {
 function normalizeAdRow(r) {
 	return { __nodeType: 'ad', __label: stripHtml(r.name || '(ad)'), ...r };
 }
+const WRAP_FIELDS = ['campaign', 'bc_name', 'account_name'];
 
-// export/class/Tabela.js
-export class Tabela {
+export class Table {
 	constructor(columnDefs = [], opts = {}) {
 		this.container = opts.container || '#lionGrid';
 		this.columnDefs = Array.isArray(columnDefs) ? columnDefs : [];
@@ -2066,15 +2397,34 @@ export class Tabela {
 			}
 		}
 
-		// ===== [3] Texto que realmente aparece na célula (2 linhas possíveis) =====
-		function getCampaignCellText(p) {
-			const d = p?.data || {};
-			if ((p?.node?.level ?? 0) !== 0) {
-				return String(d.__label || '');
+		// ===== [2.1] Largura útil de QUALQUER coluna folha =====
+		function getFieldContentWidth(api, field) {
+			try {
+				const col = api.getColumn(field);
+				if (!col) return null;
+				const w = col.getActualWidth?.();
+				if (!w || !Number.isFinite(w)) return null;
+				const horizontalPadding = 12; // margem visual interna da célula
+				return Math.max(0, w - horizontalPadding);
+			} catch {
+				return null;
 			}
-			const label = String(d.__label || '');
-			const utm = String(d.utm_campaign || '');
-			return utm ? `${label}\n${utm}` : label;
+		}
+
+		// ===== [3] Texto que realmente aparece na célula por campo =====
+		function getCellTextForField(p, field) {
+			const d = p?.data || {};
+			if (field === 'campaign') {
+				if ((p?.node?.level ?? 0) !== 0) return String(d.__label || '');
+				const label = String(d.__label || '');
+				const utm = String(d.utm_campaign || '');
+				return utm ? `${label}\n${utm}` : label;
+			}
+			if (field === 'bc_name') {
+				return String(d.bc_name || '');
+			}
+			// fallback
+			return String(d[field] ?? '');
 		}
 
 		// ===== [4] Cache simples por rowId + largura =====
@@ -2130,16 +2480,49 @@ export class Tabela {
 				},
 			},
 
+			// Quais colunas podem quebrar em múltiplas linhas?
+
 			rowHeight: BASE_ROW_MIN,
 			getRowHeight: (p) => {
-				const w = getAutoGroupContentWidth(p.api);
-				const key = _cacheKey(p, w);
+				// coleta larguras atuais por campo relevante
+				const widthBag = {};
+				widthBag.campaign = getAutoGroupContentWidth(p.api);
+				const bmW = getFieldContentWidth(p.api, 'bc_name');
+				if (bmW != null) widthBag.bc_name = bmW;
+
+				const wKey = Object.entries(widthBag)
+					.map(([k, v]) => `${k}:${Math.round(v || 0)}`)
+					.join('|');
+
+				const key =
+					(p?.node?.id ||
+						(p?.node?.data?.__nodeType === 'campaign'
+							? `c:${p?.node?.data?.__groupKey}`
+							: p?.node?.data?.__nodeType === 'adset'
+							? `s:${p?.node?.data?.__groupKey}`
+							: p?.node?.data?.id || Math.random())) +
+					'|' +
+					wKey;
+
 				if (_rowHCache.has(key)) return _rowHCache.get(key);
 
-				const text = getCampaignCellText(p);
-				const textH = _rowHeightMeasure.measure(text, w);
-				const h = Math.max(BASE_ROW_MIN, textH + VERT_PAD);
+				// mede cada candidato usando sua largura efetiva
+				let maxTextH = 0;
+				for (const field of WRAP_FIELDS) {
+					const w = widthBag[field];
+					if (!w) continue; // coluna não exibida
+					const text = getCellTextForField(p, field);
+					const textH = _rowHeightMeasure.measure(text, w);
+					if (textH > maxTextH) maxTextH = textH;
+				}
 
+				// fallback se nada foi medido
+				if (maxTextH <= 0) {
+					_rowHCache.set(key, BASE_ROW_MIN);
+					return BASE_ROW_MIN;
+				}
+
+				const h = Math.max(BASE_ROW_MIN, maxTextH + VERT_PAD);
 				_rowHCache.set(key, h);
 				return h;
 			},
@@ -2172,7 +2555,75 @@ export class Tabela {
 			getContextMenuItems: (params) => {
 				const d = params.node?.data || {};
 				const isCampaign = params.node?.level === 0;
+
+				// helper: tenta extrair via renderer ou via getParts() e monta linhas
+				function buildCopyWithPartsText(p) {
+					// 1) tenta pelo renderer (usa o método getCopyText que adicionamos no StackBelowRenderer)
+					try {
+						const inst = p.api.getCellRendererInstances({
+							rowNodes: [p.node],
+							columns: [p.column],
+						})?.[0];
+						if (inst && typeof inst.getCopyText === 'function') {
+							const txt = String(inst.getCopyText() || '').trim();
+							if (txt) return txt;
+						}
+					} catch {}
+
+					// 2) fallback: monta usando colDef.cellRendererParams.getParts (se existir)
+					try {
+						const colDef = p.column?.getColDef?.() || p.colDef || {};
+						const getParts = colDef?.cellRendererParams?.getParts;
+						const row = p.node?.data || {};
+						const top = p.valueFormatted ?? p.value ?? '';
+						const lines = [];
+						const push = (s) => {
+							const v = s == null ? '' : String(s).trim();
+							if (v && v !== '—') lines.push(v);
+						};
+						push(top);
+
+						if (typeof getParts === 'function') {
+							const parts =
+								getParts({
+									data: row,
+									colDef,
+									node: p.node,
+									api: p.api,
+									column: p.column,
+									value: p.value,
+									valueFormatted: p.valueFormatted,
+								}) || [];
+
+							for (const it of parts) {
+								// prioriza texto pronto; senão, "Label: valor"
+								const txt =
+									it?.text ||
+									it?.labelWithValue ||
+									(String(it?.label || it?.name || '').trim()
+										? `${String(it?.label || it?.name || '').trim()}: ${
+												Number.isFinite(it?.value)
+													? cc_currencyFormat(Number(it.value))
+													: String(it?.value ?? '—')
+										  }`
+										: `${
+												Number.isFinite(it?.value)
+													? cc_currencyFormat(Number(it.value))
+													: String(it?.value ?? '—')
+										  }`);
+								push(txt);
+							}
+						}
+						return lines.join('\n') || String(top || '');
+					} catch {
+						// 3) último recurso
+						return String(p.valueFormatted ?? p.value ?? '');
+					}
+				}
+
 				const items = [];
+
+				// Itens padrões que você já tinha
 				items.push(
 					'cut',
 					'copy',
@@ -2181,22 +2632,50 @@ export class Tabela {
 					'export',
 					'separator'
 				);
+
+				// Copiar "Campaign" e "UTM" quando clicar na coluna de grupo (nível 0)
 				if (isCampaign) {
 					const label = d.__label || d.campaign_name || '';
 					const utm = d.utm_campaign || '';
-					if (label)
+					if (label) {
 						items.push({
 							name: 'Copiar Campaign',
 							action: () => copyToClipboard(label),
 							icon: '<span class="ag-icon ag-icon-copy"></span>',
 						});
-					if (utm)
+					}
+					if (utm) {
 						items.push({
 							name: 'Copiar UTM',
 							action: () => copyToClipboard(utm),
 							icon: '<span class="ag-icon ag-icon-copy"></span>',
 						});
+					}
 				}
+
+				// === NOVO: "Copy with parts" (só aparece quando fizer sentido) ===
+				(function maybeAddCopyWithParts() {
+					const colDef = params.column?.getColDef?.() || params.colDef || {};
+					const hasRenderer =
+						colDef?.cellRenderer === StackBelowRenderer ||
+						typeof colDef?.cellRendererParams?.getParts === 'function';
+
+					if (!hasRenderer) return;
+
+					items.push('separator');
+					items.push({
+						name: 'Copy with parts',
+						action: () => {
+							const txt = buildCopyWithPartsText(params);
+							copyToClipboard(txt);
+							try {
+								showToast('Copiado (com partes)', 'success');
+							} catch {}
+						},
+						icon: '<span class="ag-icon ag-icon-copy"></span>',
+					});
+				})();
+
 				return items;
 			},
 

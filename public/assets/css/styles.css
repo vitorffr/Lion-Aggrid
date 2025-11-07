@@ -1,4 +1,13 @@
 /* pill arrastável dentro da célula */
+.lion-stack-scroll {
+	overflow-y: auto;
+	scrollbar-width: none; /* Firefox */
+	-ms-overflow-style: none; /* IE/Edge legacy */
+}
+.lion-stack-scroll::-webkit-scrollbar {
+	/* WebKit/Blink */
+	display: none;
+}
 
 /* célula que foi alterada recentemente */
 .ag-cell.lion-cell-changed {
@@ -272,9 +281,9 @@
 	font-size: 12px;
 }
 .ag-cell.lion-center-cell {
-	display: flex; /* garante flex no host */
-	align-items: center; /* centro vertical */
-	justify-content: center;
+	display: flex !important; /* garante flex no host */
+	align-items: center !important; /* centro vertical */
+	justify-content: center !important;
 	/* padding: 10px;  */
 }
 /* vars globais (default = sem nudge) */

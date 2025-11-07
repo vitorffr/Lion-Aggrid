@@ -32,7 +32,7 @@ import {
 	currencyFormatter,
 } from '../utils.js';
 
-import { Tabela } from '../../lion-grid.js';
+import { Table } from '../tablemanager.js';
 
 /* =========================================
  * 1) CONFIG / ESTADO LOCAL
@@ -1293,14 +1293,32 @@ const columnDefs = [
 
 				// 2) cellRenderer: adiciona a setinha sempre visível
 				cellRenderer: (p) => {
-					const v = String(p.value || '').toUpperCase();
-					const label = BID_TYPE_LABEL[v] || p.value || '';
+					const raw = p.value == null ? '' : String(p.value);
+					const v = raw.toUpperCase();
+					const label = BID_TYPE_LABEL[v] || raw;
+
 					const el = document.createElement('span');
-					el.textContent = label + ' ';
-					const caret = document.createElement('span');
-					caret.textContent = '▾';
-					caret.style.opacity = '0.9';
-					el.appendChild(caret);
+					el.textContent = label;
+
+					// Só mostra a seta se:
+					// 1) há valor na célula
+					// 2) a linha não é total/pinned
+					// 3) o nível é interativo (se você usa isso na página)
+					const interactive = new Set(
+						Array.isArray(p.colDef?.cellRendererParams?.interactiveLevels)
+							? p.colDef.cellRendererParams.interactiveLevels
+							: [0]
+					);
+					const level = p?.node?.level ?? 0;
+					const shouldShowCaret = raw !== '' && !isPinnedOrTotal(p) && interactive.has(level);
+
+					if (shouldShowCaret) {
+						const caret = document.createElement('span');
+						caret.textContent = ' ▾';
+						caret.style.opacity = '0.9';
+						el.appendChild(caret);
+					}
+
 					return el;
 				},
 
@@ -1550,7 +1568,7 @@ const columnDefs = [
 /* =========================================
  * 10) BOOTSTRAP — instancia a Tabela (só liga o grid)
  * =======================================*/
-const tabela = new Tabela(columnDefs, {
+const table = new Table(columnDefs, {
 	container: '#lionGrid',
 	endpoints: {
 		SSRM: '/api/ssrm/?clean=1&mode=full',
@@ -1565,7 +1583,7 @@ const tabela = new Tabela(columnDefs, {
 	pinToggleSelector: '#pinToggle',
 });
 
-tabela.init();
+table.init();
 
 // Ex.: trocar colunas em runtime
 // tabela.setColumnDefs([{ headerName: 'Novo', field: 'novo' }]);
