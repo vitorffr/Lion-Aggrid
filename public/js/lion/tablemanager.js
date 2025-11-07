@@ -625,20 +625,31 @@ function openKTModal(selector = '#lionKtModal') {
 	el.removeAttribute('aria-hidden');
 }
 function closeKTModal(selector = '#lionKtModal') {
-	const el = document.querySelector(selector);
-	if (!el) return;
-	el.style.display = 'none';
-	el.classList.remove('kt-modal--open');
-	el.classList.add('hidden');
-	el.setAttribute('aria-hidden', 'true');
+	const modal = document.querySelector(selector);
+	if (!modal) return;
+
+	// inverte visibilidade
+	modal.setAttribute('aria-hidden', 'true');
+	modal.style.display = 'none';
+	modal.classList.remove('kt-modal--open');
+	modal.classList.add('hidden');
 }
 function showKTModal({ title = 'Details', content = '' } = {}) {
 	ensureKtModalDom();
 	const modal = document.querySelector('#lionKtModal');
 	if (!modal) return;
+
+	// atualizar conteúdo
 	modal.querySelector('.kt-modal-title').textContent = title;
 	modal.querySelector('.kt-modal-body > pre').textContent = content;
-	openKTModal('#lionKtModal');
+
+	// Primeiro seta aria-hidden = 'false' para ativar visibilidade via CSS
+	modal.setAttribute('aria-hidden', 'false');
+
+	// Depois mostra via display
+	modal.style.display = 'flex';
+	modal.classList.add('kt-modal--open');
+	modal.classList.remove('hidden');
 }
 
 /* ========= Calculated Columns: populate selects (Col 1 / Col 2) ========= */
