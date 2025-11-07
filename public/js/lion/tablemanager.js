@@ -384,7 +384,6 @@ function StackBelowRenderer() {}
 StackBelowRenderer.prototype.init = function (p) {
 	this.p = p;
 
-	// root do renderer
 	const wrap = document.createElement('span');
 	wrap.style.display = 'inline-flex';
 	wrap.style.flexDirection = 'column';
@@ -394,15 +393,15 @@ StackBelowRenderer.prototype.init = function (p) {
 	const lvl = p?.node?.level ?? -1;
 	const params = p?.colDef?.cellRendererParams || {};
 	const onlyLevel0 = !!params.onlyLevel0;
-	const showTop = params.showTop !== false; // default: true
-	const partsLabelOnly = !!params.partsLabelOnly; // default: false
-	const maxParts = Number(params.maxParts) || 0; // 0 = sem limite
+	const showTop = params.showTop !== false;
+	const partsLabelOnly = !!params.partsLabelOnly;
+	const maxParts = Number(params.maxParts) || 0;
 	const fmtKey = String(params.format || 'raw');
 
-	// Altura máxima do bloco das PARTES (scroll)
 	const partsMaxHeight = Number(params.partsMaxHeight) > 0 ? Number(params.partsMaxHeight) : 72;
 
-	if (isPinnedOrTotal(p) || (onlyLevel0 && lvl !== 0)) {
+	// 👉 Se for pinned/total, deixa como estava (mostra texto simples)
+	if (isPinnedOrTotal(p)) {
 		const span = document.createElement('span');
 		span.textContent = stripHtml(p.value ?? '');
 		wrap.appendChild(span);
@@ -411,6 +410,16 @@ StackBelowRenderer.prototype.init = function (p) {
 		this.eGui = wrap;
 		return;
 	}
+
+	// 👉 Se onlyLevel0 e NÃO é raiz, **não mostra nada**
+	if (onlyLevel0 && lvl !== 0) {
+		// deixa o wrapper vazio para manter altura/linha consistente
+		this.topEl = null;
+		this.partsBox = null;
+		this.eGui = wrap;
+		return;
+	}
+	// ... (restante do init continua igual a partir daqui — começando em formatVal)
 
 	const formatVal = (v) => {
 		if (v == null) return '';
@@ -1964,23 +1973,62 @@ function togglePinnedColsFromCheckbox(silent = false) {
 
 		saveBtn?.addEventListener('click', (e) => {
 			e.preventDefault();
+
 			const cfg = readForm();
 			if (!cfg) return;
 			if (!cfg.id || !cfg.expression) {
 				showToast('ID e Expression são obrigatórios', 'danger');
 				return;
 			}
+
 			try {
 				const ok = globalThis.LionCalcColumns?.add?.(cfg);
-				if (ok) {
-					renderList();
-					showToast('Calculated column salva/aplicada', 'success');
+				if (!ok) return;
+
+				// 1) fecha modal
+				try {
+					modalHide('#calcColsModal');
+				} catch {}
+
+				// 2) garante visibilidade da nova coluna
+				const api = globalThis.LionGrid?.api || null;
+				if (api) {
+					try {
+						api.ensureColumnVisible(cfg.id, 'auto');
+					} catch {}
+					try {
+						api.refreshHeader?.();
+					} catch {}
+					try {
+						api.redrawRows?.();
+					} catch {}
+
+					// 3) “reload” leve do SSRM p/ reprocessar filtros/sort e recalcular pin totals
+					try {
+						refreshSSRM(api);
+					} catch {}
+
+					// 4) ajuste fino de layout após aplicar colDefs
+					setTimeout(() => {
+						try {
+							api.sizeColumnsToFit?.();
+						} catch {}
+						try {
+							api.resetRowHeights?.();
+						} catch {}
+					}, 50);
 				}
+
+				// 5) atualiza a lista do modal (na próxima abertura)
+				renderList();
+
+				showToast('Calculated column salva e aplicada!', 'success');
 			} catch (err) {
 				showToast('Falha ao salvar coluna', 'danger');
 				console.warn(err);
 			}
 		});
+
 		resetBtn?.addEventListener('click', (e) => {
 			e.preventDefault();
 			clearForm();
