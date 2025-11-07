@@ -1,3 +1,23 @@
+/* centraliza vertical/horizontal via flex */
+.kt-modal.kt-modal-test[aria-hidden='false'] {
+	display: flex !important;
+	align-items: center;
+	justify-content: center;
+}
+
+/* impede estourar a tela e garante scroll interno */
+.kt-modal.kt-modal-test .kt-modal-content {
+	max-height: min(88vh, 900px);
+	width: min(96vw, 1500px);
+	overflow: hidden;
+	display: flex;
+	flex-direction: column;
+}
+
+.kt-modal.kt-modal-test .kt-modal-body {
+	overflow: auto;
+}
+
 /* pill arrastável dentro da célula */
 .lion-stack-scroll {
 	overflow-y: auto;
