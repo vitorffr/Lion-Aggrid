@@ -2161,8 +2161,28 @@ function togglePinnedColsFromCheckbox(silent = false) {
 			calcColumns,
 		};
 		writePresets(bag);
-		refreshPresetUserSelect();
+
+		refreshPresetUserSelect(); // atualiza opções no <select>
+
+		// selecionar automaticamente o novo preset no select
+		const sel = document.getElementById('presetUserSelect');
+		if (sel) {
+			sel.value = name;
+			// disparar evento change pra aplicar
+			sel.dispatchEvent(new Event('change'));
+		}
+
 		showToast(`Preset "${name}" saved`, 'success');
+	}
+
+	// no setup da página/painel, adicionar listener no select
+	const presetSelect = document.getElementById('presetUserSelect');
+	if (presetSelect) {
+		presetSelect.addEventListener('change', (e) => {
+			const selected = e.target.value;
+			if (!selected) return;
+			applyPresetUser(selected);
+		});
 	}
 
 	function applyPresetUser(name) {
