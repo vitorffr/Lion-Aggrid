@@ -2138,36 +2138,63 @@ function togglePinnedColsFromCheckbox(silent = false) {
 	})();
 
 	function saveAsPreset() {
-		const api = ensureApi();
-		if (!api) return;
+		const api = globalThis.LionGrid?.api;
+		if (!api) return showToast('Grid API not ready', 'warning');
 		const name = prompt('Preset name:');
 		if (!name) return;
+
 		let state;
 		try {
 			state = api.getState();
-		} catch {}
-		if (!state) return showToast("Couldn't capture grid state", 'danger');
+			if (!state) throw new Error('Null state');
+		} catch (e) {
+			return showToast("Couldn't capture grid state", 'danger');
+		}
+
 		const calcColumns = globalThis.LionCalcColumns?.exportForPreset?.() || [];
 		const bag = readPresets();
-		bag[name] = { v: PRESET_VERSION, name, createdAt: Date.now(), grid: state, calcColumns };
+		bag[name] = {
+			version: 1,
+			name,
+			createdAt: Date.now(),
+			gridState: state,
+			calcColumns,
+		};
 		writePresets(bag);
 		refreshPresetUserSelect();
-		const sel = byId('presetUserSelect');
-		if (sel) sel.value = name;
 		showToast(`Preset "${name}" saved`, 'success');
 	}
+
 	function applyPresetUser(name) {
 		if (!name) return;
 		const bag = readPresets();
 		const p = bag[name];
-		if (!p?.grid) return showToast('Preset not found', 'warning');
-		globalThis.LionCalcColumns?.clear?.();
-		if (Array.isArray(p.calcColumns) && p.calcColumns.length > 0) {
-			globalThis.LionCalcColumns?.importFromPreset?.(p.calcColumns);
+		if (!p || !p.gridState) {
+			return showToast('Preset not found or invalid', 'warning');
 		}
-		setState(p.grid, ['pagination', 'scroll', 'rowSelection', 'focusedCell']);
-		localStorage.setItem(LS_KEY_ACTIVE_PRESET, name);
-		refreshPresetUserSelect();
+
+		// Primeiro: limpar colunas calculadas existentes
+		globalThis.LionCalcColumns?.clear?.();
+
+		// Depois, importar as calculadas do preset
+		if (Array.isArray(p.calcColumns) && p.calcColumns.length > 0) {
+			globalThis.LionCalcColumns?.importFromPreset(p.calcColumns);
+		}
+
+		// Aplicar o estado do grid
+		const api = globalThis.LionGrid?.api;
+		if (!api) {
+			return showToast('Grid API not ready', 'warning');
+		}
+		try {
+			api.setState(p.gridState, ['pagination', 'scroll', 'rowSelection', 'focusedCell']);
+		} catch (e) {
+			console.error('applyPresetUser setState error', e);
+		}
+
+		// Opcional: refresh/redraw para garantir visualização
+		api.refreshHeader?.();
+		api.redrawRows?.();
 		showToast(`Preset "${name}" applied`, 'success');
 	}
 	function deletePreset() {
