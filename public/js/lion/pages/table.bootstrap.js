@@ -164,137 +164,155 @@ const intFormatter = (p) => {
  * 6) RENDERERS / EDITORS (componentes)
  * =======================================*/
 // 6.1 Money renderer com lápis/ok/erro
-function EditableMoneyCellRenderer() {}
-EditableMoneyCellRenderer.prototype.init = function (p) {
-	this.p = p;
-	this.colId = p?.column?.getColId?.() || '';
+class EditableMoneyCellRenderer {
+	init(p) {
+		this.p = p;
+		this.colId = p?.column?.getColId?.() || '';
 
-	const wrap = document.createElement('span');
-	wrap.style.display = 'inline-flex';
-	wrap.style.alignItems = 'center';
-	wrap.style.gap = '4px';
+		const wrap = document.createElement('span');
+		wrap.style.display = 'inline-flex';
+		wrap.style.alignItems = 'center';
+		wrap.style.gap = '4px';
 
-	const valueEl = document.createElement('span');
-	valueEl.className = 'lion-editable-val';
-	valueEl.textContent = p.valueFormatted != null ? String(p.valueFormatted) : String(p.value ?? '');
+		const valueEl = document.createElement('span');
+		valueEl.className = 'lion-editable-val';
+		valueEl.textContent =
+			p.valueFormatted != null ? String(p.valueFormatted) : String(p.value ?? '');
 
-	const pen = document.createElement('i');
-	pen.className = 'lion-editable-pen ki-duotone ki-pencil';
+		const pen = document.createElement('i');
+		pen.className = 'lion-editable-pen ki-duotone ki-pencil';
 
-	const ok = document.createElement('i');
-	ok.className = 'lion-editable-ok ki-duotone ki-check';
+		const ok = document.createElement('i');
+		ok.className = 'lion-editable-ok ki-duotone ki-check';
 
-	const err = document.createElement('i');
-	err.className = 'lion-editable-err ki-duotone ki-cross';
+		const err = document.createElement('i');
+		err.className = 'lion-editable-err ki-duotone ki-cross';
 
-	wrap.appendChild(valueEl);
-	wrap.appendChild(pen);
-	wrap.appendChild(ok);
-	wrap.appendChild(err);
+		wrap.appendChild(valueEl);
+		wrap.appendChild(pen);
+		wrap.appendChild(ok);
+		wrap.appendChild(err);
 
-	this.eGui = wrap;
-	this.valueEl = valueEl;
-	this.pen = pen;
-	this.ok = ok;
-	this.err = err;
+		this.eGui = wrap;
+		this.valueEl = valueEl;
+		this.pen = pen;
+		this.ok = ok;
+		this.err = err;
 
-	this.updateVisibility();
-};
-EditableMoneyCellRenderer.prototype.getGui = function () {
-	return this.eGui;
-};
-EditableMoneyCellRenderer.prototype.refresh = function (p) {
-	this.p = p;
-	this.valueEl.textContent =
-		p.valueFormatted != null ? String(p.valueFormatted) : String(p.value ?? '');
-	this.updateVisibility();
-	return true;
-};
-EditableMoneyCellRenderer.prototype.updateVisibility = function () {
-	const p = this.p || {};
-	const level = p?.node?.level ?? -1;
-	const editableProp = p.colDef?.editable;
-	const isEditable = typeof editableProp === 'function' ? !!editableProp(p) : !!editableProp;
-	const loading = isCellLoading(p, this.colId);
-	const showBase = isEditable && level === 0 && !loading && !isPinnedOrTotal(p);
+		this.updateVisibility();
+	}
 
-	const justSaved = isCellJustSaved(p, this.colId);
-	const hasError = isCellError(p, this.colId);
+	getGui() {
+		return this.eGui;
+	}
 
-	this.err.style.display = showBase && hasError ? 'inline-flex' : 'none';
-	this.ok.style.display = showBase && !hasError && justSaved ? 'inline-flex' : 'none';
-	this.pen.style.display = showBase && !hasError && !justSaved ? 'inline-flex' : 'none';
-};
-EditableMoneyCellRenderer.prototype.destroy = function () {};
+	refresh(p) {
+		this.p = p;
+		this.valueEl.textContent =
+			p.valueFormatted != null ? String(p.valueFormatted) : String(p.value ?? '');
+		this.updateVisibility();
+		return true;
+	}
 
+	updateVisibility() {
+		const p = this.p || {};
+		const level = p?.node?.level ?? -1;
+		const editableProp = p.colDef?.editable;
+		const isEditable = typeof editableProp === 'function' ? !!editableProp(p) : !!editableProp;
+		const loading = isCellLoading(p, this.colId);
+		const showBase = isEditable && level === 0 && !loading && !isPinnedOrTotal(p);
+
+		const justSaved = isCellJustSaved(p, this.colId);
+		const hasError = isCellError(p, this.colId);
+
+		this.err.style.display = showBase && hasError ? 'inline-flex' : 'none';
+		this.ok.style.display = showBase && !hasError && justSaved ? 'inline-flex' : 'none';
+		this.pen.style.display = showBase && !hasError && !justSaved ? 'inline-flex' : 'none';
+	}
+
+	destroy() {
+		// nada pra limpar aqui por enquanto
+	}
+}
 // 6.2 Editor com máscara tipo “R$ 1.234,56”
-function CurrencyMaskEditor() {}
-CurrencyMaskEditor.prototype.init = function (params) {
-	this.params = params;
-	const startNumber =
-		typeof params.value === 'number'
-			? params.value
-			: parseCurrencyFlexible(params.value, getAppCurrency());
+class CurrencyMaskEditor {
+	init(params) {
+		this.params = params;
 
-	this.input = document.createElement('input');
-	this.input.type = 'text';
-	this.input.className = 'ag-input-field-input ag-text-field-input';
-	this.input.style.width = '100%';
-	this.input.style.height = '100%';
-	this.input.style.boxSizing = 'border-box';
-	this.input.style.padding = '2px 6px';
-	this.input.autocomplete = 'off';
-	this.input.inputMode = 'numeric';
+		const startNumber =
+			typeof params.value === 'number'
+				? params.value
+				: parseCurrencyFlexible(params.value, getAppCurrency());
 
-	const fmt = (n) =>
-		n == null || !Number.isFinite(n)
-			? ''
-			: new Intl.NumberFormat('pt-BR', {
-					minimumFractionDigits: 2,
-					maximumFractionDigits: 2,
-			  }).format(n);
+		this.input = document.createElement('input');
+		this.input.type = 'text';
+		this.input.className = 'ag-input-field-input ag-text-field-input';
+		this.input.style.width = '100%';
+		this.input.style.height = '100%';
+		this.input.style.boxSizing = 'border-box';
+		this.input.style.padding = '2px 6px';
+		this.input.autocomplete = 'off';
+		this.input.inputMode = 'numeric';
 
-	const asNumberFromDigits = (digits) => {
-		if (!digits) return null;
-		const intCents = parseInt(digits, 10);
-		if (!Number.isFinite(intCents)) return null;
-		return intCents / 100;
-	};
+		const fmt = (n) =>
+			n == null || !Number.isFinite(n)
+				? ''
+				: new Intl.NumberFormat('pt-BR', {
+						minimumFractionDigits: 2,
+						maximumFractionDigits: 2,
+				  }).format(n);
 
-	const formatFromRawInput = () => {
-		const raw = (this.input.value || '').replace(/\D+/g, '');
-		const n = asNumberFromDigits(raw);
-		this.input.value = n == null ? '' : fmt(n);
-	};
+		const asNumberFromDigits = (digits) => {
+			if (!digits) return null;
+			const intCents = parseInt(digits, 10);
+			if (!Number.isFinite(intCents)) return null;
+			return intCents / 100;
+		};
 
-	this.input.value = fmt(startNumber);
-	this.onInput = () => {
-		formatFromRawInput();
-		this.input.setSelectionRange(this.input.value.length, this.input.value.length);
-	};
-	this.onKeyDown = (e) => {
-		if (e.key === 'Escape') this.input.value = fmt(startNumber);
-	};
-	this.input.addEventListener('input', this.onInput);
-	this.input.addEventListener('keydown', this.onKeyDown);
-};
-CurrencyMaskEditor.prototype.getGui = function () {
-	return this.input;
-};
-CurrencyMaskEditor.prototype.afterGuiAttached = function () {
-	this.input.focus();
-	this.input.select();
-};
-CurrencyMaskEditor.prototype.getValue = function () {
-	return this.input.value;
-};
-CurrencyMaskEditor.prototype.destroy = function () {
-	this.input?.removeEventListener?.('input', this.onInput);
-	this.input?.removeEventListener?.('keydown', this.onKeyDown);
-};
-CurrencyMaskEditor.prototype.isPopup = function () {
-	return false;
-};
+		const formatFromRawInput = () => {
+			const raw = (this.input.value || '').replace(/\D+/g, '');
+			const n = asNumberFromDigits(raw);
+			this.input.value = n == null ? '' : fmt(n);
+		};
+
+		this.input.value = fmt(startNumber);
+
+		this.onInput = () => {
+			formatFromRawInput();
+			this.input.setSelectionRange(this.input.value.length, this.input.value.length);
+		};
+
+		this.onKeyDown = (e) => {
+			if (e.key === 'Escape') this.input.value = fmt(startNumber);
+		};
+
+		this.input.addEventListener('input', this.onInput);
+		this.input.addEventListener('keydown', this.onKeyDown);
+	}
+
+	getGui() {
+		return this.input;
+	}
+
+	afterGuiAttached() {
+		this.input.focus();
+		this.input.select();
+	}
+
+	getValue() {
+		return this.input.value;
+	}
+
+	destroy() {
+		this.input?.removeEventListener?.('input', this.onInput);
+		this.input?.removeEventListener?.('keydown', this.onKeyDown);
+	}
+
+	isPopup() {
+		return false;
+	}
+}
+
 function parseCurrencyInput(params) {
 	return parseCurrencyFlexible(params.newValue, getAppCurrency());
 }
@@ -439,213 +457,243 @@ function nudgeRenderer(p, colId) {
 /* =========================================
  * 7) FLOATING FILTERS (componentes)
  * =======================================*/
-function BidTypeFloatingFilter() {}
-BidTypeFloatingFilter.prototype.init = function (params) {
-	this.params = params;
-	const wrap = document.createElement('div');
-	wrap.style.display = 'flex';
-	wrap.style.alignItems = 'center';
-	wrap.style.height = '100%';
-	wrap.style.padding = '0 6px';
+class BidTypeFloatingFilter {
+	init(params) {
+		this.params = params;
 
-	const sel = document.createElement('select');
-	sel.className = 'ag-input-field-input ag-text-field-input lion-ff-select--inputlike';
-	sel.style.width = '100%';
-	sel.style.height = '28px';
-	sel.style.fontSize = '12px';
-	sel.style.padding = '2px 8px';
-	sel.style.boxSizing = 'border-box';
+		const wrap = document.createElement('div');
+		wrap.style.display = 'flex';
+		wrap.style.alignItems = 'center';
+		wrap.style.height = '100%';
+		wrap.style.padding = '0 6px';
 
-	const opts = [['', 'ALL']].concat(
-		BID_TYPE_VALUES.map((code) => [code, BID_TYPE_LABEL?.[code] || code])
-	);
-	for (const [value, label] of opts) {
-		const o = document.createElement('option');
-		o.value = value;
-		o.textContent = label;
-		sel.appendChild(o);
+		const sel = document.createElement('select');
+		sel.className = 'ag-input-field-input ag-text-field-input lion-ff-select--inputlike';
+		sel.style.width = '100%';
+		sel.style.height = '28px';
+		sel.style.fontSize = '12px';
+		sel.style.padding = '2px 8px';
+		sel.style.boxSizing = 'border-box';
+
+		const opts = [['', 'ALL']].concat(
+			BID_TYPE_VALUES.map((code) => [code, BID_TYPE_LABEL?.[code] || code])
+		);
+
+		for (const [value, label] of opts) {
+			const o = document.createElement('option');
+			o.value = value;
+			o.textContent = label;
+			sel.appendChild(o);
+		}
+
+		const applyFromModel = (model) => {
+			if (!model) {
+				sel.value = '';
+				return;
+			}
+			const v = String(model.filter ?? '').toUpperCase();
+			sel.value = opts.some(([code]) => code === v) ? v : '';
+		};
+		applyFromModel(params.parentModel);
+
+		const applyTextEquals = (val) => {
+			params.parentFilterInstance((parent) => {
+				if (!val) parent.setModel(null);
+				else parent.setModel({ filterType: 'text', type: 'equals', filter: val });
+				if (typeof parent.onBtApply === 'function') parent.onBtApply();
+				params.api.onFilterChanged();
+			});
+		};
+
+		sel.addEventListener('change', () => {
+			const v = sel.value ? String(sel.value).toUpperCase() : '';
+			applyTextEquals(v);
+		});
+
+		wrap.appendChild(sel);
+		this.eGui = wrap;
+		this.sel = sel;
 	}
 
-	const applyFromModel = (model) => {
-		if (!model) {
-			sel.value = '';
+	getGui() {
+		return this.eGui;
+	}
+
+	onParentModelChanged(parentModel) {
+		if (!this.sel) return;
+		if (!parentModel) {
+			this.sel.value = '';
 			return;
 		}
-		const v = String(model.filter ?? '').toUpperCase();
-		sel.value = opts.some(([code]) => code === v) ? v : '';
-	};
-	applyFromModel(params.parentModel);
-
-	const applyTextEquals = (val) => {
-		params.parentFilterInstance((parent) => {
-			if (!val) parent.setModel(null);
-			else parent.setModel({ filterType: 'text', type: 'equals', filter: val });
-			if (typeof parent.onBtApply === 'function') parent.onBtApply();
-			params.api.onFilterChanged();
-		});
-	};
-	sel.addEventListener('change', () => {
-		const v = sel.value ? String(sel.value).toUpperCase() : '';
-		applyTextEquals(v);
-	});
-
-	wrap.appendChild(sel);
-	this.eGui = wrap;
-	this.sel = sel;
-};
-BidTypeFloatingFilter.prototype.getGui = function () {
-	return this.eGui;
-};
-BidTypeFloatingFilter.prototype.onParentModelChanged = function (parentModel) {
-	if (!this.sel) return;
-	if (!parentModel) {
-		this.sel.value = '';
-		return;
+		const v = String(parentModel.filter ?? '').toUpperCase();
+		this.sel.value = v;
 	}
-	const v = String(parentModel.filter ?? '').toUpperCase();
-	this.sel.value = v;
-};
+}
+class CampaignStatusFloatingFilter {
+	init(params) {
+		this.params = params;
 
-function CampaignStatusFloatingFilter() {}
-CampaignStatusFloatingFilter.prototype.init = function (params) {
-	this.params = params;
-	const wrap = document.createElement('div');
-	wrap.style.display = 'flex';
-	wrap.style.alignItems = 'center';
-	wrap.style.height = '100%';
-	wrap.style.padding = '0 6px';
+		const wrap = document.createElement('div');
+		wrap.style.display = 'flex';
+		wrap.style.alignItems = 'center';
+		wrap.style.height = '100%';
+		wrap.style.padding = '0 6px';
 
-	const sel = document.createElement('select');
-	sel.className = 'ag-input-field-input ag-text-field-input lion-ff-select--inputlike';
-	sel.style.width = '100%';
-	sel.style.height = '28px';
-	sel.style.fontSize = '12px';
-	sel.style.padding = '2px 8px';
-	sel.style.boxSizing = 'border-box';
+		const sel = document.createElement('select');
+		sel.className = 'ag-input-field-input ag-text-field-input lion-ff-select--inputlike';
+		sel.style.width = '100%';
+		sel.style.height = '28px';
+		sel.style.fontSize = '12px';
+		sel.style.padding = '2px 8px';
+		sel.style.boxSizing = 'border-box';
 
-	[
-		['', 'ALL'],
-		['ACTIVE', 'ACTIVE'],
-		['PAUSED', 'PAUSED'],
-	].forEach(([v, t]) => {
-		const o = document.createElement('option');
-		o.value = v;
-		o.textContent = t;
-		sel.appendChild(o);
-	});
+		const options = [
+			['', 'ALL'],
+			['ACTIVE', 'ACTIVE'],
+			['PAUSED', 'PAUSED'],
+		];
 
-	const applyFromModel = (model) => {
-		if (!model) {
-			sel.value = '';
+		for (const [value, text] of options) {
+			const o = document.createElement('option');
+			o.value = value;
+			o.textContent = text;
+			sel.appendChild(o);
+		}
+
+		const applyFromModel = (model) => {
+			if (!model) {
+				sel.value = '';
+				return;
+			}
+			const v = String(model.filter ?? '').toUpperCase();
+			sel.value = v === 'ACTIVE' || v === 'PAUSED' ? v : '';
+		};
+		applyFromModel(params.parentModel);
+
+		const applyTextEquals = (val) => {
+			params.parentFilterInstance((parent) => {
+				if (!val) {
+					parent.setModel(null);
+				} else {
+					parent.setModel({ filterType: 'text', type: 'equals', filter: val });
+				}
+				if (typeof parent.onBtApply === 'function') parent.onBtApply();
+				params.api.onFilterChanged();
+			});
+		};
+
+		sel.addEventListener('change', () => {
+			const v = sel.value ? String(sel.value).toUpperCase() : '';
+			applyTextEquals(v);
+		});
+
+		wrap.appendChild(sel);
+		this.eGui = wrap;
+		this.sel = sel;
+	}
+
+	getGui() {
+		return this.eGui;
+	}
+
+	onParentModelChanged(parentModel) {
+		if (!this.sel) return;
+
+		if (!parentModel) {
+			this.sel.value = '';
 			return;
 		}
-		const v = String(model.filter ?? '').toUpperCase();
-		sel.value = v === 'ACTIVE' || v === 'PAUSED' ? v : '';
-	};
-	applyFromModel(params.parentModel);
 
-	const applyTextEquals = (val) => {
-		params.parentFilterInstance((parent) => {
-			if (!val) parent.setModel(null);
-			else parent.setModel({ filterType: 'text', type: 'equals', filter: val });
-			if (typeof parent.onBtApply === 'function') parent.onBtApply();
-			params.api.onFilterChanged();
-		});
-	};
-	sel.addEventListener('change', () => {
-		const v = sel.value ? String(sel.value).toUpperCase() : '';
-		applyTextEquals(v);
-	});
-
-	wrap.appendChild(sel);
-	this.eGui = wrap;
-	this.sel = sel;
-};
-CampaignStatusFloatingFilter.prototype.getGui = function () {
-	return this.eGui;
-};
-CampaignStatusFloatingFilter.prototype.onParentModelChanged = function (parentModel) {
-	if (!this.sel) return;
-	if (!parentModel) {
-		this.sel.value = '';
-		return;
+		const v = String(parentModel.filter ?? '').toUpperCase();
+		this.sel.value = v === 'ACTIVE' || v === 'PAUSED' ? v : '';
 	}
-	const v = String(parentModel.filter ?? '').toUpperCase();
-	this.sel.value = v === 'ACTIVE' || v === 'PAUSED' ? v : '';
-};
+}
+class AccountStatusFloatingFilter {
+	init(params) {
+		this.params = params;
 
-function AccountStatusFloatingFilter() {}
-AccountStatusFloatingFilter.prototype.init = function (params) {
-	this.params = params;
-	const wrap = document.createElement('div');
-	wrap.style.display = 'flex';
-	wrap.style.alignItems = 'center';
-	wrap.style.height = '100%';
-	wrap.style.padding = '0 6px';
+		const wrap = document.createElement('div');
+		wrap.style.display = 'flex';
+		wrap.style.alignItems = 'center';
+		wrap.style.height = '100%';
+		wrap.style.padding = '0 6px';
 
-	const sel = document.createElement('select');
-	sel.className = 'ag-input-field-input ag-text-field-input lion-ff-select--inputlike';
-	sel.style.width = '100%';
-	sel.style.height = '28px';
-	sel.style.fontSize = '12px';
-	sel.style.padding = '2px 8px';
-	sel.style.boxSizing = 'border-box';
+		const sel = document.createElement('select');
+		sel.className = 'ag-input-field-input ag-text-field-input lion-ff-select--inputlike';
+		sel.style.width = '100%';
+		sel.style.height = '28px';
+		sel.style.fontSize = '12px';
+		sel.style.padding = '2px 8px';
+		sel.style.boxSizing = 'border-box';
 
-	[
-		['', 'ALL'],
-		['ACTIVE', 'ACTIVE'],
-		['INATIVA PAGAMENTO', 'INATIVA PAGAMENTO'],
-	].forEach(([v, t]) => {
-		const o = document.createElement('option');
-		o.value = v;
-		o.textContent = t;
-		sel.appendChild(o);
-	});
+		const options = [
+			['', 'ALL'],
+			['ACTIVE', 'ACTIVE'],
+			['INATIVA PAGAMENTO', 'INATIVA PAGAMENTO'],
+		];
 
-	const applyFromModel = (model) => {
-		if (!model) {
-			sel.value = '';
+		for (const [value, text] of options) {
+			const o = document.createElement('option');
+			o.value = value;
+			o.textContent = text;
+			sel.appendChild(o);
+		}
+
+		const applyFromModel = (model) => {
+			if (!model) {
+				sel.value = '';
+				return;
+			}
+			const v = String(model.filter ?? '').toUpperCase();
+			sel.value = v === 'ACTIVE' || v === 'INATIVA PAGAMENTO' ? v : '';
+		};
+
+		applyFromModel(params.parentModel);
+
+		const applyTextEquals = (val) => {
+			params.parentFilterInstance((parent) => {
+				if (!val) {
+					parent.setModel(null);
+				} else {
+					parent.setModel({ filterType: 'text', type: 'equals', filter: val });
+				}
+				if (typeof parent.onBtApply === 'function') parent.onBtApply();
+				params.api.onFilterChanged();
+			});
+		};
+
+		sel.addEventListener('change', () => {
+			const v = sel.value ? String(sel.value).toUpperCase() : '';
+			applyTextEquals(v);
+		});
+
+		wrap.appendChild(sel);
+		this.eGui = wrap;
+		this.sel = sel;
+	}
+
+	getGui() {
+		return this.eGui;
+	}
+
+	onParentModelChanged(parentModel) {
+		if (!this.sel) return;
+
+		if (!parentModel) {
+			this.sel.value = '';
 			return;
 		}
-		const v = String(model.filter ?? '').toUpperCase();
-		sel.value = v === 'ACTIVE' || v === 'INATIVA PAGAMENTO' ? v : '';
-	};
-	applyFromModel(params.parentModel);
 
-	const applyTextEquals = (val) => {
-		params.parentFilterInstance((parent) => {
-			if (!val) parent.setModel(null);
-			else parent.setModel({ filterType: 'text', type: 'equals', filter: val });
-			if (typeof parent.onBtApply === 'function') parent.onBtApply();
-			params.api.onFilterChanged();
-		});
-	};
-	sel.addEventListener('change', () => {
-		const v = sel.value ? String(sel.value).toUpperCase() : '';
-		applyTextEquals(v);
-	});
-
-	wrap.appendChild(sel);
-	this.eGui = wrap;
-	this.sel = sel;
-};
-AccountStatusFloatingFilter.prototype.getGui = function () {
-	return this.eGui;
-};
-AccountStatusFloatingFilter.prototype.onParentModelChanged = function (parentModel) {
-	if (!this.sel) return;
-	if (!parentModel) {
-		this.sel.value = '';
-		return;
+		const v = String(parentModel.filter ?? '').toUpperCase();
+		this.sel.value = v === 'ACTIVE' || v === 'INATIVA PAGAMENTO' ? v : '';
 	}
-	const v = String(parentModel.filter ?? '').toUpperCase();
-	this.sel.value = v === 'ACTIVE' || v === 'INATIVA PAGAMENTO' ? v : '';
-};
+}
 
 /* =========================================
  * 8) STATUS SLIDER (renderer + menu)
+/* =======================================
+ * StatusSliderRenderer – versão ES6
  * =======================================*/
-function StatusSliderRenderer() {}
 
 const LionStatusMenu = (() => {
 	let el = null,
@@ -663,9 +711,9 @@ const LionStatusMenu = (() => {
 	}
 	function onDocClose(ev) {
 		if (!el) return;
-		if (ev.target === el || el.contains(ev.target)) return; // click dentro do menu
+		if (ev.target === el || el.contains(ev.target)) return;
 		const anchor = _anchor;
-		if (anchor && (ev.target === anchor || anchor.contains(ev.target))) return; // click no anchor
+		if (anchor && (ev.target === anchor || anchor.contains(ev.target))) return;
 		close();
 	}
 	function open({ left, top, width, current, pick, anchor = null }) {
@@ -711,332 +759,336 @@ const LionStatusMenu = (() => {
 		document.removeEventListener('mousedown', onDocClose, true);
 		window.removeEventListener('blur', close, true);
 	}
-	function isOpen() {
-		return _isOpen;
-	}
-	function getAnchor() {
-		return _anchor;
-	}
+	const isOpen = () => _isOpen;
+	const getAnchor = () => _anchor;
 
 	return { open, close, isOpen, getAnchor };
 })();
 
-StatusSliderRenderer.prototype.init = function (p) {
-	this.p = p;
-	const cfg = p.colDef?.cellRendererParams || {};
-	const interactive = new Set(Array.isArray(cfg.interactiveLevels) ? cfg.interactiveLevels : [0]);
-	const smallKnob = !!cfg.smallKnob;
-	const level = p?.node?.level ?? 0;
-	const colId = p.column.getColId();
+class StatusSliderRenderer {
+	init(p) {
+		this.p = p;
+		const cfg = p.colDef?.cellRendererParams || {};
+		const interactive = new Set(Array.isArray(cfg.interactiveLevels) ? cfg.interactiveLevels : [0]);
+		const smallKnob = !!cfg.smallKnob;
+		const level = p?.node?.level ?? 0;
+		const colId = p.column.getColId();
 
-	const getVal = () =>
-		String(p.data?.campaign_status ?? p.data?.status ?? p.value ?? '').toUpperCase();
-	const isOnVal = () => getVal() === 'ACTIVE';
+		const getVal = () =>
+			String(p.data?.campaign_status ?? p.data?.status ?? p.value ?? '').toUpperCase();
+		const isOnVal = () => getVal() === 'ACTIVE';
 
-	if (isPinnedOrTotal(p) || !interactive.has(level)) {
-		this.eGui = document.createElement('span');
-		this.eGui.textContent = strongText(String(p.value ?? ''));
-		return;
-	}
+		if (isPinnedOrTotal(p) || !interactive.has(level)) {
+			this.eGui = document.createElement('span');
+			this.eGui.textContent = strongText(String(p.value ?? ''));
+			return;
+		}
 
-	const root = document.createElement('div');
-	root.className = 'ag-status-pill';
-	root.setAttribute('role', 'switch');
-	root.setAttribute('tabindex', '0');
+		const root = document.createElement('div');
+		root.className = 'ag-status-pill';
+		root.setAttribute('role', 'switch');
+		root.setAttribute('tabindex', '0');
 
-	const fill = document.createElement('div');
-	fill.className = 'ag-status-fill';
-	const knob = document.createElement('div');
-	knob.className = 'ag-status-knob';
-	if (smallKnob) knob.classList.add('ag-status-knob--sm');
-	const label = document.createElement('div');
-	label.className = 'ag-status-label';
-	root.append(fill, label, knob);
-	this.eGui = root;
+		const fill = document.createElement('div');
+		fill.className = 'ag-status-fill';
+		const knob = document.createElement('div');
+		knob.className = 'ag-status-knob';
+		if (smallKnob) knob.classList.add('ag-status-knob--sm');
+		const label = document.createElement('div');
+		label.className = 'ag-status-label';
+		root.append(fill, label, knob);
+		this.eGui = root;
 
-	let trackLenPx = 0;
-	let rafToken = null;
+		let trackLenPx = 0;
+		let rafToken = null;
 
-	const computeTrackLen = () => {
-		const pad = parseFloat(getComputedStyle(root).paddingLeft || '0');
-		const knobW = knob.clientWidth || 0;
-		const edgeGap = parseFloat(getComputedStyle(root).getPropertyValue('--edge-gap') || '0');
-		const travel = root.clientWidth - 2 * pad - 2 * edgeGap - knobW;
-		return Math.max(0, travel);
-	};
-	const setProgress = (pct01) => {
-		const pct = Math.max(0, Math.min(1, pct01));
-		fill.style.width = pct * 100 + '%';
-		knob.style.transform = `translateX(${pct * trackLenPx}px)`;
-		const on = pct >= 0.5;
-		label.textContent = on ? 'ACTIVE' : 'PAUSED';
-		root.setAttribute('aria-checked', String(on));
-	};
+		const computeTrackLen = () => {
+			const pad = parseFloat(getComputedStyle(root).paddingLeft || '0');
+			const knobW = knob.clientWidth || 0;
+			const edgeGap = parseFloat(getComputedStyle(root).getPropertyValue('--edge-gap') || '0');
+			const travel = root.clientWidth - 2 * pad - 2 * edgeGap - knobW;
+			return Math.max(0, travel);
+		};
+		const setProgress = (pct01) => {
+			const pct = Math.max(0, Math.min(1, pct01));
+			fill.style.width = pct * 100 + '%';
+			knob.style.transform = `translateX(${pct * trackLenPx}px)`;
+			const on = pct >= 0.5;
+			label.textContent = on ? 'ACTIVE' : 'PAUSED';
+			root.setAttribute('aria-checked', String(on));
+		};
 
-	requestAnimationFrame(() => {
-		trackLenPx = computeTrackLen();
-		setProgress(isOnVal() ? 1 : 0);
-	});
+		requestAnimationFrame(() => {
+			trackLenPx = computeTrackLen();
+			setProgress(isOnVal() ? 1 : 0);
+		});
 
-	const setCellBusy = (on) => {
-		setCellLoading(p.node, colId, !!on);
-		p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
-	};
+		const setCellBusy = (on) => {
+			setCellLoading(p.node, colId, !!on);
+			p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
+		};
 
-	const commit = async (nextOrString, prevOn) => {
-		const nextVal =
-			typeof nextOrString === 'string'
-				? nextOrString.toUpperCase()
-				: nextOrString
-				? 'ACTIVE'
-				: 'PAUSED';
+		const commit = async (nextOrString, prevOn) => {
+			const nextVal =
+				typeof nextOrString === 'string'
+					? nextOrString.toUpperCase()
+					: nextOrString
+					? 'ACTIVE'
+					: 'PAUSED';
 
-		const level = p.node?.level ?? 0;
-		const id =
-			level === 0
-				? String(p.data?.id ?? p.data?.utm_campaign ?? '')
-				: String(p.data?.id ?? '') || '';
-		if (!id) return;
+			const level = p.node?.level ?? 0;
+			const id =
+				level === 0
+					? String(p.data?.id ?? p.data?.utm_campaign ?? '')
+					: String(p.data?.id ?? '') || '';
+			if (!id) return;
 
-		const scope = level === 2 ? 'ad' : level === 1 ? 'adset' : 'campaign';
+			const scope = level === 2 ? 'ad' : level === 1 ? 'adset' : 'campaign';
 
-		setCellBusy(true);
-		try {
-			const okTest = await toggleFeature('status', { scope, id, value: nextVal });
-			if (!okTest) {
-				const rollbackVal = prevOn ? 'ACTIVE' : 'PAUSED';
-				if (p.data) {
-					if ('campaign_status' in p.data) p.data.campaign_status = rollbackVal;
-					if ('status' in p.data) p.data.status = rollbackVal;
+			setCellBusy(true);
+			try {
+				const okTest = await toggleFeature('status', { scope, id, value: nextVal });
+				if (!okTest) {
+					const rollbackVal = prevOn ? 'ACTIVE' : 'PAUSED';
+					if (p.data) {
+						if ('campaign_status' in p.data) p.data.campaign_status = rollbackVal;
+						if ('status' in p.data) p.data.status = rollbackVal;
+					}
+					setProgress(prevOn ? 1 : 0);
+					markCellError(p.node, colId);
+					p.api.refreshCells({ rowNodes: [p.node], columns: [colId], force: true });
+					return;
 				}
-				setProgress(prevOn ? 1 : 0);
-				markCellError(p.node, colId);
-				p.api.refreshCells({ rowNodes: [p.node], columns: [colId], force: true });
+
+				if (p.data) {
+					if ('campaign_status' in p.data) p.data.campaign_status = nextVal;
+					if ('status' in p.data) p.data.status = nextVal;
+				}
+				setProgress(nextVal === 'ACTIVE' ? 1 : 0);
+				p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
+
+				try {
+					if (scope === 'ad') await updateAdStatusBackend(id, nextVal);
+					else if (scope === 'adset') await updateAdsetStatusBackend(id, nextVal);
+					else await updateCampaignStatusBackend(id, nextVal);
+					clearCellError(p.node, colId);
+					p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
+					if (this._userInteracted) {
+						const scopeLabel =
+							scope === 'ad' ? 'Ad' : scope === 'adset' ? 'Adset' : 'Campaign';
+						const msg =
+							nextVal === 'ACTIVE' ? `${scopeLabel} activated` : `${scopeLabel} paused`;
+						showToast(msg, 'success');
+					}
+				} catch (e) {
+					const rollbackVal = prevOn ? 'ACTIVE' : 'PAUSED';
+					if (p.data) {
+						if ('campaign_status' in p.data) p.data.campaign_status = rollbackVal;
+						if ('status' in p.data) p.data.status = rollbackVal;
+					}
+					setProgress(prevOn ? 1 : 0);
+					p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
+					markCellError(p.node, colId);
+					p.api.refreshCells({ rowNodes: [p.node], columns: [colId], force: true });
+					showToast(`Failed to save status: ${e?.message || e}`, 'danger');
+				}
+			} finally {
+				setCellBusy(false);
+			}
+		};
+
+		// Drag e eventos
+		const MOVE_THRESHOLD = 6;
+		let dragging = false;
+		let startX = 0;
+		let startOn = false;
+		let moved = false;
+
+		const CLICK_DELAY_MS = 280;
+		let clickTimer = null;
+		const scheduleOpenMenu = () => {
+			clearTimeout(clickTimer);
+			clickTimer = setTimeout(() => {
+				clickTimer = null;
+				openMenu();
+			}, CLICK_DELAY_MS);
+		};
+		const cancelScheduledMenu = () => {
+			if (clickTimer) {
+				clearTimeout(clickTimer);
+				clickTimer = null;
+			}
+		};
+
+		const onPointerMove = (x) => {
+			if (!dragging || rafToken) return;
+			rafToken = requestAnimationFrame(() => {
+				rafToken = null;
+				const dx = x - startX;
+				if (!moved && Math.abs(dx) > MOVE_THRESHOLD) moved = true;
+				if (!moved) return;
+				const p0 = startOn ? 1 : 0;
+				const pgr = p0 + dx / Math.max(1, trackLenPx);
+				setProgress(pgr);
+			});
+		};
+		const detachWindowListeners = () => {
+			window.removeEventListener('mousemove', onMouseMove);
+			window.removeEventListener('mouseup', onMouseUp);
+			window.removeEventListener('touchmove', onTouchMove, { passive: true });
+			window.removeEventListener('touchend', onTouchEnd);
+		};
+		const onMouseMove = (e) => onPointerMove(e.clientX);
+		const onTouchMove = (e) => onPointerMove(e.touches[0].clientX);
+
+		const endDrag = (x, ev) => {
+			if (!dragging) return;
+			dragging = false;
+			detachWindowListeners();
+			if (!moved) {
+				ev?.preventDefault?.();
+				ev?.stopPropagation?.();
+				scheduleOpenMenu();
 				return;
 			}
-
-			if (p.data) {
-				if ('campaign_status' in p.data) p.data.campaign_status = nextVal;
-				if ('status' in p.data) p.data.status = nextVal;
-			}
-			setProgress(nextVal === 'ACTIVE' ? 1 : 0);
-			p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
-
-			try {
-				if (scope === 'ad') await updateAdStatusBackend(id, nextVal);
-				else if (scope === 'adset') await updateAdsetStatusBackend(id, nextVal);
-				else await updateCampaignStatusBackend(id, nextVal);
-				clearCellError(p.node, colId);
-				p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
-				if (this._userInteracted) {
-					const scopeLabel = scope === 'ad' ? 'Ad' : scope === 'adset' ? 'Adset' : 'Campaign';
-					const msg =
-						nextVal === 'ACTIVE' ? `${scopeLabel} activated` : `${scopeLabel} paused`;
-					showToast(msg, 'success');
-				}
-			} catch (e) {
-				const rollbackVal = prevOn ? 'ACTIVE' : 'PAUSED';
-				if (p.data) {
-					if ('campaign_status' in p.data) p.data.campaign_status = rollbackVal;
-					if ('status' in p.data) p.data.status = rollbackVal;
-				}
-				setProgress(prevOn ? 1 : 0);
-				p.api.refreshCells({ rowNodes: [p.node], columns: [colId] });
-				markCellError(p.node, colId);
-				p.api.refreshCells({ rowNodes: [p.node], columns: [colId], force: true });
-				showToast(`Failed to save status: ${e?.message || e}`, 'danger');
-			}
-		} finally {
-			setCellBusy(false);
-		}
-	};
-
-	const MOVE_THRESHOLD = 6;
-	let dragging = false,
-		startX = 0,
-		startOn = false,
-		moved = false;
-
-	// Single-click debounce para abrir menu
-	const CLICK_DELAY_MS = 280;
-	let clickTimer = null;
-	const scheduleOpenMenu = () => {
-		clearTimeout(clickTimer);
-		clickTimer = setTimeout(() => {
-			clickTimer = null;
-			openMenu();
-		}, CLICK_DELAY_MS);
-	};
-	const cancelScheduledMenu = () => {
-		if (clickTimer) {
-			clearTimeout(clickTimer);
-			clickTimer = null;
-		}
-	};
-
-	const onPointerMove = (x) => {
-		if (!dragging || rafToken) return;
-		rafToken = requestAnimationFrame(() => {
-			rafToken = null;
-			const dx = x - startX;
-			if (!moved && Math.abs(dx) > MOVE_THRESHOLD) moved = true;
-			if (!moved) return;
-			const p0 = startOn ? 1 : 0;
-			const pgr = p0 + dx / Math.max(1, trackLenPx);
-			setProgress(pgr);
-		});
-	};
-	const detachWindowListeners = () => {
-		window.removeEventListener('mousemove', onMouseMove);
-		window.removeEventListener('mouseup', onMouseUp);
-		window.removeEventListener('touchmove', onTouchMove, { passive: true });
-		window.removeEventListener('touchend', onTouchEnd);
-	};
-	const onMouseMove = (e) => onPointerMove(e.clientX);
-	const onTouchMove = (e) => onPointerMove(e.touches[0].clientX);
-
-	const endDrag = (x, ev) => {
-		if (!dragging) return;
-		dragging = false;
-		detachWindowListeners();
-		if (!moved) {
+			const pct = parseFloat(fill.style.width) / 100;
+			const finalOn = pct >= 0.5;
+			if (finalOn !== startOn) commit(finalOn, startOn);
+			else setProgress(startOn ? 1 : 0);
 			ev?.preventDefault?.();
 			ev?.stopPropagation?.();
-			scheduleOpenMenu();
-			return;
-		}
-		const pct = parseFloat(fill.style.width) / 100;
-		const finalOn = pct >= 0.5;
-		if (finalOn !== startOn) commit(finalOn, startOn);
-		else setProgress(startOn ? 1 : 0);
-		ev?.preventDefault?.();
-		ev?.stopPropagation?.();
-	};
-	const onMouseUp = (e) => endDrag(e.clientX, e);
-	const onTouchEnd = (e) => endDrag(e.changedTouches[0].clientX, e);
+		};
+		const onMouseUp = (e) => endDrag(e.clientX, e);
+		const onTouchEnd = (e) => endDrag(e.changedTouches[0].clientX, e);
 
-	const beginDrag = (x, ev) => {
-		this._userInteracted = true;
-		dragging = true;
-		moved = false;
-		startX = x;
-		startOn = root.getAttribute('aria-checked') === 'true';
-		trackLenPx = computeTrackLen();
-		window.addEventListener('mousemove', onMouseMove);
-		window.addEventListener('mouseup', onMouseUp);
-		window.addEventListener('touchmove', onTouchMove, { passive: true });
-		window.addEventListener('touchend', onTouchEnd);
-		ev?.preventDefault?.();
-		ev?.stopPropagation?.();
-	};
-	root.addEventListener('mousedown', (e) => beginDrag(e.clientX, e));
-	root.addEventListener('touchstart', (e) => beginDrag(e.touches[0].clientX, e), { passive: false });
+		const beginDrag = (x, ev) => {
+			this._userInteracted = true;
+			dragging = true;
+			moved = false;
+			startX = x;
+			startOn = root.getAttribute('aria-checked') === 'true';
+			trackLenPx = computeTrackLen();
+			window.addEventListener('mousemove', onMouseMove);
+			window.addEventListener('mouseup', onMouseUp);
+			window.addEventListener('touchmove', onTouchMove, { passive: true });
+			window.addEventListener('touchend', onTouchEnd);
+			ev?.preventDefault?.();
+			ev?.stopPropagation?.();
+		};
+		root.addEventListener('mousedown', (e) => beginDrag(e.clientX, e));
+		root.addEventListener('touchstart', (e) => beginDrag(e.touches[0].clientX, e), {
+			passive: false,
+		});
 
-	root.addEventListener('click', (e) => {
-		e.preventDefault();
-		e.stopPropagation();
-		if (dragging) return;
-		if (isCellLoading({ data: p.node?.data }, colId)) return;
-		cancelScheduledMenu();
-		if (LionStatusMenu.isOpen() && LionStatusMenu.getAnchor() === root) {
-			LionStatusMenu.close();
-			return;
-		}
-		scheduleOpenMenu();
-	});
-
-	root.addEventListener('keydown', (e) => {
-		if (e.code === 'Space' || e.code === 'Enter') {
+		root.addEventListener('click', (e) => {
 			e.preventDefault();
 			e.stopPropagation();
+			if (dragging) return;
+			if (isCellLoading({ data: p.node?.data }, colId)) return;
+			cancelScheduledMenu();
 			if (LionStatusMenu.isOpen() && LionStatusMenu.getAnchor() === root) {
 				LionStatusMenu.close();
-			} else {
-				cancelScheduledMenu();
-				openMenu();
+				return;
 			}
-		}
-	});
-
-	root.addEventListener('dblclick', (e) => {
-		e.preventDefault();
-		e.stopPropagation();
-		if (isCellLoading({ data: p.node?.data }, colId)) return;
-		cancelScheduledMenu();
-		LionStatusMenu.close();
-		const cur = getVal();
-		const prevOn = cur === 'ACTIVE';
-		const next = prevOn ? 'PAUSED' : 'ACTIVE';
-		this._userInteracted = true;
-		commit(next, prevOn);
-	});
-
-	const openMenu = () => {
-		if (isCellLoading({ data: p.node?.data }, colId)) return;
-		const cur = getVal();
-		const rect = root.getBoundingClientRect();
-		if (LionStatusMenu.isOpen() && LionStatusMenu.getAnchor() === root) {
-			LionStatusMenu.close();
-			return;
-		}
-		LionStatusMenu.open({
-			left: rect.left,
-			top: rect.bottom,
-			width: rect.width,
-			current: cur,
-			anchor: root,
-			pick: async (st) => {
-				if (st === cur) return;
-				this._userInteracted = true;
-				const prevOn = cur === 'ACTIVE';
-				await commit(st, prevOn);
-			},
+			scheduleOpenMenu();
 		});
-	};
 
-	this._cleanup = () => {
+		root.addEventListener('keydown', (e) => {
+			if (e.code === 'Space' || e.code === 'Enter') {
+				e.preventDefault();
+				e.stopPropagation();
+				if (LionStatusMenu.isOpen() && LionStatusMenu.getAnchor() === root) {
+					LionStatusMenu.close();
+				} else {
+					cancelScheduledMenu();
+					openMenu();
+				}
+			}
+		});
+
+		root.addEventListener('dblclick', (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			if (isCellLoading({ data: p.node?.data }, colId)) return;
+			cancelScheduledMenu();
+			LionStatusMenu.close();
+			const cur = getVal();
+			const prevOn = cur === 'ACTIVE';
+			const next = prevOn ? 'PAUSED' : 'ACTIVE';
+			this._userInteracted = true;
+			commit(next, prevOn);
+		});
+
+		const openMenu = () => {
+			if (isCellLoading({ data: p.node?.data }, colId)) return;
+			const cur = getVal();
+			const rect = root.getBoundingClientRect();
+			if (LionStatusMenu.isOpen() && LionStatusMenu.getAnchor() === root) {
+				LionStatusMenu.close();
+				return;
+			}
+			LionStatusMenu.open({
+				left: rect.left,
+				top: rect.bottom,
+				width: rect.width,
+				current: cur,
+				anchor: root,
+				pick: async (st) => {
+					if (st === cur) return;
+					this._userInteracted = true;
+					const prevOn = cur === 'ACTIVE';
+					await commit(st, prevOn);
+				},
+			});
+		};
+
+		this._cleanup = () => {
+			LionStatusMenu.close();
+			detachWindowListeners();
+			if (rafToken) cancelAnimationFrame(rafToken);
+		};
+	}
+
+	getGui() {
+		return this.eGui;
+	}
+
+	refresh(p) {
+		const cfg = p.colDef?.cellRendererParams || {};
+		const interactive = new Set(Array.isArray(cfg.interactiveLevels) ? cfg.interactiveLevels : [0]);
+		const level = p?.node?.level ?? 0;
+		if (!this.eGui || isPinnedOrTotal(p) || !interactive.has(level)) return false;
+
+		const raw = String(p.data?.campaign_status ?? p.data?.status ?? p.value ?? '').toUpperCase();
+		const isOn = raw === 'ACTIVE';
+		const fill = this.eGui.querySelector('.ag-status-fill');
+		const knob = this.eGui.querySelector('.ag-status-knob');
+		const label = this.eGui.querySelector('.ag-status-label');
+		const cs = getComputedStyle(this.eGui);
+		const pad = parseFloat(cs.paddingLeft || '0');
+		const edgeGap = parseFloat(cs.getPropertyValue('--edge-gap') || '0');
+		const rectW = this.eGui.getBoundingClientRect().width;
+		const kRectW = this.eGui.querySelector('.ag-status-knob').getBoundingClientRect().width || 0;
+		const trackLenPx = Math.max(0, rectW - 2 * pad - 2 * edgeGap - kRectW);
+
+		requestAnimationFrame(() => {
+			fill.style.width = (isOn ? 100 : 0) + '%';
+			const onNudge = parseFloat(cs.getPropertyValue('--knob-on-nudge') || '0') || 0;
+			const offNudge = parseFloat(cs.getPropertyValue('--knob-off-nudge') || '0') || 0;
+			const nudgePx = isOn ? onNudge : offNudge;
+			const x = (isOn ? 1 : 0) * trackLenPx;
+			knob.style.transform = `translateX(${x + nudgePx}px)`;
+			label.textContent = isOn ? 'ACTIVE' : 'PAUSED';
+			this.eGui.setAttribute('aria-checked', String(isOn));
+		});
 		LionStatusMenu.close();
-		detachWindowListeners();
-		if (rafToken) cancelAnimationFrame(rafToken);
-	};
-};
-StatusSliderRenderer.prototype.getGui = function () {
-	return this.eGui;
-};
-StatusSliderRenderer.prototype.refresh = function (p) {
-	const cfg = p.colDef?.cellRendererParams || {};
-	const interactive = new Set(Array.isArray(cfg.interactiveLevels) ? cfg.interactiveLevels : [0]);
-	const level = p?.node?.level ?? 0;
-	if (!this.eGui || isPinnedOrTotal(p) || !interactive.has(level)) return false;
+		return true;
+	}
 
-	const raw = String(p.data?.campaign_status ?? p.data?.status ?? p.value ?? '').toUpperCase();
-	const isOn = raw === 'ACTIVE';
-	const fill = this.eGui.querySelector('.ag-status-fill');
-	const knob = this.eGui.querySelector('.ag-status-knob');
-	const label = this.eGui.querySelector('.ag-status-label');
-	const cs = getComputedStyle(this.eGui);
-	const pad = parseFloat(cs.paddingLeft || '0');
-	const edgeGap = parseFloat(cs.getPropertyValue('--edge-gap') || '0');
-	const rectW = this.eGui.getBoundingClientRect().width;
-	const kRectW = this.eGui.querySelector('.ag-status-knob').getBoundingClientRect().width || 0;
-	const trackLenPx = Math.max(0, rectW - 2 * pad - 2 * edgeGap - kRectW);
-
-	requestAnimationFrame(() => {
-		fill.style.width = (isOn ? 100 : 0) + '%';
-		const onNudge = parseFloat(cs.getPropertyValue('--knob-on-nudge') || '0') || 0;
-		const offNudge = parseFloat(cs.getPropertyValue('--knob-off-nudge') || '0') || 0;
-		const nudgePx = isOn ? onNudge : offNudge;
-		let x = (isOn ? 1 : 0) * trackLenPx;
-		knob.style.transform = `translateX(${x + nudgePx}px)`;
-		label.textContent = isOn ? 'ACTIVE' : 'PAUSED';
-		this.eGui.setAttribute('aria-checked', String(isOn));
-	});
-	LionStatusMenu.close();
-	return true;
-};
-StatusSliderRenderer.prototype.destroy = function () {
-	this._cleanup?.();
-};
+	destroy() {
+		this._cleanup?.();
+	}
+}
 
 /* =========================================
  * 9) COLUMN DEFS (DINÂMICAS DA PÁGINA)

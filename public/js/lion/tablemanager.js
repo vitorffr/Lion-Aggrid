@@ -442,135 +442,140 @@ function cc_evalExpression(expr, row) {
 
 const REVENUE_LABELS = ['A', 'B'];
 
-/** Renderer: valor principal + linhas auxiliares abaixo (com scroll nas partes) */
-/** Renderer: valor principal + linhas auxiliares abaixo (com scroll nas partes) */
-function StackBelowRenderer() {}
-StackBelowRenderer.prototype.init = function (p) {
-	this.p = p;
+class StackBelowRenderer {
+	init(p) {
+		this.p = p;
 
-	const wrap = document.createElement('span');
-	wrap.style.display = 'inline-flex';
-	wrap.style.flexDirection = 'column';
-	wrap.style.lineHeight = '1.15';
-	wrap.style.gap = '2px';
+		const wrap = document.createElement('span');
+		wrap.style.display = 'inline-flex';
+		wrap.style.flexDirection = 'column';
+		wrap.style.lineHeight = '1.15';
+		wrap.style.gap = '2px';
 
-	const lvl = p?.node?.level ?? -1;
-	const params = p?.colDef?.cellRendererParams || {};
-	const onlyLevel0 = !!params.onlyLevel0;
-	const showTop = params.showTop !== false;
-	const partsLabelOnly = !!params.partsLabelOnly;
-	const maxParts = Number(params.maxParts) || 0;
-	const fmtKey = String(params.format || 'raw');
+		const lvl = p?.node?.level ?? -1;
+		const params = p?.colDef?.cellRendererParams || {};
+		const onlyLevel0 = !!params.onlyLevel0;
+		const showTop = params.showTop !== false;
+		const partsLabelOnly = !!params.partsLabelOnly;
+		const maxParts = Number(params.maxParts) || 0;
+		const fmtKey = String(params.format || 'raw');
 
-	const partsMaxHeight = Number(params.partsMaxHeight) > 0 ? Number(params.partsMaxHeight) : 72;
+		const partsMaxHeight = Number(params.partsMaxHeight) > 0 ? Number(params.partsMaxHeight) : 72;
 
-	// 👉 Se for pinned/total, deixa como estava (mostra texto simples)
-	if (isPinnedOrTotal(p)) {
-		const span = document.createElement('span');
-		span.textContent = stripHtml(p.value ?? '');
-		wrap.appendChild(span);
-		this.topEl = span;
-		this.partsBox = null;
-		this.eGui = wrap;
-		return;
-	}
-
-	// 👉 Se onlyLevel0 e NÃO é raiz, **não mostra nada**
-	if (onlyLevel0 && lvl !== 0) {
-		// deixa o wrapper vazio para manter altura/linha consistente
-		this.topEl = null;
-		this.partsBox = null;
-		this.eGui = wrap;
-		return;
-	}
-	// ... (restante do init continua igual a partir daqui — começando em formatVal)
-
-	const formatVal = (v) => {
-		if (v == null) return '';
-		if (fmtKey === 'currency') return cc_currencyFormat(Number(v));
-		if (fmtKey === 'int') return intFmt.format(Math.round(Number(v)));
-		if (fmtKey === 'percent') return cc_percentFormat(Number(v));
-		return String(v);
-	};
-
-	// Linha do topo (valor principal)
-	this.topEl = null;
-	if (showTop) {
-		const topEl = document.createElement('span');
-		const topVal = p.valueFormatted != null ? p.valueFormatted : p.value;
-		const coerced = typeof topVal === 'number' ? topVal : number(topVal);
-		topEl.textContent = formatVal(Number.isFinite(coerced) ? coerced : topVal);
-		wrap.appendChild(topEl);
-		this.topEl = topEl;
-	}
-
-	// Container SCROLLÁVEL das partes
-	const partsBox = document.createElement('span');
-	partsBox.className = 'lion-stack-scroll';
-	partsBox.style.display = 'inline-flex';
-	partsBox.style.flexDirection = 'column';
-	partsBox.style.gap = '2px';
-	partsBox.style.maxHeight = partsMaxHeight + 'px';
-	partsBox.style.overflowY = 'auto';
-	partsBox.style.paddingRight = '2px';
-	partsBox.style.contain = 'content';
-	this.partsBox = partsBox;
-
-	const partsFn = p?.colDef?.cellRendererParams?.getParts;
-	let parts = [];
-	try {
-		parts = typeof partsFn === 'function' ? partsFn(p) : [];
-	} catch {}
-	if (!Array.isArray(parts)) parts = [];
-	if (maxParts > 0) parts = parts.slice(0, maxParts);
-
-	parts.forEach((row) => {
-		const line = document.createElement('span');
-		line.style.fontSize = '11px';
-		line.style.opacity = '0.85';
-		const lab = String(row?.label ?? '').trim();
-		const valNum = Number.isFinite(row?.value) ? row.value : number(row?.value);
-		line.textContent = partsLabelOnly ? lab || '' : (lab ? `${lab}: ` : '') + formatVal(valNum);
-		partsBox.appendChild(line);
-	});
-
-	if (partsBox.childNodes.length > 0) wrap.appendChild(partsBox);
-
-	// atalho: duplo-clique copia exatamente o que está renderizado
-	wrap.addEventListener('dblclick', () => {
-		const txt = this.getCopyText();
-		if (txt) {
-			navigator.clipboard?.writeText(txt).catch(() => {});
-			try {
-				showToast('Copied!', 'success');
-			} catch {}
+		// 👉 Se for pinned/total, deixa como estava (texto simples)
+		if (isPinnedOrTotal(p)) {
+			const span = document.createElement('span');
+			span.textContent = stripHtml(p.value ?? '');
+			wrap.appendChild(span);
+			this.topEl = span;
+			this.partsBox = null;
+			this.eGui = wrap;
+			return;
 		}
-	});
 
-	this.eGui = wrap;
-};
-StackBelowRenderer.prototype.getGui = function () {
-	return this.eGui;
-};
-StackBelowRenderer.prototype.refresh = function (p) {
-	this.init(p);
-	return true;
-};
+		// 👉 Se onlyLevel0 e NÃO é raiz, deixa vazio para manter altura/linha
+		if (onlyLevel0 && lvl !== 0) {
+			this.topEl = null;
+			this.partsBox = null;
+			this.eGui = wrap;
+			return;
+		}
 
-// <- NOVO: retorna o texto exatamente como aparece (topo + cada linha das partes)
-StackBelowRenderer.prototype.getCopyText = function () {
-	const lines = [];
-	const t = (el) => (el ? String(el.textContent || '').trim() : '');
-	const push = (s) => {
-		if (s && s !== '—') lines.push(s);
-	};
-	push(t(this.topEl));
-	if (this.partsBox) {
-		for (const child of this.partsBox.childNodes) push(t(child));
+		// --------------------------------------------------------
+		// Função interna para formatar valores numéricos
+		// --------------------------------------------------------
+		const formatVal = (v) => {
+			if (v == null) return '';
+			if (fmtKey === 'currency') return cc_currencyFormat(Number(v));
+			if (fmtKey === 'int') return intFmt.format(Math.round(Number(v)));
+			if (fmtKey === 'percent') return cc_percentFormat(Number(v));
+			return String(v);
+		};
+
+		// Linha superior (valor principal)
+		this.topEl = null;
+		if (showTop) {
+			const topEl = document.createElement('span');
+			const topVal = p.valueFormatted != null ? p.valueFormatted : p.value;
+			const coerced = typeof topVal === 'number' ? topVal : number(topVal);
+			topEl.textContent = formatVal(Number.isFinite(coerced) ? coerced : topVal);
+			wrap.appendChild(topEl);
+			this.topEl = topEl;
+		}
+
+		// --------------------------------------------------------
+		// Container scrollável das “partes”
+		// --------------------------------------------------------
+		const partsBox = document.createElement('span');
+		partsBox.className = 'lion-stack-scroll';
+		partsBox.style.display = 'inline-flex';
+		partsBox.style.flexDirection = 'column';
+		partsBox.style.gap = '2px';
+		partsBox.style.maxHeight = partsMaxHeight + 'px';
+		partsBox.style.overflowY = 'auto';
+		partsBox.style.paddingRight = '2px';
+		partsBox.style.contain = 'content';
+		this.partsBox = partsBox;
+
+		const partsFn = p?.colDef?.cellRendererParams?.getParts;
+		let parts = [];
+		try {
+			parts = typeof partsFn === 'function' ? partsFn(p) : [];
+		} catch {}
+		if (!Array.isArray(parts)) parts = [];
+		if (maxParts > 0) parts = parts.slice(0, maxParts);
+
+		parts.forEach((row) => {
+			const line = document.createElement('span');
+			line.style.fontSize = '11px';
+			line.style.opacity = '0.85';
+			const lab = String(row?.label ?? '').trim();
+			const valNum = Number.isFinite(row?.value) ? row.value : number(row?.value);
+			line.textContent = partsLabelOnly ? lab || '' : (lab ? `${lab}: ` : '') + formatVal(valNum);
+			partsBox.appendChild(line);
+		});
+
+		if (partsBox.childNodes.length > 0) wrap.appendChild(partsBox);
+
+		// --------------------------------------------------------
+		// Dblclick copia exatamente o que está visível
+		// --------------------------------------------------------
+		wrap.addEventListener('dblclick', () => {
+			const txt = this.getCopyText();
+			if (txt) {
+				navigator.clipboard?.writeText(txt).catch(() => {});
+				try {
+					showToast('Copied!', 'success');
+				} catch {}
+			}
+		});
+
+		this.eGui = wrap;
 	}
-	return lines.join('\n');
-};
 
+	getGui() {
+		return this.eGui;
+	}
+
+	refresh(p) {
+		this.init(p);
+		return true;
+	}
+
+	// <- NOVO: retorna o texto exatamente como aparece (topo + linhas)
+	getCopyText() {
+		const lines = [];
+		const t = (el) => (el ? String(el.textContent || '').trim() : '');
+		const push = (s) => {
+			if (s && s !== '—') lines.push(s);
+		};
+		push(t(this.topEl));
+		if (this.partsBox) {
+			for (const child of this.partsBox.childNodes) push(t(child));
+		}
+		return lines.join('\n');
+	}
+}
 /* =========================================
  * 10) Fetch JSON helper
  * =======================================*/
@@ -2508,18 +2513,82 @@ export class Table {
 		this.drill = Object.assign(
 			{
 				period: 'TODAY',
-				minSpinnerMs: 900, // mínimo do spinner ao abrir filhos
-				fakeNetworkMs: 0, // latência fake extra
+				minSpinnerMs: 900,
+				fakeNetworkMs: 0,
 			},
 			opts.drill || {}
 		);
 
-		// Seletor do checkbox de pinar colunas (caso queira customizar)
+		// Seletor do checkbox de pinar colunas
 		this.pinToggleSelector = opts.pinToggleSelector || '#pinToggle';
+
+		// Key para storage do estado da grid
+		this.gridStateKey = `lionGrid_state_${this.container.replace(/[^a-z0-9]/gi, '_')}`;
 	}
 
 	init() {
 		return this.makeGrid();
+	}
+
+	/**
+	 * Reseta o layout da grid para o padrão
+	 */
+	resetLayout() {
+		if (!this.api) {
+			console.warn('[LionGrid] API não inicializada');
+			return;
+		}
+
+		try {
+			sessionStorage.removeItem(this.gridStateKey);
+			this.api.setState({}, []);
+
+			setTimeout(() => {
+				this.api.sizeColumnsToFit();
+				this.api.resetRowHeights();
+			}, 50);
+
+			showToast('Layout Reset', 'info');
+		} catch (error) {
+			console.error('[LionGrid] Erro ao resetar layout:', error);
+		}
+	}
+
+	/**
+	 * Retorna a API do AG-Grid
+	 */
+	getApi() {
+		return this.api;
+	}
+
+	/**
+	 * Salva o estado atual da grid
+	 */
+	saveState() {
+		if (!this.api) return;
+
+		try {
+			const state = this.api.getState();
+			sessionStorage.setItem(this.gridStateKey, JSON.stringify(state));
+		} catch (error) {
+			console.error('[LionGrid] Erro ao salvar estado:', error);
+		}
+	}
+
+	/**
+	 * Restaura o estado salvo da grid
+	 */
+	restoreState() {
+		if (!this.api) return;
+
+		try {
+			const savedState = sessionStorage.getItem(this.gridStateKey);
+			if (savedState) {
+				this.api.setState(JSON.parse(savedState), []);
+			}
+		} catch (error) {
+			console.error('[LionGrid] Erro ao restaurar estado:', error);
+		}
 	}
 
 	makeGrid() {
@@ -2632,7 +2701,7 @@ export class Table {
 					api.getColumn('campaign') ||
 					api.getDisplayedCenterColumns().find((c) => c.getColId?.() === 'campaign');
 				if (!col) return 300;
-				api.getDisplayedColAfter?.(col); // força layout
+				api.getDisplayedColAfter?.(col);
 				const colW = col.getActualWidth();
 				const padding = 16;
 				const iconArea = 28;
@@ -2649,7 +2718,7 @@ export class Table {
 				if (!col) return null;
 				const w = col.getActualWidth?.();
 				if (!w || !Number.isFinite(w)) return null;
-				const horizontalPadding = 12; // margem visual interna da célula
+				const horizontalPadding = 12;
 				return Math.max(0, w - horizontalPadding);
 			} catch {
 				return null;
@@ -2668,22 +2737,11 @@ export class Table {
 			if (field === 'bc_name') {
 				return String(d.bc_name || '');
 			}
-			// fallback
 			return String(d[field] ?? '');
 		}
 
 		// ===== [4] Cache simples por rowId + largura =====
 		const _rowHCache = new Map();
-		function _cacheKey(p, width) {
-			const id =
-				p?.node?.id ||
-				(p?.node?.data?.__nodeType === 'campaign'
-					? `c:${p?.node?.data?.__groupKey}`
-					: p?.node?.data?.__nodeType === 'adset'
-					? `s:${p?.node?.data?.__groupKey}`
-					: p?.node?.data?.id || Math.random());
-			return id + '|' + Math.round(width);
-		}
 
 		// ===== [5] getRowHeight dinâmico por nº de linhas =====
 		const BASE_ROW_MIN = 50;
@@ -2701,7 +2759,6 @@ export class Table {
 			isServerSideGroup: (data) => data?.__nodeType === 'campaign' || data?.__nodeType === 'adset',
 			getServerSideGroupKey: (data) => data?.__groupKey ?? '',
 			getRowId: function (params) {
-				// Garante IDs únicos para cada nó
 				if (params.data && params.data.__nodeType === 'campaign') {
 					return `c:${params.data.__groupKey}`;
 				}
@@ -2711,13 +2768,11 @@ export class Table {
 				if (params.data && params.data.__nodeType === 'ad') {
 					return `a:${params.data.id || params.data.story_id || params.data.__label}`;
 				}
-				// fallback
 				return params.data && params.data.id != null
 					? String(params.data.id)
 					: `${Math.random()}`;
 			},
 
-			// IMPORTANTE: usa APENAS as colunas passadas para a classe
 			columnDefs: [].concat(this.columnDefs),
 			autoGroupColumnDef,
 			defaultColDef,
@@ -2734,11 +2789,8 @@ export class Table {
 				},
 			},
 
-			// Quais colunas podem quebrar em múltiplas linhas?
-
 			rowHeight: BASE_ROW_MIN,
 			getRowHeight: (p) => {
-				// coleta larguras atuais por campo relevante
 				const widthBag = {};
 				widthBag.campaign = getAutoGroupContentWidth(p.api);
 				const bmW = getFieldContentWidth(p.api, 'bc_name');
@@ -2760,17 +2812,15 @@ export class Table {
 
 				if (_rowHCache.has(key)) return _rowHCache.get(key);
 
-				// mede cada candidato usando sua largura efetiva
 				let maxTextH = 0;
 				for (const field of WRAP_FIELDS) {
 					const w = widthBag[field];
-					if (!w) continue; // coluna não exibida
+					if (!w) continue;
 					const text = getCellTextForField(p, field);
 					const textH = _rowHeightMeasure.measure(text, w);
 					if (textH > maxTextH) maxTextH = textH;
 				}
 
-				// fallback se nada foi medido
 				if (maxTextH <= 0) {
 					_rowHCache.set(key, BASE_ROW_MIN);
 					return BASE_ROW_MIN;
@@ -2809,7 +2859,7 @@ export class Table {
 			getContextMenuItems: (params) => {
 				const d = params.node?.data || {};
 				const colId = params.column?.getColDef?.().colId ?? params.column?.colId;
-				const isCampaignColumn = colId === 'ag-Grid-AutoColumn'; // ajustar se seu colId for diferente
+				const isCampaignColumn = colId === 'ag-Grid-AutoColumn';
 
 				function buildCopyWithPartsText(p) {
 					try {
@@ -2880,7 +2930,6 @@ export class Table {
 					'separator',
 				];
 
-				// Somente na coluna campaign
 				if (isCampaignColumn) {
 					const label = d.__label || d.campaign_name || '';
 					const utm = d.utm_campaign || '';
@@ -2900,7 +2949,6 @@ export class Table {
 					}
 				}
 
-				// “Copy with parts” como antes
 				(function maybeAddCopyWithParts() {
 					const colDef = params.column?.getColDef?.() || params.colDef || {};
 					const hasRenderer =
@@ -2930,25 +2978,20 @@ export class Table {
 				const node = params.node;
 				const eventTarget = params.event?.target;
 
-				// Se nó estiver carregando, ignora qualquer clique
 				if (node?.data?.__rowLoading) {
 					return;
 				}
 
-				// Apenas roots de campanha/adset devem expandir/colapsar
 				if (node.group) {
-					// Se clicou fora do ícone de expandir/contrair
 					const clickedExpanderOrCheckbox = !!eventTarget?.closest?.(
 						'.ag-group-expanded, .ag-group-contracted, .ag-group-checkbox'
 					);
 					if (!clickedExpanderOrCheckbox) {
-						// Inverte estado expandido
 						node.setExpanded(!node.expanded);
 						return;
 					}
 				}
 
-				// Após lidar com expand/collapse, se nível > 0, ignora para modal
 				if (node.level > 0) return;
 
 				const isAutoGroupCol =
@@ -2957,8 +3000,9 @@ export class Table {
 					params.colDef?.colId === 'ag-Grid-AutoColumn' ||
 					!!params.colDef?.showRowGroup ||
 					params?.column?.getColId?.() === 'campaign';
-				const clickedExpander = clickedExpanderOrCheckbox;
-				// Reusar a variável
+				const clickedExpander = !!eventTarget?.closest?.(
+					'.ag-group-expanded, .ag-group-contracted, .ag-group-checkbox'
+				);
 
 				if (isAutoGroupCol && !clickedExpander && params?.data?.__nodeType === 'campaign') {
 					const label = params.data.__label || '(no name)';
@@ -2966,7 +3010,6 @@ export class Table {
 					return;
 				}
 
-				// Modal para campos específicos
 				const MODAL_FIELDS = new Set([
 					'profile_name',
 					'bc_name',
@@ -3155,9 +3198,7 @@ export class Table {
 								const apiTarget = req.api ?? params.api;
 								const parentNode = apiTarget.getRowNode(parentId);
 
-								// Bloqueio durante carregamento caso:
 								if (parentNode?.data?.__rowLoading) {
-									// Permite se estiver fechado
 									if (parentNode.expanded) {
 										req.success({ rowData: [], rowCount: 0 });
 										return;
@@ -3236,7 +3277,6 @@ export class Table {
 								return;
 							}
 
-							// Fallback vazio
 							req.success({ rowData: [], rowCount: 0 });
 						} catch (e) {
 							console.error('[TREE SSRM] getRows failed:', e);
@@ -3269,20 +3309,13 @@ export class Table {
 
 		const api = gridOptions.api || apiOrInstance;
 
-		// expõe no global e captura na instância
-		globalThis.LionGrid = globalThis.LionGrid || {};
-		globalThis.LionGrid.api = api;
-		globalThis.LionGrid.resetLayout = function () {
-			try {
-				sessionStorage.removeItem(GRID_STATE_KEY);
-				api.setState({}, []);
-				setTimeout(() => {
-					api.sizeColumnsToFit();
-					api.resetRowHeights();
-				}, 50);
-				showToast('Layout Reset', 'info');
-			} catch {}
-		};
+		// ✅ Captura a API na instância (não no global)
+		try {
+			const _api = typeof api !== 'undefined' && api ? api : gridOptions?.api || null;
+			if (_api) this.api = _api;
+		} catch {}
+
+		globalThis.LionGrid.api = this.api;
 
 		try {
 			LionCompositeColumns.activate();
@@ -3290,12 +3323,6 @@ export class Table {
 			console.warn(e);
 		}
 
-		try {
-			const _api = typeof api !== 'undefined' && api ? api : gridOptions?.api || null;
-			if (_api) this.api = _api;
-		} catch {}
-
-		// ===== Bind opcional do toggle de pinos (usa a função global já existente) =====
 		this._bindPinnedToggle();
 
 		return { api: this.api, gridDiv: this.gridDiv };
@@ -3309,9 +3336,19 @@ export class Table {
 			el.addEventListener('change', () => togglePinnedColsFromCheckbox(false));
 			el.setAttribute('data-init-bound', '1');
 		}
-		// aplica silencioso no load
 		try {
 			togglePinnedColsFromCheckbox(true);
 		} catch {}
+	}
+
+	/**
+	 * Destrói a grid e limpa recursos
+	 */
+	destroy() {
+		if (this.api) {
+			this.saveState();
+			this.api.destroy();
+			this.api = null;
+		}
 	}
 }
