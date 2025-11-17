@@ -14,6 +14,222 @@ export function getAppCurrency() {
 	return LION_CURRENCY;
 }
 
+export function cc_evalExpression(expr, row) {
+	if (typeof expr !== 'string' || !expr.trim()) return null;
+
+	// === 1) Tokenização segura ===
+	// Tokens permitidos:
+	//  - números decimais: 123, 123.45, .5
+	//  - identificadores: campaign_revenue, fb_revenue, _x1
+	//  - operadores: + - * / ( )
+	//  - espaço
+	const TOK_NUMBER = /(?:\d+\.\d+|\d+|\.\d+)/y;
+	const TOK_IDENT = /[A-Za-z_]\w*/y;
+	const TOK_OP = /[+\-*/()]/y;
+	const TOK_SPACE = /\s+/y;
+
+	const s = expr.trim();
+	const tokens = [];
+	let i = 0;
+
+	while (i < s.length) {
+		TOK_SPACE.lastIndex = TOK_NUMBER.lastIndex = TOK_IDENT.lastIndex = TOK_OP.lastIndex = i;
+
+		if (TOK_SPACE.test(s)) {
+			i = TOK_SPACE.lastIndex;
+			continue;
+		}
+
+		if (TOK_NUMBER.test(s)) {
+			const t = s.slice(i, TOK_NUMBER.lastIndex);
+			tokens.push({ type: 'num', value: t });
+			i = TOK_NUMBER.lastIndex;
+			continue;
+		}
+
+		if (TOK_IDENT.test(s)) {
+			const t = s.slice(i, TOK_IDENT.lastIndex);
+			tokens.push({ type: 'id', value: t });
+			i = TOK_IDENT.lastIndex;
+			continue;
+		}
+
+		if (TOK_OP.test(s)) {
+			const t = s.slice(i, TOK_OP.lastIndex);
+			tokens.push({ type: 'op', value: t });
+			i = TOK_OP.lastIndex;
+			continue;
+		}
+
+		// Qualquer outro caractere (inclui ponto fora de número, %, ^, [], {}, aspas, vírgula, etc.)
+		return null;
+	}
+
+	if (!tokens.length) return null;
+
+	// === 2) Valida identificadores e constrói lista de permitidos ===
+	const allowedIdSet = new Set(['number', ...Object.keys(row || {})]);
+	for (const tk of tokens) {
+		if (tk.type === 'id' && !allowedIdSet.has(tk.value)) return null;
+	}
+
+	// === 3) Reconstrói expressão “sanitizada” (sem espaços extras) ===
+	// Mantemos a ordem original, apenas juntando os lexemas aprovados.
+	const safeExpr = tokens.map((t) => t.value).join('');
+
+	// === 4) Executa com escopo controlado ===
+	try {
+		// Passa todos os campos do row como variáveis locais
+		const keys = [...allowedIdSet].filter((k) => k !== 'number');
+		const fn = new Function(
+			'number',
+			'row',
+			`
+        "use strict";
+        const { ${keys.join(', ')} } = row;
+        return (${safeExpr});
+      `
+		);
+		const val = fn(number, row || {});
+		return Number.isFinite(val) ? val : null;
+	} catch {
+		return null;
+	}
+}
+export class StackBelowRenderer {
+	init(p) {
+		this.p = p;
+
+		const wrap = document.createElement('span');
+		wrap.style.display = 'inline-flex';
+		wrap.style.flexDirection = 'column';
+		wrap.style.lineHeight = '1.15';
+		wrap.style.gap = '2px';
+
+		const lvl = p?.node?.level ?? -1;
+		const params = p?.colDef?.cellRendererParams || {};
+		const onlyLevel0 = !!params.onlyLevel0;
+		const showTop = params.showTop !== false;
+		const partsLabelOnly = !!params.partsLabelOnly;
+		const maxParts = Number(params.maxParts) || 0;
+		const fmtKey = String(params.format || 'raw');
+
+		const partsMaxHeight = Number(params.partsMaxHeight) > 0 ? Number(params.partsMaxHeight) : 72;
+
+		// 👉 Se for pinned/total, deixa como estava (texto simples)
+		if (isPinnedOrTotal(p)) {
+			const span = document.createElement('span');
+			span.textContent = stripHtml(p.value ?? '');
+			wrap.appendChild(span);
+			this.topEl = span;
+			this.partsBox = null;
+			this.eGui = wrap;
+			return;
+		}
+
+		// 👉 Se onlyLevel0 e NÃO é raiz, deixa vazio para manter altura/linha
+		if (onlyLevel0 && lvl !== 0) {
+			this.topEl = null;
+			this.partsBox = null;
+			this.eGui = wrap;
+			return;
+		}
+
+		// --------------------------------------------------------
+		// Função interna para formatar valores numéricos
+		// --------------------------------------------------------
+		const formatVal = (v) => {
+			if (v == null) return '';
+			if (fmtKey === 'currency') return cc_currencyFormat(Number(v));
+			if (fmtKey === 'int') return intFmt.format(Math.round(Number(v)));
+			if (fmtKey === 'percent') return cc_percentFormat(Number(v));
+			return String(v);
+		};
+
+		// Linha superior (valor principal)
+		this.topEl = null;
+		if (showTop) {
+			const topEl = document.createElement('span');
+			const topVal = p.valueFormatted != null ? p.valueFormatted : p.value;
+			const coerced = typeof topVal === 'number' ? topVal : number(topVal);
+			topEl.textContent = formatVal(Number.isFinite(coerced) ? coerced : topVal);
+			wrap.appendChild(topEl);
+			this.topEl = topEl;
+		}
+
+		// --------------------------------------------------------
+		// Container scrollável das “partes”
+		// --------------------------------------------------------
+		const partsBox = document.createElement('span');
+		partsBox.className = 'lion-stack-scroll';
+		partsBox.style.display = 'inline-flex';
+		partsBox.style.flexDirection = 'column';
+		partsBox.style.gap = '2px';
+		partsBox.style.maxHeight = partsMaxHeight + 'px';
+		partsBox.style.overflowY = 'auto';
+		partsBox.style.paddingRight = '2px';
+		partsBox.style.contain = 'content';
+		this.partsBox = partsBox;
+
+		const partsFn = p?.colDef?.cellRendererParams?.getParts;
+		let parts = [];
+		try {
+			parts = typeof partsFn === 'function' ? partsFn(p) : [];
+		} catch {}
+		if (!Array.isArray(parts)) parts = [];
+		if (maxParts > 0) parts = parts.slice(0, maxParts);
+
+		parts.forEach((row) => {
+			const line = document.createElement('span');
+			line.style.fontSize = '11px';
+			line.style.opacity = '0.85';
+			const lab = String(row?.label ?? '').trim();
+			const valNum = Number.isFinite(row?.value) ? row.value : number(row?.value);
+			line.textContent = partsLabelOnly ? lab || '' : (lab ? `${lab}: ` : '') + formatVal(valNum);
+			partsBox.appendChild(line);
+		});
+
+		if (partsBox.childNodes.length > 0) wrap.appendChild(partsBox);
+
+		// --------------------------------------------------------
+		// Dblclick copia exatamente o que está visível
+		// --------------------------------------------------------
+		wrap.addEventListener('dblclick', () => {
+			const txt = this.getCopyText();
+			if (txt) {
+				navigator.clipboard?.writeText(txt).catch(() => {});
+				try {
+					showToast('Copied!', 'success');
+				} catch {}
+			}
+		});
+
+		this.eGui = wrap;
+	}
+
+	getGui() {
+		return this.eGui;
+	}
+
+	refresh(p) {
+		this.init(p);
+		return true;
+	}
+
+	// <- NOVO: retorna o texto exatamente como aparece (topo + linhas)
+	getCopyText() {
+		const lines = [];
+		const t = (el) => (el ? String(el.textContent || '').trim() : '');
+		const push = (s) => {
+			if (s && s !== '—') lines.push(s);
+		};
+		push(t(this.topEl));
+		if (this.partsBox) {
+			for (const child of this.partsBox.childNodes) push(t(child));
+		}
+		return lines.join('\n');
+	}
+}
 /** Parser tolerante a BRL/USD (string → number) */
 export function parseCurrencyFlexible(value, mode = getAppCurrency()) {
 	if (value == null || value === '') return null;

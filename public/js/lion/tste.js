@@ -39,6 +39,7 @@ function getAgGrid() {
 		if (key && LM?.setLicenseKey) LM.setLicenseKey(key);
 	} catch {}
 })();
+
 async function fetchJSON(url, opts) {
 	const res = await fetch(url, {
 		headers: { 'Content-Type': 'application/json' },
@@ -54,6 +55,7 @@ async function fetchJSON(url, opts) {
 	if (!res.ok) throw new Error(data?.error || res.statusText || 'Request failed');
 	return data;
 }
+
 function refreshSSRM(api) {
 	if (!api) return;
 	if (typeof api.refreshServerSideStore === 'function') {
@@ -66,6 +68,7 @@ function refreshSSRM(api) {
 		api.onFilterChanged();
 	}
 }
+
 (function setupGlobalQuickFilter() {
 	function focusQuickFilter() {
 		const input = document.getElementById('quickFilter');
@@ -108,6 +111,7 @@ function refreshSSRM(api) {
 	);
 	globalThis.addEventListener('lionGridReady', init);
 })();
+
 function setParentRowLoading(api, parentId, on) {
 	if (!api || !parentId) return;
 	const node = api.getRowNode(parentId);
@@ -120,6 +124,8 @@ function buildFilterModelWithGlobal(baseFilterModel) {
 	fm._global = Object.assign({}, fm._global, { filter: gf });
 	return fm;
 }
+
+//passar para classe
 
 export class Table {
 	static LionCompositeColumns = (() => {
@@ -136,27 +142,17 @@ export class Table {
 		}
 		const activeCols = {};
 		const colRegistry = {};
-
 		return {
 			register: (id, fn) => {
 				colRegistry[String(id)] = fn;
 			},
 			activate: (ids) => {
 				const cfg = _read();
-
-				// 👉 Garante que ids é um array ou um array vazio
-				if (!Array.isArray(ids)) {
-					// se veio um valor único (string/number), coloca em array
-					if (ids != null) ids = [ids];
-					else ids = [];
-				}
-
 				for (const id of ids) {
 					if (!cfg[id]) cfg[id] = { active: true };
 					else cfg[id].active = true;
 					activeCols[id] = true;
 				}
-
 				_write(cfg);
 				return true;
 			},
@@ -548,821 +544,29 @@ export class Table {
 		this.defaultColDef = opts.defaultColDef;
 		this.selectionColumn = opts.selectionColumn || 'ag-Grid-Selection';
 	}
+
 	init() {
 		this.ensureLoadingStyles();
+		this.setupToolbar();
 		this.bindCalcColsModalClose();
 		this.initModalClickEvents();
 		this.initModalEvents();
 		this.CalcColsPopulate();
-		this.setupToolbar();
+		this._bindPinnedToggle();
+		this._initSizeModeToggle();
 
 		return this.makeGrid();
 	}
-	setupToolbar() {
-		const byId = (id) => document.getElementById(id);
-		function ensureApi() {
-			const api = globalThis.LionGrid?.api;
-			if (!api) {
-				console.warn('Grid API not available yet');
-				return null;
-			}
-			return api;
-		}
-		const SS_KEY_STATE = this.GRID_STATE_KEY || 'lion.aggrid.state.v1';
-		const LS_KEY_PRESETS = 'lion.aggrid.presets.v1';
-		const LS_KEY_ACTIVE_PRESET = 'lion.aggrid.activePreset.v1';
 
-		function getState() {
-			const api = ensureApi();
-			if (!api) return null;
-			try {
-				return api.getState();
-			} catch {
-				return null;
-			}
-		}
-		function setState(state, ignore = []) {
-			const api = ensureApi();
-			if (!api) return;
-			try {
-				api.setState(state, ignore || []);
-			} catch (e) {
-				console.warn('setState fail', e);
-			}
-		}
-
-		function resetLayout() {
-			const api = ensureApi();
-			if (!api) return;
-			try {
-				sessionStorage.removeItem(SS_KEY_STATE);
-				localStorage.removeItem(LS_KEY_ACTIVE_PRESET);
-				api.setState({}, []);
-				api.resetColumnState?.();
-				api.setFilterModel?.(null);
-				api.setSortModel?.([]);
-				refreshPresetUserSelect();
-				showToast('Layout Reset', 'info');
-			} catch (e) {
-				console.warn('resetLayout fail', e);
-			}
-		}
-
-		function readPresets() {
-			try {
-				return JSON.parse(localStorage.getItem(LS_KEY_PRESETS) || '{}');
-			} catch {
-				return {};
-			}
-		}
-		function writePresets(obj) {
-			localStorage.setItem(LS_KEY_PRESETS, JSON.stringify(obj));
-		}
-		function listPresetNames() {
-			return Object.keys(readPresets()).sort((a, b) => a.localeCompare(b, 'pt-BR'));
-		}
-
-		function refreshPresetUserSelect() {
-			const sel = byId('presetUserSelect');
-			if (!sel) return;
-			const activePreset = localStorage.getItem(LS_KEY_ACTIVE_PRESET) || '';
-			while (sel.firstChild) sel.removeChild(sel.firstChild);
-			const placeholderText = 'Default';
-			sel.appendChild(new Option(placeholderText, ''));
-			listPresetNames().forEach((name) => sel.appendChild(new Option(name, name)));
-			if (activePreset && [...sel.options].some((o) => o.value === activePreset))
-				sel.value = activePreset;
-			else sel.value = '';
-		}
-
-		// ===== Calculated Columns Modal (KTUI) =====
-		(function setupCalcColsModal() {
-			const $ = (sel) => document.querySelector(sel);
-			const DEFAULT_OPERATORS = [
-				{ value: 'custom', label: '✎ Custom Expression', template: '' },
-				{
-					value: 'divide',
-					label: '÷ Division (A / B)',
-					template: 'number({col1}) / number({col2})',
-				},
-				{
-					value: 'multiply',
-					label: '× Multiplication (A × B)',
-					template: 'number({col1}) * number({col2})',
-				},
-				{
-					value: 'add',
-					label: '+ Addition (A + B)',
-					template: 'number({col1}) + number({col2})',
-				},
-				{
-					value: 'subtract',
-					label: '− Subtraction (A − B)',
-					template: 'number({col1}) - number({col2})',
-				},
-				{
-					value: 'percent',
-					label: '% Percentage (A / B × 100)',
-					template: '(number({col1}) / number({col2})) * 100',
-				},
-				{
-					value: 'percent_change',
-					label: 'Δ% Change ((B-A)/A × 100)',
-					template: '((number({col2}) - number({col1})) / number({col1})) * 100',
-				},
-				{
-					value: 'average',
-					label: '⌀ Average ((A+B)/2)',
-					template: '(number({col1}) + number({col2})) / 2',
-				},
-			];
-
-			function populateExpressionSelect() {
-				const sel = $('#cc-format');
-				if (!sel) return;
-				sel.innerHTML = '';
-				DEFAULT_OPERATORS.forEach((op) => {
-					const option = document.createElement('option');
-					option.value = op.value;
-					option.textContent = op.label;
-					option.dataset.template = op.template;
-					sel.appendChild(option);
-				});
-				if (globalThis.KT && KT.Select && KT.Select.getOrCreateInstance) {
-					try {
-						const instance = KT.Select.getOrCreateInstance(sel);
-						if (instance) {
-							instance.destroy();
-							KT.Select.getInstance(sel)?.init();
-						}
-					} catch (e) {
-						console.warn('Failed to reinitialize cc-format select:', e);
-					}
-				}
-			}
-
-			function populateColumnSelects() {
-				const api = ensureApi();
-				if (!api) return;
-
-				// ===== helpers para repetir a mesma lógica do CalcColsPopulate =====
-				function _isCalculableByDef(def) {
-					if (!def) return false;
-					if (def.calcEligible === true) return true;
-					if (def.calcType === 'numeric') return true;
-					if (def.valueType === 'number') return true;
-					if (def.cellDataType === 'number') return true;
-					if (def.type === 'numericColumn') return true;
-					if (def.filter === 'agNumberColumnFilter') return true;
-					if (typeof def.valueParser === 'function') return true;
-					return false;
-				}
-				function _flattenColDefs(defOrArray) {
-					const out = [];
-					const walk = (arr) => {
-						(arr || []).forEach((def) => {
-							if (def?.children?.length) walk(def.children);
-							else out.push(def);
-						});
-					};
-					if (Array.isArray(defOrArray)) walk(defOrArray);
-					else if (defOrArray) walk([defOrArray]);
-					return out;
-				}
-				function _getSelectableColumns() {
-					let defs = [];
-					try {
-						const displayed = api.getAllDisplayedColumns?.() || [];
-						if (displayed.length) {
-							defs = displayed
-								.map((gc) => gc.getColDef?.() || gc.colDef || null)
-								.filter(Boolean);
-						}
-					} catch {}
-					if (!defs.length) {
-						const columnState = api.getColumnState?.() || [];
-						const viaState = columnState
-							.map((s) => api.getColumn?.(s.colId)?.getColDef?.())
-							.filter(Boolean);
-						if (viaState.length) defs = viaState;
-						else defs = (api.getColumnDefs?.() || []).flatMap(_flattenColDefs);
-					}
-
-					const deny = new Set(['ag-Grid-AutoColumn', 'ag-Grid-RowGroup', '__autoGroup']);
-					defs = defs.filter((def) => {
-						if (!def) return false;
-						const field = def.field || def.colId;
-						const header = def.headerName || field;
-						if (!field || !header) return false;
-						if (deny.has(field)) return false;
-						if (String(field).startsWith('__')) return false;
-						if (def.checkboxSelection) return false;
-						if (def.rowGroup || def.pivot) return false;
-						const h = String(header).toLowerCase();
-						if (h.includes('select') || h.includes('ação') || h.includes('action'))
-							return false;
-						return true;
-					});
-
-					// mantém apenas as numéricas/calculáveis
-					defs = defs.filter(_isCalculableByDef);
-
-					// map + dedup por field
-					const mapped = defs.map((def) => ({
-						field: String(def.field || def.colId),
-						label: String(def.headerName || def.field || def.colId),
-					}));
-					const seen = new Set();
-					const unique = [];
-					for (const it of mapped) {
-						if (seen.has(it.field)) continue;
-						seen.add(it.field);
-						unique.push(it);
-					}
-					// ordena por label visível
-					unique.sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'));
-					return unique;
-				}
-
-				// ===== aplica no <select> do modal =====
-				const col1Sel = document.querySelector('#cc-col1');
-				const col2Sel = document.querySelector('#cc-col2');
-				if (!col1Sel || !col2Sel) return;
-
-				const options = _getSelectableColumns();
-				[col1Sel, col2Sel].forEach((sel) => {
-					sel.innerHTML = '';
-					for (const col of options) {
-						const opt = document.createElement('option');
-						opt.value = col.field;
-						opt.textContent = `${col.label} (${col.field})`;
-						sel.appendChild(opt);
-					}
-					// reinit KT select se existir
-					if (globalThis.KT && KT.Select && KT.Select.getOrCreateInstance) {
-						try {
-							const instance = KT.Select.getOrCreateInstance(sel);
-							if (instance) {
-								instance.destroy();
-								KT.Select.getInstance(sel)?.init();
-							}
-						} catch (e) {
-							console.warn('Failed to reinitialize column select:', e);
-						}
-					}
-				});
-			}
-
-			function updateExpressionFromSelects() {
-				const formatSel = $('#cc-format');
-				const col1Sel = $('#cc-col1');
-				const col2Sel = $('#cc-col2');
-				const exprInput = $('#cc-expression');
-				const partsInput = $('#cc-parts');
-				if (!formatSel || !col1Sel || !col2Sel || !exprInput) return;
-				const selectedOp = formatSel.options[formatSel.selectedIndex];
-				const template = selectedOp?.dataset?.template;
-				if (!template || formatSel.value === 'custom') return;
-				const col1 = col1Sel.value;
-				const col2 = col2Sel.value;
-				if (col1 && col2) {
-					const expression = template.replace(/{col1}/g, col1).replace(/{col2}/g, col2);
-					exprInput.value = expression;
-					if (partsInput) {
-						const col1Label = col1Sel.options[col1Sel.selectedIndex]?.textContent || col1;
-						const col2Label = col2Sel.options[col2Sel.selectedIndex]?.textContent || col2;
-						const parts = [
-							{ label: col1Label.replace(/number/gi, '').trim(), expr: col1 },
-							{ label: col2Label.replace(/number/gi, '').trim(), expr: col2 },
-						];
-						partsInput.value = JSON.stringify(parts, null, 2);
-					}
-				}
-			}
-
-			function modalShow(selector) {
-				const el = document.querySelector(selector);
-				if (!el) return;
-				if (globalThis.KT && KT.Modal && KT.Modal.getOrCreateInstance)
-					KT.Modal.getOrCreateInstance(el).show();
-				else {
-					el.classList.remove('hidden');
-					el.style.display = 'block';
-					el.setAttribute('aria-hidden', 'false');
-					el.classList.add('kt-modal--open');
-				}
-			}
-			function modalHide(selector) {
-				const el = document.querySelector(selector);
-				if (!el) return;
-				if (globalThis.KT && KT.Modal && KT.Modal.getOrCreateInstance)
-					KT.Modal.getOrCreateInstance(el).hide();
-				else {
-					el.style.display = 'none';
-					el.classList.add('hidden');
-					el.classList.remove('kt-modal--open');
-					el.setAttribute('aria-hidden', 'true');
-				}
-			}
-
-			const btn = document.getElementById('btnCalcCols');
-			if (btn) {
-				btn.addEventListener('click', (e) => {
-					const sel = btn.getAttribute('data-kt-modal-toggle') || '#calcColsModal';
-					setTimeout(() => {
-						modalShow(sel);
-						clearForm();
-						populateExpressionSelect();
-						populateColumnSelects();
-						renderList();
-					}, 0);
-				});
-			}
-
-			const formatSel = $('#cc-format');
-			const col1Sel = $('#cc-col1');
-			const col2Sel = $('#cc-col2');
-			if (formatSel) formatSel.addEventListener('change', updateExpressionFromSelects);
-			if (col1Sel) col1Sel.addEventListener('change', updateExpressionFromSelects);
-			if (col2Sel) col2Sel.addEventListener('change', updateExpressionFromSelects);
-
-			const modalEl = document.getElementById('calcColsModal');
-			if (modalEl)
-				modalEl.addEventListener('show.kt.modal', () => {
-					clearForm();
-					populateExpressionSelect();
-					populateColumnSelects();
-					renderList();
-				});
-
-			const list = $('#cc-list');
-			const empty = $('#cc-empty');
-			const saveBtn = $('#cc-save');
-			const reloadBtn = $('#cc-reload');
-			const resetBtn = $('#cc-reset-form');
-			const activateAllBtn = $('#cc-activate-all');
-
-			if (typeof document !== 'undefined') {
-				if (document.readyState === 'loading') {
-					document.addEventListener('DOMContentLoaded', () => {
-						setTimeout(() => {
-							populateExpressionSelect();
-							populateColumnSelects();
-						}, 100);
-					});
-				} else {
-					setTimeout(() => {
-						populateExpressionSelect();
-						populateColumnSelects();
-					}, 100);
-				}
-			}
-
-			function readForm() {
-				const headerName = ($('#cc-header')?.value || '').trim();
-				let id = ($('#cc-id')?.value || '').trim();
-				const format = ($('#cc-type')?.value || 'currency').trim().toLowerCase();
-				const expression = ($('#cc-expression')?.value || '').trim();
-				const onlyLevel0 = !!$('#cc-only-level0')?.checked;
-				const after = ($('#cc-after')?.value || 'Revenue').trim() || 'Revenue';
-				const mini = !!$('#cc-mini')?.checked;
-
-				if (!id && headerName)
-					id = headerName.toLowerCase().replace(/\s+/g, '_').replace(/[^\w]/g, '');
-
-				let parts = [];
-				const raw = ($('#cc-parts')?.value || '').trim();
-				if (raw) {
-					try {
-						parts = JSON.parse(raw);
-					} catch {
-						showToast('Invalid Parts JSON', 'danger');
-						parts = null;
-					}
-				}
-				return { id, headerName, format, expression, parts, onlyLevel0, after, mini };
-			}
-			function clearForm() {
-				$('#cc-header').value = '';
-				$('#cc-id').value = '';
-				const formatSel = $('#cc-format');
-				if (formatSel && formatSel.options.length > 0) formatSel.selectedIndex = 0;
-				const col1Sel = $('#cc-col1');
-				const col2Sel = $('#cc-col2');
-				if (col1Sel && col1Sel.options.length > 0) col1Sel.selectedIndex = 0;
-				if (col2Sel && col2Sel.options.length > 0) col2Sel.selectedIndex = 0;
-				$('#cc-expression').value = '';
-				$('#cc-parts').value = '[]';
-				$('#cc-only-level0').checked = true;
-				$('#cc-after').value = 'Revenue';
-				$('#cc-type').value = 'currency';
-				const miniEl = $('#cc-mini');
-				if (miniEl) miniEl.checked = false;
-				updateExpressionFromSelects();
-			}
-			function renderList() {
-				if (!list) return;
-				const items = globalThis.LionCalcColumns?.list?.() || [];
-				list.innerHTML = '';
-				if (!items.length) {
-					empty?.classList.remove('hidden');
-					return;
-				}
-				empty?.classList.add('hidden');
-				for (const c of items) {
-					const li = document.createElement('li');
-					li.className = 'flex items-center justify-between p-3';
-					const left = document.createElement('div');
-					left.className = 'min-w-0';
-					left.innerHTML = `
-		<div class="font-medium">${c.headerName || c.id}</div>
-		<div class="text-xs opacity-70 break-words">id: <code>${c.id}</code></div>
-		<div class="text-xs opacity-70 break-words">expr: <code>${c.expression}</code></div>
-	  `;
-					const right = document.createElement('div');
-					right.className = 'flex items-center gap-2';
-					const btnApply = document.createElement('button');
-					btnApply.className = 'kt-btn kt-btn-xs';
-					btnApply.textContent = 'Activate';
-					btnApply.addEventListener('click', () => {
-						try {
-							globalThis.LionCalcColumns?.add?.(c);
-						} catch (e) {
-							console.warn(e);
-						}
-					});
-					const btnEdit = document.createElement('button');
-					btnEdit.className = 'kt-btn kt-btn-light kt-btn-xs';
-					btnEdit.textContent = 'Edit';
-					btnEdit.addEventListener('click', () => {
-						$('#cc-header').value = c.headerName || '';
-						$('#cc-id').value = c.id || '';
-						$('#cc-type').value = c.format || 'currency';
-						$('#cc-expression').value = c.expression || '';
-						$('#cc-parts').value = (c.parts && JSON.stringify(c.parts)) || '';
-						$('#cc-only-level0').checked = !!c.onlyLevel0;
-						$('#cc-after').value = c.after || 'Revenue';
-						const miniEl = $('#cc-mini');
-						if (miniEl) miniEl.checked = !!c.mini;
-					});
-					const btnRemove = document.createElement('button');
-					btnRemove.className = 'kt-btn kt-btn-danger kt-btn-xs';
-					btnRemove.textContent = 'Remove';
-					btnRemove.addEventListener('click', () => {
-						if (!confirm(`Remove column "${c.id}"?`)) return;
-						try {
-							globalThis.LionCalcColumns?.remove?.(c.id);
-							renderList();
-						} catch (e) {
-							console.warn(e);
-						}
-					});
-					right.append(btnApply, btnEdit, btnRemove);
-					li.append(left, right);
-					list.appendChild(li);
-				}
-			}
-
-			saveBtn?.addEventListener('click', (e) => {
-				e.preventDefault();
-
-				const cfg = readForm();
-				if (!cfg) return;
-				if (!cfg.id || !cfg.expression) {
-					showToast('ID and Expression are required', 'danger');
-					return;
-				}
-
-				try {
-					const ok = globalThis.LionCalcColumns?.add?.(cfg);
-					if (!ok) return;
-
-					// 1) fecha modal
-					try {
-						modalHide('#calcColsModal');
-					} catch {}
-
-					// 2) garante visibilidade da nova coluna
-					const api = globalThis.LionGrid?.api || null;
-					if (api) {
-						try {
-							api.ensureColumnVisible(cfg.id, 'auto');
-						} catch {}
-						try {
-							api.refreshHeader?.();
-						} catch {}
-						try {
-							api.redrawRows?.();
-						} catch {}
-
-						// 3) “reload” leve do SSRM p/ reprocessar filtros/sort e recalcular pin totals
-						try {
-							refreshSSRM(api);
-						} catch {}
-
-						// 4) ajuste fino de layout após aplicar colDefs
-						setTimeout(() => {
-							try {
-								api.sizeColumnsToFit?.();
-							} catch {}
-							try {
-								api.resetRowHeights?.();
-							} catch {}
-						}, 50);
-					}
-
-					// 5) atualiza a lista do modal (na próxima abertura)
-					renderList();
-
-					showToast('Calculated column saved and applied!', 'success');
-				} catch (err) {
-					showToast('Failed to save column ', 'danger');
-					console.warn(err);
-				}
-			});
-
-			resetBtn?.addEventListener('click', (e) => {
-				e.preventDefault();
-				clearForm();
-			});
-			reloadBtn?.addEventListener('click', (e) => {
-				e.preventDefault();
-				populateColumnSelects();
-				renderList();
-			});
-			activateAllBtn?.addEventListener('click', (e) => {
-				e.preventDefault();
-				try {
-					globalThis.LionCalcColumns?.activateAll?.();
-					showToast('All calculated columns activated', 'success');
-				} catch (err) {
-					showToast('Failed to activate all', 'danger');
-				}
-			});
-			document.addEventListener('click', (ev) => {
-				const t = ev.target;
-				if (!(t instanceof Element)) return;
-				const toggle = t.closest('[data-kt-modal-toggle="#calcColsModal"]');
-				if (toggle) {
-					setTimeout(() => {
-						clearForm();
-						populateExpressionSelect();
-						populateColumnSelects();
-						renderList();
-					}, 50);
-				}
-			});
-		})();
-
-		function saveAsPreset() {
-			const api = globalThis.LionGrid?.api;
-			if (!api) return showToast('Grid API not ready', 'warning');
-			const name = prompt('Preset name:');
-			if (!name) return;
-
-			let state;
-			try {
-				state = api.getState();
-				if (!state) throw new Error('Null state');
-			} catch (e) {
-				return showToast("Couldn't capture grid state", 'danger');
-			}
-
-			const calcColumns = globalThis.LionCalcColumns?.exportForPreset?.() || [];
-			const bag = readPresets();
-			bag[name] = {
-				version: 1,
-				name,
-				createdAt: Date.now(),
-				gridState: state,
-				calcColumns,
-			};
-			writePresets(bag);
-			refreshPresetUserSelect();
-			showToast(`Preset "${name}" saved`, 'success');
-		}
-
-		function applyPresetUser(name) {
-			if (!name) return;
-			const bag = readPresets();
-			const p = bag[name];
-			if (!p || !p.gridState) {
-				return showToast('Preset not found or invalid', 'warning');
-			}
-
-			// Primeiro: limpar colunas calculadas existentes
-			globalThis.LionCalcColumns?.clear?.();
-
-			// Depois, importar as calculadas do preset
-			if (Array.isArray(p.calcColumns) && p.calcColumns.length > 0) {
-				globalThis.LionCalcColumns?.importFromPreset(p.calcColumns);
-			}
-
-			// Aplicar o estado do grid
-			const api = globalThis.LionGrid?.api;
-			if (!api) {
-				return showToast('Grid API not ready', 'warning');
-			}
-			try {
-				api.setState(p.gridState, ['pagination', 'scroll', 'rowSelection', 'focusedCell']);
-			} catch (e) {
-				console.error('applyPresetUser setState error', e);
-			}
-
-			// Opcional: refresh/redraw para garantir visualização
-			api.refreshHeader?.();
-			api.redrawRows?.();
-			showToast(`Preset "${name}" applied`, 'success');
-		}
-		function deletePreset() {
-			const sel = byId('presetUserSelect');
-			const name = sel?.value || '';
-			if (!name) return showToast('Pick a preset first', 'warning');
-			if (!confirm(`Delete preset "${name}"?`)) return;
-			const bag = readPresets();
-			delete bag[name];
-			writePresets(bag);
-			const activePreset = localStorage.getItem(LS_KEY_ACTIVE_PRESET);
-			if (activePreset === name) localStorage.removeItem(LS_KEY_ACTIVE_PRESET);
-			refreshPresetUserSelect();
-			showToast(`Preset "${name}" removed`, 'info');
-		}
-		function downloadPreset() {
-			const sel = byId('presetUserSelect');
-			const name = sel?.value || '';
-			if (!name) return showToast('Pick a preset first', 'warning');
-			const bag = readPresets();
-			const p = bag[name];
-			if (!p) return showToast('Preset not found', 'warning');
-			const blob = new Blob([JSON.stringify(p, null, 2)], {
-				type: 'application/json;charset=utf-8',
-			});
-			const url = URL.createObjectURL(blob);
-			const a = document.createElement('a');
-			a.href = url;
-			a.download = `lion-preset-${name}.json`;
-			document.body.appendChild(a);
-			a.click();
-			a.remove();
-			URL.revokeObjectURL(url);
-			showToast(`Preset "${name}" downloaded`, 'success');
-		}
-		function uploadPreset() {
-			const input = byId('presetFileInput');
-			if (!input) return;
-			input.value = '';
-			input.click();
-		}
-		byId('presetFileInput')?.addEventListener('change', (e) => {
-			const file = e.target.files?.[0];
-			if (!file) return;
-			const reader = new FileReader();
-			reader.onload = () => {
-				try {
-					const parsed = JSON.parse(String(reader.result || '{}'));
-					if (!parsed?.grid) return showToast('Invalid preset file', 'danger');
-					const name = prompt(
-						'Name to save this preset as:',
-						parsed.name || file.name.replace(/\.json$/i, '')
-					);
-					if (!name) return;
-					const bag = readPresets();
-					bag[name] = { ...parsed, name, importedAt: Date.now() };
-					writePresets(bag);
-					refreshPresetUserSelect();
-					const sel = byId('presetUserSelect');
-					if (sel) sel.value = name;
-					applyPresetUser(name);
-				} catch {
-					showToast('Failed to read JSON', 'danger');
-				}
-			};
-			reader.readAsText(file, 'utf-8');
-		});
-
-		const LS_KEY_SIZE_MODE = 'lion.aggrid.sizeMode'; // 'auto' | 'fit'
-		function applySizeMode(mode) {
-			const api = (globalThis.LionGrid || {}).api;
-			if (!api) return;
-			try {
-				if (mode === 'auto') {
-					const all = api.getColumns()?.map((c) => c.getColId()) || [];
-					api.autoSizeColumns(all, false);
-				} else api.sizeColumnsToFit();
-			} catch {}
-		}
-		function getSizeMode() {
-			const v = localStorage.getItem(LS_KEY_SIZE_MODE);
-			return v === 'auto' ? 'auto' : 'fit';
-		}
-		function setSizeMode(mode) {
-			localStorage.setItem(LS_KEY_SIZE_MODE, mode);
-		}
-
-		(function initSizeModeToggle() {
-			const el = byId('colSizeModeToggle');
-			if (!el) return;
-			const mode = getSizeMode();
-			el.checked = mode === 'auto';
-			applySizeMode(mode);
-			el.addEventListener('change', () => {
-				const next = el.checked ? 'auto' : 'fit';
-				setSizeMode(next);
-				applySizeMode(next);
-				showToast(next === 'auto' ? 'Mode: Auto Size' : 'Mode: Size To Fit', 'info');
-			});
-			window.addEventListener('resize', () => applySizeMode(getSizeMode()));
-		})();
-
-		byId('btnResetLayout')?.addEventListener('click', resetLayout);
-		byId('presetUserSelect')?.addEventListener('change', (e) => {
-			const v = e.target.value;
-			if (!v) {
-				resetLayout();
-				localStorage.removeItem(LS_KEY_ACTIVE_PRESET);
-				refreshPresetUserSelect();
-				return;
-			}
-			applyPresetUser(v);
-		});
-		byId('btnAddCalcCol')?.addEventListener('click', () => {
-			try {
-				LionCalcColumns.openQuickBuilder();
-			} catch (e) {
-				console.warn(e);
-			}
-		});
-		byId('btnManageCalcCols')?.addEventListener('click', () => {
-			try {
-				LionCalcColumns.manage();
-			} catch (e) {
-				console.warn(e);
-			}
-		});
-
-		byId('btnSaveAsPreset')?.addEventListener('click', saveAsPreset);
-		byId('btnDeletePreset')?.addEventListener('click', deletePreset);
-		byId('btnDownloadPreset')?.addEventListener('click', downloadPreset);
-		byId('btnUploadPreset')?.addEventListener('click', uploadPreset);
-
-		refreshPresetUserSelect();
-
-		globalThis.addEventListener('lionGridReady', () => {
-			const activePreset = localStorage.getItem(LS_KEY_ACTIVE_PRESET);
-			if (activePreset) {
-				const bag = readPresets();
-				const p = bag[activePreset];
-				if (p?.grid) {
-					setState(p.grid, ['pagination', 'scroll', 'rowSelection', 'focusedCell']);
-					console.log(`[Preset] Auto-applied: "${activePreset}"`);
-				}
-			} else {
-				const api = globalThis.LionGrid?.api;
-				if (api) {
-					try {
-						api.setState({}, []);
-						api.resetColumnState?.();
-						api.setFilterModel?.(null);
-						api.setSortModel?.([]);
-
-						console.log('[Preset] Complete initialization applied - no active preset');
-					} catch (e) {
-						console.warn('[Preset] Failed to apply complete initialization:', e);
-					}
-				}
-			}
-		});
-
-		globalThis.LionGrid = Object.assign(globalThis.LionGrid || {}, {
-			getState,
-			setState,
-			resetLayout,
-			saveAsPreset,
-			applyPresetUser,
-		});
-	}
 	_applySizeMode(mode) {
-		const api = this.api || globalThis.LionGrid?.api;
-		if (!api) return;
-		try {
-			if (mode === 'auto') {
-				const all = api.getColumns?.()?.map((c) => c.getColId()) || [];
-				api.autoSizeColumns?.(all, false);
-			} else {
-				api.sizeColumnsToFit?.();
-			}
-		} catch {}
-	}
-	_getPinnedState() {
-		const LS_KEY_PINNED_STATE = 'lion.aggrid.pinnedState';
-		const v = localStorage.getItem(LS_KEY_PINNED_STATE);
-		return v === 'false' ? false : true; // default é true (pinned)
+		if (!this.api) return;
+		if (mode === 'autoSize') {
+			this.api.autoSizeAllColumns?.();
+		} else {
+			this.api.sizeColumnsToFit?.();
+		}
 	}
 
-	_setPinnedState(state) {
-		const LS_KEY_PINNED_STATE = 'lion.aggrid.pinnedState';
-		localStorage.setItem(LS_KEY_PINNED_STATE, state ? 'true' : 'false');
-	}
 	_getSizeMode() {
 		const LS_KEY_SIZE_MODE = 'lion.aggrid.sizeMode';
 		const v = localStorage.getItem(LS_KEY_SIZE_MODE);
@@ -1374,6 +578,24 @@ export class Table {
 		localStorage.setItem(LS_KEY_SIZE_MODE, mode);
 	}
 
+	_initSizeModeToggle() {
+		const el = document.getElementById(this.colSizeModeToggleSelector.replace('#', ''));
+		if (!el) return;
+
+		const mode = this._getSizeMode();
+		el.checked = mode === 'auto';
+		this._applySizeMode(mode);
+
+		el.addEventListener('change', () => {
+			const next = el.checked ? 'auto' : 'fit';
+			this._setSizeMode(next);
+			this._applySizeMode(next);
+			showToast(next === 'auto' ? 'Mode: Auto Size' : 'Mode: Size To Fit', 'info');
+		});
+
+		window.addEventListener('resize', () => this._applySizeMode(this._getSizeMode()));
+	}
+
 	_bindPinnedToggle() {
 		const el = document.querySelector(this.pinToggleSelector);
 		if (!el) return;
@@ -1382,22 +604,17 @@ export class Table {
 			el.addEventListener('change', () => this.togglePinnedColsFromCheckbox(false));
 			el.setAttribute('data-init-bound', '1');
 		}
-		// aplica silencioso no load
 		try {
 			this.togglePinnedColsFromCheckbox(true);
 		} catch {}
 	}
 
 	togglePinnedColsFromCheckbox(silent = false) {
-		const api = this.api;
+		const api = this.api || globalThis.LionGrid?.api;
 		if (!api) return;
 		const el = document.getElementById('pinToggle');
 		if (!el) return;
 		const checked = !!el.checked;
-
-		// ✅ SALVAR ESTADO
-		this._setPinnedState(checked);
-
 		const selectionColId = this.getSelectionColId(api);
 		const leftPins = [
 			{ colId: 'ag-Grid-SelectionColumn', pinned: checked ? 'left' : null },
@@ -1423,7 +640,6 @@ export class Table {
 		el.addEventListener(
 			'click',
 			(e) => {
-				// só fecha se o clique for no fundo (e não no conteúdo interno)
 				if (e.target.id !== 'calcColsModal') return;
 
 				try {
@@ -1489,21 +705,18 @@ export class Table {
 		if (!modal) return;
 
 		function hideModal() {
-			// Prefer KT if present
 			try {
 				if (window.KT?.Modal?.getOrCreateInstance) {
 					window.KT.Modal.getOrCreateInstance(modal).hide();
 					return;
 				}
 			} catch {}
-			// Fallback manual
 			modal.style.display = 'none';
 			modal.classList.add('hidden');
 			modal.classList.remove('kt-modal--open');
 			modal.setAttribute('aria-hidden', 'true');
 		}
 
-		// Wire both the "Close" button and the X icon
 		const closeBtns = modal.querySelectorAll(
 			'[data-kt-modal-dismiss="#calcColsModal"], .kt-modal-close'
 		);
@@ -1577,8 +790,45 @@ export class Table {
 		el.textContent = css;
 		document.head.appendChild(el);
 	}
+	setupToolbar() {
+		const togglePins = () => {
+			const api = globalThis.LionGrid?.api || this.api;
+			if (!api) return;
 
-	// Agora você chama manualmente quando quiser:
+			const el = document.getElementById('pinToggle');
+			if (!el) return;
+
+			const checked = !!el.checked;
+			const selectionColId = this.getSelectionColId(api);
+
+			const leftPins = [
+				{ colId: 'ag-Grid-SelectionColumn', pinned: checked ? 'left' : null },
+				{ colId: 'ag-Grid-AutoColumn', pinned: checked ? 'left' : null },
+				{ colId: 'profile_name', pinned: checked ? 'left' : null },
+			];
+
+			if (selectionColId) {
+				leftPins.push({ colId: selectionColId, pinned: checked ? 'left' : null });
+			}
+
+			const rightPins = [
+				{ colId: 'spent', pinned: checked ? 'right' : null },
+				{ colId: 'revenue', pinned: checked ? 'right' : null },
+				{ colId: 'mx', pinned: checked ? 'right' : null },
+				{ colId: 'profit', pinned: checked ? 'right' : null },
+			];
+
+			api.applyColumnState({
+				state: [...leftPins, ...rightPins],
+				defaultState: { pinned: null },
+			});
+
+			showToast(checked ? 'Columns Pinned' : 'Columns Unpinned', checked ? 'success' : 'info');
+		};
+
+		setTimeout(togglePins, 100);
+	}
+
 	normalizeCampaignRow(r) {
 		const label = stripHtml(r.campaign_name || '(no name)');
 		const utm = String(r.utm_campaign || r.id || '');
@@ -1611,7 +861,6 @@ export class Table {
 				let av = a[colId],
 					bv = b[colId];
 
-				// status custom
 				if (colId === 'account_status' || colId === 'campaign_status' || colId === 'status') {
 					const ai = orderStatus.indexOf(String(av ?? '').toUpperCase());
 					const bi = orderStatus.indexOf(String(bv ?? '').toUpperCase());
@@ -1622,7 +871,6 @@ export class Table {
 					continue;
 				}
 
-				// revenue: pega primeiro número da string
 				if (colId === 'revenue') {
 					const an = frontToNumberFirst(av);
 					const bn = frontToNumberFirst(bv);
@@ -1633,7 +881,6 @@ export class Table {
 					continue;
 				}
 
-				// padrão: numérico se possível, senão texto
 				const an = frontToNumberBR(av);
 				const bn = frontToNumberBR(bv);
 				const bothNum = an != null && bn != null;
@@ -1664,7 +911,6 @@ export class Table {
 					field === 'ag-Grid-AutoColumn' ||
 					field.startsWith('ag-Grid-AutoColumn');
 
-				// CAMPANHA (nome + UTM)
 				if (isCampaignCol) {
 					const comp = String(f.type || 'contains');
 					const needle = String(f.filter ?? '').toLowerCase();
@@ -1691,7 +937,6 @@ export class Table {
 					};
 				}
 
-				// includes / excludes (lista)
 				if (ft === 'includes' && Array.isArray(f.values)) {
 					const set = new Set(f.values.map((v) => String(v).toLowerCase()));
 					return (r) => set.has(String(r[field] ?? '').toLowerCase());
@@ -1701,7 +946,6 @@ export class Table {
 					return (r) => !set.has(String(r[field] ?? '').toLowerCase());
 				}
 
-				// texto (genérico)
 				if (ft === 'text') {
 					const comp = String(f.type || 'contains');
 					const needle = String(f.filter ?? '').toLowerCase();
@@ -1726,7 +970,6 @@ export class Table {
 					};
 				}
 
-				// number
 				if (ft === 'number') {
 					const comp = String(f.type || 'equals');
 					const val = Number(f.filter);
@@ -1770,12 +1013,10 @@ export class Table {
 		});
 	}
 	computeClientTotals(rows) {
-		// Garante que existam as funções auxiliares, usando fallback
 		const sum = this.sumNum || sumNum;
 		const num = this.numBR || numBR;
 		const div = this.safeDiv || safeDiv;
 
-		// Cálculos principais
 		const spent_sum = sum(rows, (r) => num(r.spent));
 		const fb_revenue_sum = sum(rows, (r) => num(r.fb_revenue));
 		const push_revenue_sum = sum(rows, (r) => num(r.push_revenue));
@@ -1821,9 +1062,6 @@ export class Table {
 		};
 	}
 
-	/**
-	 * Reseta o layout da grid para o padrão
-	 */
 	resetLayout() {
 		if (!this.api) {
 			console.warn('[LionGrid] API não inicializada');
@@ -1845,16 +1083,10 @@ export class Table {
 		}
 	}
 
-	/**
-	 * Retorna a API do AG-Grid
-	 */
 	getApi() {
 		return this.api;
 	}
 
-	/**
-	 * Salva o estado atual da grid
-	 */
 	saveState() {
 		if (!this.api) return;
 
@@ -1866,9 +1098,6 @@ export class Table {
 		}
 	}
 
-	/**
-	 * Restaura o estado salvo da grid
-	 */
 	restoreState() {
 		if (!this.api) return;
 
@@ -1906,7 +1135,7 @@ export class Table {
 	}
 
 	showKTModal({ title = 'Details', content = '' } = {}) {
-		this.ensureKtModalDom(); // ✅ Adicionado this.
+		this.ensureKtModalDom();
 		const modal = document.querySelector('#lionKtModal');
 		if (!modal) return;
 
@@ -1948,8 +1177,30 @@ export class Table {
 			spacing: 6,
 		});
 	}
+	togglePinnedColsFromCheckbox(silent = false) {
+		const api = globalThis.LionGrid?.api;
+		if (!api) return;
+		const el = document.getElementById('pinToggle');
+		if (!el) return;
+		const checked = !!el.checked;
+		const selectionColId = this.getSelectionColId(api);
+		const leftPins = [
+			{ colId: 'ag-Grid-SelectionColumn', pinned: checked ? 'left' : null },
+			{ colId: 'ag-Grid-AutoColumn', pinned: checked ? 'left' : null },
+			{ colId: 'profile_name', pinned: checked ? 'left' : null },
+		];
+		if (selectionColId) leftPins.push({ colId: selectionColId, pinned: checked ? 'left' : null });
+		const rightPins = [
+			{ colId: 'spent', pinned: checked ? 'right' : null },
+			{ colId: 'revenue', pinned: checked ? 'right' : null },
+			{ colId: 'mx', pinned: checked ? 'right' : null },
+			{ colId: 'profit', pinned: checked ? 'right' : null },
+		];
+		api.applyColumnState({ state: [...leftPins, ...rightPins], defaultState: { pinned: null } });
+		if (!silent)
+			showToast(checked ? 'Columns Pinned' : 'Columns Unpinned', checked ? 'success' : 'info');
+	}
 
-	// Este método agora inclui: listeners dos selects, renderList, readForm, clearForm, save/load, etc.
 	CalcColsPopulate() {
 		const $ = (sel) => document.querySelector(sel);
 		const $col1 = document.getElementById('cc-col1');
@@ -2459,7 +1710,6 @@ export class Table {
 				return (name + ' ' + utm).trim();
 			},
 		};
-		// ===== [1] Medidor offscreen (singleton) =====
 		const _rowHeightMeasure = (() => {
 			let box = null;
 			return {
@@ -2494,24 +1744,21 @@ export class Table {
 			};
 		})();
 
-		// ===== [2] Largura útil da coluna autoGroup =====
 		function getAutoGroupContentWidth(api) {
 			try {
 				const col =
 					api.getColumn('campaign') ||
 					api.getDisplayedCenterColumns().find((c) => c.getColId?.() === 'campaign');
-				if (!col) return 300;
-				api.getDisplayedColAfter?.(col);
-				const colW = col.getActualWidth();
+				if (!col) return 40;
+				const colW = col.getActualWidth?.();
 				const padding = 16;
 				const iconArea = 28;
-				return Math.max(40, colW - padding - iconArea);
+				return Math.max(40, (colW || 300) - padding - iconArea);
 			} catch {
 				return 300;
 			}
 		}
 
-		// ===== [2.1] Largura útil de QUALQUER coluna folha =====
 		function getFieldContentWidth(api, field) {
 			try {
 				const col = api.getColumn(field);
@@ -2525,12 +1772,8 @@ export class Table {
 			}
 		}
 
-		// ===== [3] Texto que realmente aparece na célula por campo =====
-
-		// ===== [4] Cache simples por rowId + largura =====
 		const _rowHCache = new Map();
 
-		// ===== [5] getRowHeight dinâmico por nº de linhas =====
 		const BASE_ROW_MIN = 50;
 		const VERT_PAD = 12;
 
@@ -2880,7 +2123,6 @@ export class Table {
 							} = req.request;
 							const filterModelWithGlobal = buildFilterModelWithGlobal(filterModel);
 
-							// Nível 0 — CAMPANHAS
 							if (groupKeys.length === 0) {
 								if (!this.ROOT_CACHE) {
 									let res = await fetch(this.endpoints.SSRM, {
@@ -2976,7 +2218,6 @@ export class Table {
 								return;
 							}
 
-							// Nível 1 — ADSETS
 							if (groupKeys.length === 1) {
 								const campaignId = groupKeys[0];
 								const parentId = `c:${campaignId}`;
@@ -3019,7 +2260,6 @@ export class Table {
 								return;
 							}
 
-							// Nível 2 — ADS
 							if (groupKeys.length === 2) {
 								const adsetId = groupKeys[1];
 								const parentId = `s:${adsetId}`;
@@ -3093,14 +2333,15 @@ export class Table {
 
 		const api = gridOptions.api || apiOrInstance;
 
-		// ✅ Captura a API na instância (não no global)
 		try {
 			const _api = typeof api !== 'undefined' && api ? api : gridOptions?.api || null;
 			if (_api) this.api = _api;
 		} catch {}
 
+		globalThis.LionGrid.api = this.api;
+
 		try {
-			LionCompositeColumns.activate();
+			Table.LionCompositeColumns.activate();
 		} catch (e) {
 			console.warn(e);
 		}
@@ -3110,9 +2351,47 @@ export class Table {
 		return { api: this.api, gridDiv: this.gridDiv };
 	}
 
-	/**
-	 * Destrói a grid e limpa recursos
-	 */
+	_bindPinnedToggle() {
+		const toggle = document.querySelector(this.pinToggleSelector);
+		if (!toggle) return;
+
+		const savedState = localStorage.getItem('lion.pinnedToggle');
+		if (savedState !== null) {
+			toggle.checked = savedState === 'true';
+			this._applyPinnedToggle(toggle.checked, true);
+		}
+
+		toggle.addEventListener('change', (e) => {
+			const state = e.target.checked;
+			localStorage.setItem('lion.pinnedToggle', String(state));
+			this._applyPinnedToggle(state);
+		});
+	}
+
+	_applyPinnedToggle(isPinned, silent = false) {
+		if (!this.api) return;
+
+		const cols = this.api.getColumns?.() || [];
+		cols.forEach((col) => {
+			const def = col.getColDef?.();
+			if (!def) return;
+
+			if (def.checkboxSelection || def.rowGroup || String(def.colId || '').startsWith('__')) {
+				return;
+			}
+
+			if (isPinned && !def.pinned) {
+				col.setPinned?.('left');
+			} else if (!isPinned && def.pinned) {
+				col.setPinned?.(null);
+			}
+		});
+
+		if (!silent) {
+			showToast(isPinned ? 'Columns pinned' : 'Columns unpinned', 'info');
+		}
+	}
+
 	destroy() {
 		if (this.api) {
 			this.saveState();

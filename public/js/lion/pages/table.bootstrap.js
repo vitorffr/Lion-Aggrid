@@ -9,7 +9,6 @@ import {
 	withMinSpinner,
 	getAppCurrency,
 	parseCurrencyFlexible,
-	isPinnedOrTotal,
 	showToast,
 	renderBadgeNode,
 	renderBadge,
@@ -25,6 +24,7 @@ import {
 	markCellError,
 	markCellJustSaved,
 	sleep,
+	isPinnedOrTotal,
 	stripHtml,
 	strongText,
 	intFmt,
@@ -1634,6 +1634,19 @@ const table = new Table(columnDefs, {
 		fakeNetworkMs: 0,
 	},
 	pinToggleSelector: '#pinToggle',
+	defaultColDef: {
+		sortable: true,
+		filter: 'agTextColumnFilter',
+		floatingFilter: true,
+		resizable: true,
+		cellClass: (p) => 'lion-center-cell',
+		wrapHeaderText: true,
+		autoHeaderHeight: true,
+		enableRowGroup: true,
+		enablePivot: true,
+		enableValue: true,
+		suppressHeaderFilterButton: true,
+	},
 });
 
 table.init();
