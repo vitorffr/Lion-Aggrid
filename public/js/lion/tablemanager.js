@@ -122,389 +122,12 @@ function buildFilterModelWithGlobal(baseFilterModel) {
 }
 
 export class Table {
-	static LionCompositeColumns = (() => {
-		const LS_KEY = 'lion.aggrid.composite.v1';
-		function _read() {
-			try {
-				return JSON.parse(localStorage.getItem(LS_KEY) || '{}');
-			} catch {
-				return {};
-			}
-		}
-		function _write(cfg) {
-			localStorage.setItem(LS_KEY, JSON.stringify(cfg || {}));
-		}
-		const activeCols = {};
-		const colRegistry = {};
-
-		return {
-			register: (id, fn) => {
-				colRegistry[String(id)] = fn;
-			},
-			activate: (ids) => {
-				const cfg = _read();
-
-				// 👉 Garante que ids é um array ou um array vazio
-				if (!Array.isArray(ids)) {
-					// se veio um valor único (string/number), coloca em array
-					if (ids != null) ids = [ids];
-					else ids = [];
-				}
-
-				for (const id of ids) {
-					if (!cfg[id]) cfg[id] = { active: true };
-					else cfg[id].active = true;
-					activeCols[id] = true;
-				}
-
-				_write(cfg);
-				return true;
-			},
-			deactivate: (ids) => {
-				const cfg = _read();
-				for (const id of ids) {
-					if (cfg[id]) cfg[id].active = false;
-					delete activeCols[id];
-				}
-				_write(cfg);
-			},
-			getActive: () => Object.keys(activeCols).filter((id) => activeCols[id]),
-			isActive: (id) => !!activeCols[String(id)],
-			getColDef: (id) => {
-				const fn = colRegistry[String(id)];
-				return fn ? fn() : null;
-			},
-			getRegistry: () => colRegistry,
-			getConfig: () => _read(),
-			setConfig: (cfg) => {
-				_write(cfg);
-				activeCols = {};
-				for (const id of Object.keys(cfg || {})) {
-					if (cfg[id]?.active) activeCols[id] = true;
-				}
-			},
-			clear: () => {
-				_write({});
-				Object.keys(activeCols).forEach((k) => delete activeCols[k]);
-			},
-		};
-	})();
-
-	static LionCalcColumns = (() => {
-		const LS_KEY = 'lion.aggrid.calcCols.v1';
-		function _read() {
-			try {
-				return JSON.parse(localStorage.getItem(LS_KEY) || '[]');
-			} catch {
-				return [];
-			}
-		}
-		function _write(arr) {
-			localStorage.setItem(LS_KEY, JSON.stringify(Array.isArray(arr) ? arr : []));
-		}
-		function _autoWrapFields(expr) {
-			if (!expr) return expr;
-			if (/\bnumber\s*\(/.test(expr)) return expr;
-			return expr.replace(/\b([a-zA-Z_]\w*)(?!\s*\()/g, 'number($1)');
-		}
-		function _compileExpr(expr) {
-			const src = String(expr || '').trim();
-			if (!src) return null;
-			const wrapped = _autoWrapFields(src);
-			return (row) => cc_evalExpression(wrapped, row);
-		}
-		function _norm(cfg) {
-			const id = String(cfg.id || '').trim();
-			const headerName = String(cfg.headerName || id || 'Calc').trim();
-			const expression = String(cfg.expression || '').trim();
-			const format = (cfg.format || 'currency').toLowerCase();
-			const partsFormat = (
-				cfg.partsFormat || (format === 'percent' ? 'currency' : format)
-			).toLowerCase();
-			const onlyLevel0 = cfg.onlyLevel0 ?? cfg.onlyRoot ?? true;
-			const after = cfg.after || 'Revenue';
-			const totalLabel = String(cfg.totalLabel ?? 'Total').trim();
-			const mini = !!cfg.mini;
-			const hideTop = mini;
-			const includeTotalAsPart = mini;
-			const partsLabelOnly = false;
-			const maxParts = 0;
-			const parts = Array.isArray(cfg.parts)
-				? cfg.parts.map((p) => ({
-						label: String(p.label || '').trim(),
-						expr: String(p.expr || '').trim(),
-				  }))
-				: [];
-			return {
-				id,
-				headerName,
-				expression,
-				format,
-				partsFormat,
-				parts,
-				onlyLevel0,
-				after,
-				totalLabel,
-				mini,
-				hideTop,
-				includeTotalAsPart,
-				partsLabelOnly,
-				maxParts,
-			};
-		}
-		function _fmtBy(fmt, n) {
-			if (!Number.isFinite(n)) return '—';
-			if (fmt === 'int') return intFmt.format(Math.round(n));
-			if (fmt === 'raw') return String(n);
-			if (fmt === 'percent') return cc_percentFormat(n);
-			return cc_currencyFormat(n);
-		}
-		function _buildColDef(cfg) {
-			const {
-				id,
-				headerName,
-				expression,
-				format,
-				partsFormat,
-				parts,
-				onlyLevel0,
-				after,
-				totalLabel,
-				mini,
-				hideTop,
-				includeTotalAsPart,
-				partsLabelOnly,
-				maxParts,
-			} = _norm(cfg);
-			const totalFn = _compileExpr(expression);
-			const partFns = parts.map((p) => ({ label: p.label, fn: _compileExpr(p.expr) }));
-			const valueFormatter = (p) => {
-				const v0 = typeof p.value === 'number' ? p.value : number(p.value);
-				const v = Number.isFinite(v0) ? v0 : null;
-				if (v == null) return p.value ?? '';
-				if (format === 'int') return intFmt.format(Math.round(v));
-				if (format === 'raw') return String(v);
-				if (format === 'percent') return cc_percentFormat(v);
-				return currencyFormatter({ value: v });
-			};
-			const tooltipValueGetter = (p) => {
-				const row = p?.data || {};
-				const tot = totalFn ? totalFn(row) : null;
-				const lines = [`${totalLabel}: ${_fmtBy(format, tot)}`];
-				for (const { label, fn } of partFns)
-					lines.push(`${label || ''}: ${_fmtBy(partsFormat, fn ? fn(row) : null)}`);
-				return lines.join('\n');
-			};
-			return {
-				headerName,
-				colId: id,
-				minWidth: 150,
-				flex: 1,
-				pinned: null,
-				valueGetter: (p) => {
-					const row = p?.data || {};
-					const val = totalFn ? totalFn(row) : null;
-					return Number.isFinite(val) ? val : null;
-				},
-				valueFormatter,
-				clipboardValueGetter: (p) => {
-					try {
-						const inst = p.api.getCellRendererInstances({
-							rowNodes: [p.node],
-							columns: [p.column],
-						})?.[0];
-						if (inst && typeof inst.getCopyText === 'function') {
-							const txt = inst.getCopyText();
-							if (txt && txt.trim()) return txt;
-						}
-					} catch {}
-					try {
-						const row = p?.data || {};
-						const tot = typeof totalFn === 'function' ? totalFn(row) : null;
-						const partsNow = p?.colDef?.cellRendererParams?.getParts
-							? p.colDef.cellRendererParams.getParts({ data: row })
-							: [];
-						const lines = [];
-						lines.push(`${totalLabel}: ${_fmtBy(format, tot)}`);
-						for (const it of partsNow) {
-							const v = Number.isFinite(it?.value) ? it.value : null;
-							const fmt = it?.isTotal ? format : partsFormat;
-							const label = String(it?.label || it?.name || '').trim();
-							const line = label ? `${label}: ${_fmtBy(fmt, v)}` : _fmtBy(fmt, v);
-							if (line && line !== '—') lines.push(line);
-						}
-						return lines.join('\n');
-					} catch {
-						const v = p.valueFormatted ?? p.value ?? '';
-						return String(v);
-					}
-				},
-				cellRenderer: StackBelowRenderer,
-				cellRendererParams: {
-					partsMaxHeight: 40,
-					onlyLevel0: !!onlyLevel0,
-					format:
-						partsFormat === 'int'
-							? 'int'
-							: partsFormat === 'raw'
-							? 'raw'
-							: partsFormat === 'percent'
-							? 'percent'
-							: 'currency',
-					showTop: !hideTop,
-					partsLabelOnly: !!partsLabelOnly,
-					showLabels: mini,
-					forceShowLabels: mini,
-					maxParts: Number(maxParts) || 0,
-					getParts: (p) => {
-						const row = p?.data || {};
-						const list = [];
-						const pushPart = (label, value, isTotal, fmt) => {
-							const formatted = Number.isFinite(value) ? _fmtBy(fmt, value) : '—';
-							list.push({
-								label,
-								name: label,
-								value,
-								text: `${label}: ${formatted}`,
-								labelWithValue: `${label}: ${formatted}`,
-								isTotal: !!isTotal,
-							});
-						};
-						if (includeTotalAsPart) {
-							const tot = totalFn ? totalFn(row) : null;
-							pushPart(totalLabel, tot, true, format);
-						}
-						for (const { label, fn } of partFns) {
-							const v = fn ? fn(row) : null;
-							pushPart(label, v, false, partsFormat);
-						}
-						return list;
-					},
-				},
-				__after: after,
-			};
-		}
-		function _registerAndActivate(cfg) {
-			const colDef = _buildColDef(cfg);
-			if (!colDef) return false;
-			Table.LionCompositeColumns.register(colDef.colId, () => colDef);
-			try {
-				return Table.LionCompositeColumns.activate([colDef.colId]) || true;
-			} catch (e) {
-				console.warn('[CalcCols] activate failed', e);
-				return false;
-			}
-		}
-		function _migrateLegacyColumn(cfg) {
-			if (cfg.parts && cfg.parts.length > 0) return cfg;
-			const fieldMatches = (cfg.expression || '').match(/\b([a-zA-Z_]\w*)(?!\s*\()/g);
-			if (fieldMatches && fieldMatches.length > 0) {
-				const known = ['number', 'cc_evalExpression', 'Math'];
-				const unique = [...new Set(fieldMatches)].filter((f) => !known.includes(f));
-				cfg.parts = unique.slice(0, 5).map((field) => ({
-					label: field
-						.replace(/_/g, ' ')
-						.replace(/\b\w/g, (l) => l.toUpperCase())
-						.trim(),
-					expr: field,
-				}));
-			}
-			return cfg;
-		}
-		return {
-			add: (config) => {
-				let cfg = _norm(config);
-				cfg = _migrateLegacyColumn(cfg);
-				if (!cfg.id || !cfg.expression) {
-					showToast('Invalid config (id/expression required)', 'danger');
-					return false;
-				}
-				if (!_compileExpr(cfg.expression)) {
-					showToast('Invalid expression', 'danger');
-					return false;
-				}
-				for (const p of cfg.parts) {
-					if (p.expr && !_compileExpr(p.expr)) {
-						showToast(`Invalid part: ${p.label || '(no label)'}`, 'danger');
-						return false;
-					}
-				}
-				const bag = _read();
-				const idx = bag.findIndex((c) => String(c.id) === cfg.id);
-				if (idx >= 0) bag[idx] = cfg;
-				else bag.push(cfg);
-				_write(bag);
-				const ok = _registerAndActivate(cfg);
-				if (ok) showToast(`Column "${cfg.headerName}" ready`, 'success');
-				return !!ok;
-			},
-			remove: (id) => {
-				const key = String(id || '').trim();
-				if (!key) return;
-				try {
-					Table.LionCompositeColumns.deactivate([key]);
-				} catch {}
-				const bag = _read().filter((c) => String(c.id) !== key);
-				_write(bag);
-				showToast(`Column removed: ${key}`, 'info');
-			},
-			list: () => _read(),
-			activateAll: () => {
-				const bag = _read();
-				const migrated = [];
-				let cnt = 0;
-				for (const cfg of bag) {
-					const m = _migrateLegacyColumn(cfg);
-					if (m.parts && m.parts.length > 0 && (!cfg.parts || cfg.parts.length === 0)) cnt++;
-					migrated.push(m);
-					_registerAndActivate(m);
-				}
-				if (cnt > 0) {
-					_write(migrated);
-				}
-			},
-			getAvailableFields: () => [
-				'revenue',
-				'fb_revenue',
-				'push_revenue',
-				'spent',
-				'profit',
-				'clicks',
-				'impressions',
-				'visitors',
-				'conversions',
-				'real_conversions',
-				'cpc',
-				'cpa_fb',
-				'real_cpa',
-				'budget',
-				'bid',
-				'mx',
-				'ctr',
-			],
-			exportForPreset: () => _read().map((cfg) => _migrateLegacyColumn(cfg)),
-			importFromPreset: (columns) => {
-				if (!Array.isArray(columns)) return;
-				_write(columns);
-				Table.LionCalcColumns.activateAll();
-			},
-			clear: () => {
-				const bag = _read();
-				for (const cfg of bag) {
-					try {
-						Table.LionCompositeColumns.deactivate([cfg.id]);
-					} catch {}
-				}
-				_write([]);
-			},
-		};
-	})();
-
 	constructor(columnDefs = [], opts = {}) {
 		this.container = opts.container || '#lionGrid';
 		this.columnDefs = Array.isArray(columnDefs) ? columnDefs : [];
 		this.gridDiv = null;
-		this.api = null;
+		this.gridApi = null;
+		this.gridColumnApi = null;
 		this.WRAP_FIELDS = opts.WRAP_FIELDS || ['campaign', 'bc_name', 'account_name'];
 		this.REVENUE_LABELS = opts.REVENUE_LABELS ?? ['A', 'B'];
 
@@ -547,6 +170,517 @@ export class Table {
 		this.gridStateKey = `lionGrid_state_${this.container.replace(/[^a-z0-9]/gi, '_')}`;
 		this.defaultColDef = opts.defaultColDef;
 		this.selectionColumn = opts.selectionColumn || 'ag-Grid-Selection';
+		class LionCompositeColumns {
+			constructor() {
+				this.registry = new Map();
+				this.api = null;
+				this.columnApi = null;
+			}
+
+			// método chamado *depois* que a grid estiver pronta
+			initGridApi(api, columnApi) {
+				this.api = api;
+				this.columnApi = columnApi;
+				this.activate(); // só agora é seguro ativar
+			}
+			register(id, builder) {
+				this.registry.set(String(id), builder);
+			}
+			_ensureApi() {
+				if (!this.api) throw new Error('[CompositeColumns] Grid API indisponível');
+				return this.api;
+			}
+
+			_getColumnDefs(api) {
+				if (typeof api.getColumnDefs === 'function') return api.getColumnDefs() || [];
+				const cols = api.getColumns?.() || [];
+				return cols.map((c) => c.getColDef?.()).filter(Boolean);
+			}
+
+			_setColumnDefs(api, defs) {
+				if (typeof api.setGridOption === 'function') api.setGridOption('columnDefs', defs);
+				else if (typeof api.setColumnDefs === 'function') api.setColumnDefs(defs);
+				else {
+					const colApi = api.getColumnApi?.();
+					if (colApi?.setColumnDefs) colApi.setColumnDefs(defs);
+					else throw new Error('api.setColumnDefs is not available');
+				}
+			}
+
+			_findGroup(defs, groupId) {
+				for (const d of defs) if (d?.groupId === groupId) return d;
+				return null;
+			}
+
+			_normKey(s) {
+				return String(s || '')
+					.toLowerCase()
+					.normalize('NFD')
+					.replace(/[\u0300-\u036f]/g, '')
+					.replace(/[^a-z0-9]/g, '');
+			}
+
+			_walkDefs(defs, visit, parentCtx = null) {
+				(defs || []).forEach((d, idx) => {
+					const ctx = { parent: parentCtx?.node || null, arr: defs, idx, node: d };
+					if (d && Array.isArray(d.children) && d.children.length) {
+						this._walkDefs(d.children, visit, ctx);
+					} else {
+						visit(d, ctx);
+					}
+				});
+			}
+
+			_buildColIndex(allDefs) {
+				const map = new Map();
+				this._walkDefs(allDefs, (leaf, ctx) => {
+					const keys = [
+						this._normKey(leaf?.colId),
+						this._normKey(leaf?.field),
+						this._normKey(leaf?.headerName),
+					].filter(Boolean);
+					keys.forEach((k) => {
+						if (!map.has(k)) map.set(k, { arr: ctx.arr, idx: ctx.idx, leaf });
+					});
+				});
+				return map;
+			}
+
+			_aliasList(raw) {
+				const s = String(raw || '')
+					.trim()
+					.toLowerCase();
+				const base = [raw];
+				const map = {
+					revenue: ['revenue', 'receita', 'receitas', 'rev', 'fat', 'faturamento'],
+					spent: [
+						'spent',
+						'gasto',
+						'gastos',
+						'spend',
+						'despesa',
+						'despesas',
+						'cost',
+						'custo',
+						'custos',
+					],
+					profit: ['profit', 'lucro', 'resultado', 'ganho', 'ganhos'],
+					mx: ['mx', 'roi', 'roas', 'retorno'],
+					ctr: ['ctr', 'taxadeclique', 'taxa de clique'],
+					clicks: ['clicks', 'cliques', 'clique'],
+				};
+				for (const [k, arr] of Object.entries(map)) {
+					if (arr.includes(s)) return [k, ...arr];
+				}
+				return base;
+			}
+
+			_pickHitByTargets(allDefs, idxMap, afterTargets) {
+				const norm = (x) =>
+					(x == null ? '' : String(x))
+						.toLowerCase()
+						.normalize('NFD')
+						.replace(/[\u0300-\u036f]/g, '')
+						.replace(/[^a-z0-9]/g, '');
+
+				for (const raw of afterTargets.flatMap((r) => this._aliasList(r))) {
+					const key = norm(raw);
+					if (key && idxMap.has(key)) return idxMap.get(key);
+				}
+
+				const leaves = [];
+				this._walkDefs(allDefs, (leaf, ctx) => leaves.push({ leaf, ctx }));
+				for (const raw of afterTargets.flatMap((r) => this._aliasList(r))) {
+					const needle = norm(raw);
+					if (!needle) continue;
+					for (const { leaf, ctx } of leaves) {
+						const bag = [leaf?.headerName, leaf?.field, leaf?.colId]
+							.map(norm)
+							.filter(Boolean);
+						if (bag.some((s) => s.includes(needle)))
+							return { arr: ctx.arr, idx: ctx.idx, leaf };
+					}
+				}
+				return null;
+			}
+
+			_insertAfter(allDefs, newDef, afterKey, fallbackGroupNode) {
+				const targets = (Array.isArray(afterKey) ? afterKey : [afterKey]).filter(
+					(k) => k != null && String(k).trim() !== ''
+				);
+
+				const idxMap = this._buildColIndex(allDefs);
+				const hit = this._pickHitByTargets(allDefs, idxMap, targets);
+
+				if (hit) {
+					const { arr, idx } = hit;
+					arr.splice(idx + 1, 0, newDef);
+					return;
+				}
+
+				if (fallbackGroupNode && Array.isArray(fallbackGroupNode.children)) {
+					fallbackGroupNode.children.push(newDef);
+					return;
+				}
+				allDefs.push(newDef);
+			}
+
+			_removeCols(allDefs, idsSet) {
+				const filterArray = (arr) => {
+					for (let i = arr.length - 1; i >= 0; i--) {
+						const d = arr[i];
+						if (d?.children?.length) {
+							filterArray(d.children);
+						} else {
+							const key = String(d?.colId || d?.field || '');
+							if (key && idsSet.has(key)) arr.splice(i, 1);
+						}
+					}
+				};
+				filterArray(allDefs);
+			}
+
+			activate(ids = []) {
+				const api = this._ensureApi();
+				const defsRef = this._getColumnDefs(api);
+				const newDefs = Array.isArray(defsRef) ? defsRef.slice() : [];
+				const fallbackGroupNode = this._findGroup(newDefs, 'grp-metrics-rev');
+
+				let idxMap = this._buildColIndex(newDefs);
+
+				for (const id of ids) {
+					const builder = this.registry.get(String(id));
+					if (!builder) continue;
+
+					const colDef = builder();
+					if (!colDef || typeof colDef !== 'object') continue;
+
+					const colKey = this._normKey(String(colDef.colId || colDef.field || ''));
+					if (!colKey) continue;
+					if (idxMap.has(colKey)) continue;
+
+					let afterRaw = colDef.__afterId || colDef.__after || 'Revenue';
+					const afterTargets = Array.isArray(afterRaw) ? afterRaw : [afterRaw];
+
+					this._insertAfter(newDefs, colDef, afterTargets, fallbackGroupNode);
+					idxMap = this._buildColIndex(newDefs);
+				}
+
+				this._setColumnDefs(api, newDefs);
+				try {
+					api.sizeColumnsToFit?.();
+				} catch {}
+				return true;
+			}
+
+			deactivate(ids = []) {
+				const api = this._ensureApi();
+				const defsRef = this._getColumnDefs(api);
+				const newDefs = Array.isArray(defsRef) ? defsRef.slice() : [];
+				const idsSet = new Set(ids.map(String));
+
+				this._removeCols(newDefs, idsSet);
+
+				this._setColumnDefs(api, newDefs);
+				try {
+					api.sizeColumnsToFit?.();
+				} catch {}
+				return true;
+			}
+		}
+		class LionCalcColumns {
+			constructor(compositeInstance) {
+				this.composite = compositeInstance; // injeta instância de LionCompositeColumns
+				this.LS_KEY = 'lion.aggrid.calcCols.v1';
+			}
+
+			_read() {
+				try {
+					return JSON.parse(localStorage.getItem(this.LS_KEY) || '[]');
+				} catch {
+					return [];
+				}
+			}
+
+			_write(arr) {
+				localStorage.setItem(this.LS_KEY, JSON.stringify(Array.isArray(arr) ? arr : []));
+			}
+
+			_autoWrapFields(expr) {
+				if (!expr) return expr;
+				if (/\bnumber\s*\(/.test(expr)) return expr;
+				return expr.replace(/\b([a-zA-Z_]\w*)(?!\s*\()/g, 'number($1)');
+			}
+
+			_compileExpr(expr) {
+				const src = String(expr || '').trim();
+				if (!src) return null;
+				const wrapped = this._autoWrapFields(src);
+				return (row) => cc_evalExpression(wrapped, row);
+			}
+
+			_norm(cfg) {
+				const id = String(cfg.id || '').trim();
+				const headerName = String(cfg.headerName || id || 'Calc').trim();
+				const expression = String(cfg.expression || '').trim();
+				const format = (cfg.format || 'currency').toLowerCase();
+				const partsFormat = (
+					cfg.partsFormat || (format === 'percent' ? 'currency' : format)
+				).toLowerCase();
+				const onlyLevel0 = cfg.onlyLevel0 ?? cfg.onlyRoot ?? true;
+				const after = cfg.after || 'Revenue';
+				const totalLabel = String(cfg.totalLabel ?? 'Total').trim();
+				const mini = !!cfg.mini;
+				const hideTop = mini;
+				const includeTotalAsPart = mini;
+				const partsLabelOnly = false;
+				const maxParts = 0;
+				const parts = Array.isArray(cfg.parts)
+					? cfg.parts.map((p) => ({
+							label: String(p.label || '').trim(),
+							expr: String(p.expr || '').trim(),
+					  }))
+					: [];
+				return {
+					id,
+					headerName,
+					expression,
+					format,
+					partsFormat,
+					parts,
+					onlyLevel0,
+					after,
+					totalLabel,
+					mini,
+					hideTop,
+					includeTotalAsPart,
+					partsLabelOnly,
+					maxParts,
+				};
+			}
+
+			_fmtBy(fmt, n) {
+				if (!Number.isFinite(n)) return '—';
+				if (fmt === 'int') return intFmt.format(Math.round(n));
+				if (fmt === 'raw') return String(n);
+				if (fmt === 'percent') return cc_percentFormat(n);
+				return cc_currencyFormat(n);
+			}
+
+			_buildColDef(cfg) {
+				const n = this._norm(cfg);
+				const totalFn = this._compileExpr(n.expression);
+				const partFns = n.parts.map((p) => ({ label: p.label, fn: this._compileExpr(p.expr) }));
+				const valueFormatter = (p) => {
+					const v0 = typeof p.value === 'number' ? p.value : number(p.value);
+					const v = Number.isFinite(v0) ? v0 : null;
+					if (v == null) return p.value ?? '';
+					if (n.format === 'int') return intFmt.format(Math.round(v));
+					if (n.format === 'raw') return String(v);
+					if (n.format === 'percent') return cc_percentFormat(v);
+					return currencyFormatter({ value: v });
+				};
+				const tooltipValueGetter = (p) => {
+					const row = p?.data || {};
+					const tot = totalFn ? totalFn(row) : null;
+					const lines = [`${n.totalLabel}: ${this._fmtBy(n.format, tot)}`];
+					for (const { label, fn } of partFns)
+						lines.push(`${label || ''}: ${this._fmtBy(n.partsFormat, fn ? fn(row) : null)}`);
+					return lines.join('\n');
+				};
+				return {
+					headerName: n.headerName,
+					colId: n.id,
+					minWidth: 150,
+					flex: 1,
+					pinned: null,
+					valueGetter: (p) => {
+						const row = p?.data || {};
+						const val = totalFn ? totalFn(row) : null;
+						return Number.isFinite(val) ? val : null;
+					},
+					valueFormatter,
+					tooltipValueGetter,
+					cellRenderer: StackBelowRenderer,
+					cellRendererParams: {
+						partsMaxHeight: 40,
+						onlyLevel0: !!n.onlyLevel0,
+						format:
+							n.partsFormat === 'int'
+								? 'int'
+								: n.partsFormat === 'raw'
+								? 'raw'
+								: n.partsFormat === 'percent'
+								? 'percent'
+								: 'currency',
+						showTop: !n.hideTop,
+						partsLabelOnly: !!n.partsLabelOnly,
+						showLabels: n.mini,
+						forceShowLabels: n.mini,
+						maxParts: Number(n.maxParts) || 0,
+						getParts: (p) => {
+							const row = p?.data || {};
+							const list = [];
+							const pushPart = (label, value, isTotal, fmt) => {
+								const formatted = Number.isFinite(value) ? this._fmtBy(fmt, value) : '—';
+								list.push({
+									label,
+									name: label,
+									value,
+									text: `${label}: ${formatted}`,
+									labelWithValue: `${label}: ${formatted}`,
+									isTotal: !!isTotal,
+								});
+							};
+							if (n.includeTotalAsPart) {
+								const tot = totalFn ? totalFn(row) : null;
+								pushPart(n.totalLabel, tot, true, n.format);
+							}
+							for (const { label, fn } of partFns) {
+								const v = fn ? fn(row) : null;
+								pushPart(label, v, false, n.partsFormat);
+							}
+							return list;
+						},
+					},
+					__after: n.after,
+				};
+			}
+
+			_registerAndActivate(cfg) {
+				const colDef = this._buildColDef(cfg);
+				if (!colDef) return false;
+				this.composite.register(colDef.colId, () => colDef);
+				console.log(`[CalcCols] Registering "${colDef.colId}":`, colDef.cellRendererParams);
+				try {
+					return this.composite.activate([colDef.colId]) || true;
+				} catch (e) {
+					console.warn('[CalcCols] activate failed', e);
+					return false;
+				}
+			}
+
+			_migrateLegacyColumn(cfg) {
+				if (cfg.parts && cfg.parts.length > 0) return cfg;
+				const fieldMatches = (cfg.expression || '').match(/\b([a-zA-Z_]\w*)(?!\s*\()/g);
+				if (fieldMatches && fieldMatches.length > 0) {
+					const known = ['number', 'cc_evalExpression', 'Math'];
+					const unique = [...new Set(fieldMatches)].filter((f) => !known.includes(f));
+					cfg.parts = unique.slice(0, 5).map((field) => ({
+						label: field
+							.replace(/_/g, ' ')
+							.replace(/\b\w/g, (l) => l.toUpperCase())
+							.trim(),
+						expr: field,
+					}));
+					console.log(`[CalcCols] Migrated "${cfg.id}" with auto-parts:`, cfg.parts);
+				}
+				return cfg;
+			}
+
+			add(config) {
+				let cfg = this._norm(config);
+				cfg = this._migrateLegacyColumn(cfg);
+				if (!cfg.id || !cfg.expression) {
+					showToast('Invalid config (id/expression required)', 'danger');
+					return false;
+				}
+				if (!this._compileExpr(cfg.expression)) {
+					showToast('Invalid expression', 'danger');
+					return false;
+				}
+				for (const p of cfg.parts) {
+					if (p.expr && !this._compileExpr(p.expr)) {
+						showToast(`Invalid part: ${p.label || '(no label)'}`, 'danger');
+						return false;
+					}
+				}
+				const bag = this._read();
+				const idx = bag.findIndex((c) => String(c.id) === cfg.id);
+				if (idx >= 0) bag[idx] = cfg;
+				else bag.push(cfg);
+				this._write(bag);
+				const ok = this._registerAndActivate(cfg);
+				if (ok) showToast(`Column "${cfg.headerName}" ready`, 'success');
+				return !!ok;
+			}
+
+			remove(id) {
+				const key = String(id || '').trim();
+				if (!key) return;
+				try {
+					this.composite.deactivate([key]);
+				} catch {}
+				const bag = this._read().filter((c) => String(c.id) !== key);
+				this._write(bag);
+				showToast(`Column removed: ${key}`, 'info');
+			}
+
+			list() {
+				return this._read();
+			}
+
+			activateAll() {
+				const bag = this._read();
+				const migrated = [];
+				let cnt = 0;
+				for (const cfg of bag) {
+					const m = this._migrateLegacyColumn(cfg);
+					if (m.parts && m.parts.length > 0 && (!cfg.parts || cfg.parts.length === 0)) cnt++;
+					migrated.push(m);
+					this._registerAndActivate(m);
+				}
+				if (cnt > 0) {
+					this._write(migrated);
+					console.log(`[CalcCols] Migrated ${cnt} column(s)`);
+				}
+			}
+
+			getAvailableFields() {
+				return [
+					'revenue',
+					'fb_revenue',
+					'push_revenue',
+					'spent',
+					'profit',
+					'clicks',
+					'impressions',
+					'visitors',
+					'conversions',
+					'real_conversions',
+					'cpc',
+					'cpa_fb',
+					'real_cpa',
+					'budget',
+					'bid',
+					'mx',
+					'ctr',
+				];
+			}
+
+			exportForPreset() {
+				return this._read().map((cfg) => this._migrateLegacyColumn(cfg));
+			}
+
+			importFromPreset(columns) {
+				if (!Array.isArray(columns)) return;
+				this._write(columns);
+				this.activateAll();
+			}
+
+			clear() {
+				const bag = this._read();
+				for (const cfg of bag) {
+					try {
+						this.composite.deactivate([cfg.id]);
+					} catch {}
+				}
+				this._write([]);
+			}
+		}
+		this.composite = new LionCompositeColumns(this); // ✅ Passar 'this'
+		this.calc = new LionCalcColumns(this.composite);
+		// se quiser expor globalmente
 	}
 	init() {
 		this.ensureLoadingStyles();
@@ -558,6 +692,7 @@ export class Table {
 
 		return this.makeGrid();
 	}
+
 	setupToolbar() {
 		const byId = (id) => document.getElementById(id);
 		function ensureApi() {
@@ -962,7 +1097,7 @@ export class Table {
 			}
 			function renderList() {
 				if (!list) return;
-				const items = globalThis.LionCalcColumns?.list?.() || [];
+				const items = this.calc?.list?.() || [];
 				list.innerHTML = '';
 				if (!items.length) {
 					empty?.classList.remove('hidden');
@@ -986,7 +1121,7 @@ export class Table {
 					btnApply.textContent = 'Activate';
 					btnApply.addEventListener('click', () => {
 						try {
-							globalThis.LionCalcColumns?.add?.(c);
+							this.calc?.add?.(c);
 						} catch (e) {
 							console.warn(e);
 						}
@@ -1011,7 +1146,7 @@ export class Table {
 					btnRemove.addEventListener('click', () => {
 						if (!confirm(`Remove column "${c.id}"?`)) return;
 						try {
-							globalThis.LionCalcColumns?.remove?.(c.id);
+							this.calc?.remove?.(c.id);
 							renderList();
 						} catch (e) {
 							console.warn(e);
@@ -1034,7 +1169,7 @@ export class Table {
 				}
 
 				try {
-					const ok = globalThis.LionCalcColumns?.add?.(cfg);
+					const ok = this.calc?.add?.(cfg);
 					if (!ok) return;
 
 					// 1) fecha modal
@@ -1093,7 +1228,7 @@ export class Table {
 			activateAllBtn?.addEventListener('click', (e) => {
 				e.preventDefault();
 				try {
-					globalThis.LionCalcColumns?.activateAll?.();
+					this.calc?.activateAll?.();
 					showToast('All calculated columns activated', 'success');
 				} catch (err) {
 					showToast('Failed to activate all', 'danger');
@@ -1128,7 +1263,7 @@ export class Table {
 				return showToast("Couldn't capture grid state", 'danger');
 			}
 
-			const calcColumns = globalThis.LionCalcColumns?.exportForPreset?.() || [];
+			const calcColumns = this.calc?.exportForPreset?.() || [];
 			const bag = readPresets();
 			bag[name] = {
 				version: 1,
@@ -1151,11 +1286,11 @@ export class Table {
 			}
 
 			// Primeiro: limpar colunas calculadas existentes
-			globalThis.LionCalcColumns?.clear?.();
+			this.calc?.clear?.();
 
 			// Depois, importar as calculadas do preset
 			if (Array.isArray(p.calcColumns) && p.calcColumns.length > 0) {
-				globalThis.LionCalcColumns?.importFromPreset(p.calcColumns);
+				this.calc?.importFromPreset(p.calcColumns);
 			}
 
 			// Aplicar o estado do grid
@@ -1287,14 +1422,14 @@ export class Table {
 		});
 		byId('btnAddCalcCol')?.addEventListener('click', () => {
 			try {
-				LionCalcColumns.openQuickBuilder();
+				this.calc.openQuickBuilder();
 			} catch (e) {
 				console.warn(e);
 			}
 		});
 		byId('btnManageCalcCols')?.addEventListener('click', () => {
 			try {
-				LionCalcColumns.manage();
+				this.calc.manage();
 			} catch (e) {
 				console.warn(e);
 			}
@@ -2163,7 +2298,7 @@ export class Table {
 		const renderList = () => {
 			const list = $('#cc-list');
 			if (!list) return;
-			const items = Table.LionCalcColumns.list();
+			const items = this.calc.list();
 			list.innerHTML = '';
 			const empty = $('#cc-empty');
 			if (!items.length) {
@@ -2188,7 +2323,7 @@ export class Table {
 				btnApply.textContent = 'Activate';
 				btnApply.addEventListener('click', () => {
 					try {
-						Table.LionCalcColumns.add(c);
+						this.calc.add(c);
 					} catch (e) {
 						console.warn(e);
 					}
@@ -2213,7 +2348,7 @@ export class Table {
 				btnRemove.addEventListener('click', () => {
 					if (!confirm(`Remove column "${c.id}"?`)) return;
 					try {
-						Table.LionCalcColumns.remove(c.id);
+						this.calc.remove(c.id);
 						renderList();
 					} catch (e) {
 						console.warn(e);
@@ -2342,7 +2477,7 @@ export class Table {
 				return;
 			}
 			try {
-				const ok = Table.LionCalcColumns.add(cfg);
+				const ok = this.calc.add(cfg);
 				if (ok) {
 					clearForm();
 					renderList();
@@ -2361,7 +2496,7 @@ export class Table {
 		activateAllBtn?.addEventListener('click', (e) => {
 			e.preventDefault();
 			try {
-				Table.LionCalcColumns.activateAll();
+				this.calc.activateAll();
 				renderList();
 				showToast('All columns activated', 'success');
 			} catch (e) {
@@ -2867,7 +3002,9 @@ export class Table {
 
 			onGridReady: (params) => {
 				console.log('[GridReady] Grid initialized successfully');
-
+				this.api = params.api;
+				this.columnApi = params.columnApi;
+				this.composite?.initGridApi(this.api, this.columnApi);
 				const dataSource = {
 					getRows: async (req) => {
 						try {
@@ -3080,8 +3217,17 @@ export class Table {
 						params.api.sizeColumnsToFit();
 					} catch {}
 				}, 0);
+
 				setTimeout(() => {
 					globalThis.dispatchEvent(new CustomEvent('lionGridReady'));
+
+					// ✅ Ativar composite SOMENTE quando API está pronta
+					try {
+						this.composite.activate();
+						console.log('[GridReady] Composite columns activated');
+					} catch (e) {
+						console.warn('[GridReady] Erro ao ativar composite:', e);
+					}
 				}, 100);
 			},
 		};
@@ -3090,20 +3236,6 @@ export class Table {
 			typeof AG.createGrid === 'function'
 				? AG.createGrid(this.gridDiv, gridOptions)
 				: new AG.Grid(this.gridDiv, gridOptions);
-
-		const api = gridOptions.api || apiOrInstance;
-
-		// ✅ Captura a API na instância (não no global)
-		try {
-			const _api = typeof api !== 'undefined' && api ? api : gridOptions?.api || null;
-			if (_api) this.api = _api;
-		} catch {}
-
-		try {
-			LionCompositeColumns.activate();
-		} catch (e) {
-			console.warn(e);
-		}
 
 		this._bindPinnedToggle();
 
@@ -3121,7 +3253,3 @@ export class Table {
 		}
 	}
 }
-
-globalThis.LionCompositeColumns = Table.LionCompositeColumns;
-globalThis.LionCalcColumns = Table.LionCalcColumns;
-globalThis.Table = Table;
