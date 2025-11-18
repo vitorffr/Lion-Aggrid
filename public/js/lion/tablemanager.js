@@ -21,11 +21,7 @@ import {
 	cc_evalExpression,
 } from './utils.js';
 
-export let GLOBAL_QUICK_FILTER = ''; // 🔍 QUICK FILTER global (vai em filterModel._global.filter)
-
-/* =========================================
- * 4) AG Grid: acesso + licença
- * =======================================*/
+export let GLOBAL_QUICK_FILTER = '';
 function getAgGrid() {
 	const AG = globalThis.agGrid;
 	if (!AG) throw new Error('AG Grid UMD not loaded. Check the script ORDER and the CDN path.');
@@ -108,12 +104,7 @@ function refreshSSRM(api) {
 	);
 	globalThis.addEventListener('lionGridReady', init);
 })();
-function setParentRowLoading(api, parentId, on) {
-	if (!api || !parentId) return;
-	const node = api.getRowNode(parentId);
-	if (!node || !node.data) return;
-	node.data.__rowLoading = !!on;
-}
+
 function buildFilterModelWithGlobal(baseFilterModel) {
 	const fm = { ...(baseFilterModel || {}) };
 	const gf = (GLOBAL_QUICK_FILTER || '').trim();
@@ -130,16 +121,20 @@ export class Table {
 		this.gridColumnApi = null;
 		this.WRAP_FIELDS = opts.WRAP_FIELDS || ['campaign', 'bc_name', 'account_name'];
 		this.REVENUE_LABELS = opts.REVENUE_LABELS ?? ['A', 'B'];
-
 		this.GRID_STATE_KEY = opts.GRID_STATE_KEY ?? 'lion.aggrid.state.v1';
-
+		this.ROOT_CACHE = opts.ROOT_CACHE ?? null;
+		this.LION_CURRENCY = opts.LION_CURRENCY ?? 'BRL';
+		this.pinToggleSelector = opts.pinToggleSelector || '#pinToggle';
+		this.colSizeModeToggleSelector = opts.colSizeModeToggleSelector || '#colSizeModeToggle';
+		this.gridStateKey = `lionGrid_state_${this.container.replace(/[^a-z0-9]/gi, '_')}`;
+		this.defaultColDef = opts.defaultColDef;
+		this.selectionColumn = opts.selectionColumn || 'ag-Grid-SelectionColumn';
 		this.GRID_STATE_IGNORE_ON_RESTORE = opts.GRID_STATE_IGNORE_ON_RESTORE ?? [
 			'pagination',
 			'scroll',
 			'rowSelection',
 			'focusedCell',
 		];
-		// Endpoints configuráveis
 		this.endpoints = Object.assign(
 			{
 				SSRM: '/api/ssrm/?clean=1&mode=full',
@@ -148,8 +143,6 @@ export class Table {
 			},
 			opts.endpoints || {}
 		);
-
-		// Knobs de drill configuráveis
 		this.drill = Object.assign(
 			{
 				period: 'TODAY',
@@ -159,17 +152,6 @@ export class Table {
 			opts.drill || {}
 		);
 
-		this.ROOT_CACHE = opts.ROOT_CACHE ?? null;
-		this.LION_CURRENCY = opts.LION_CURRENCY ?? 'BRL';
-
-		// Seletor do checkbox de pinar colunas
-		this.pinToggleSelector = opts.pinToggleSelector || '#pinToggle';
-		// Adicionar seletor para colSizeModeToggle
-		this.colSizeModeToggleSelector = opts.colSizeModeToggleSelector || '#colSizeModeToggle';
-		// Key para storage do estado da grid
-		this.gridStateKey = `lionGrid_state_${this.container.replace(/[^a-z0-9]/gi, '_')}`;
-		this.defaultColDef = opts.defaultColDef;
-		this.selectionColumn = opts.selectionColumn || 'ag-Grid-Selection';
 		class LionCompositeColumns {
 			constructor() {
 				this.registry = new Map();
@@ -181,7 +163,6 @@ export class Table {
 			initGridApi(api, columnApi) {
 				this.api = api;
 				this.columnApi = columnApi;
-				this.activate(); // só agora é seguro ativar
 			}
 			register(id, builder) {
 				this.registry.set(String(id), builder);
@@ -339,16 +320,22 @@ export class Table {
 				};
 				filterArray(allDefs);
 			}
-
 			activate(ids = []) {
 				const api = this._ensureApi();
 				const defsRef = this._getColumnDefs(api);
+
+				// Cria uma cópia para manipulação
 				const newDefs = Array.isArray(defsRef) ? defsRef.slice() : [];
+
+				// Localiza o grupo e cria o índice apenas uma vez no início
 				const fallbackGroupNode = this._findGroup(newDefs, 'grp-metrics-rev');
-
 				let idxMap = this._buildColIndex(newDefs);
+				let hasChanges = false;
 
-				for (const id of ids) {
+				// Garante que ids seja um array
+				const idsList = Array.isArray(ids) ? ids : [ids];
+
+				for (const id of idsList) {
 					const builder = this.registry.get(String(id));
 					if (!builder) continue;
 
@@ -356,23 +343,28 @@ export class Table {
 					if (!colDef || typeof colDef !== 'object') continue;
 
 					const colKey = this._normKey(String(colDef.colId || colDef.field || ''));
-					if (!colKey) continue;
-					if (idxMap.has(colKey)) continue;
+
+					// Se a coluna já existe, pula
+					if (!colKey || idxMap.has(colKey)) continue;
 
 					let afterRaw = colDef.__afterId || colDef.__after || 'Revenue';
 					const afterTargets = Array.isArray(afterRaw) ? afterRaw : [afterRaw];
 
+					// Insere a coluna na estrutura de dados em memória
 					this._insertAfter(newDefs, colDef, afterTargets, fallbackGroupNode);
+
+					// Reconstrói o índice para a próxima iteração (rápido em memória)
 					idxMap = this._buildColIndex(newDefs);
+					hasChanges = true;
 				}
 
-				this._setColumnDefs(api, newDefs);
-				try {
-					api.sizeColumnsToFit?.();
-				} catch {}
+				// Só toca na API do Grid se realmente houve mudança
+				if (hasChanges) {
+					this._setColumnDefs(api, newDefs);
+					// Removemos o sizeColumnsToFit forçado aqui para evitar "pulo" visual na carga
+				}
 				return true;
 			}
-
 			deactivate(ids = []) {
 				const api = this._ensureApi();
 				const defsRef = this._getColumnDefs(api);
@@ -468,141 +460,203 @@ export class Table {
 			}
 
 			_buildColDef(cfg) {
-				const n = this._norm(cfg);
-				const totalFn = this._compileExpr(n.expression);
-				const partFns = n.parts.map((p) => ({ label: p.label, fn: this._compileExpr(p.expr) }));
-				const valueFormatter = (p) => {
-					const v0 = typeof p.value === 'number' ? p.value : number(p.value);
-					const v = Number.isFinite(v0) ? v0 : null;
-					if (v == null) return p.value ?? '';
-					if (n.format === 'int') return intFmt.format(Math.round(v));
-					if (n.format === 'raw') return String(v);
-					if (n.format === 'percent') return cc_percentFormat(v);
-					return currencyFormatter({ value: v });
-				};
-				const tooltipValueGetter = (p) => {
-					const row = p?.data || {};
-					const tot = totalFn ? totalFn(row) : null;
-					const lines = [`${n.totalLabel}: ${this._fmtBy(n.format, tot)}`];
-					for (const { label, fn } of partFns)
-						lines.push(`${label || ''}: ${this._fmtBy(n.partsFormat, fn ? fn(row) : null)}`);
-					return lines.join('\n');
-				};
-				return {
-					headerName: n.headerName,
-					colId: n.id,
-					minWidth: 150,
-					flex: 1,
-					pinned: null,
-					valueGetter: (p) => {
+				try {
+					const n = this._norm(cfg);
+					const totalFn = this._compileExpr(n.expression);
+
+					const partsArray = Array.isArray(n.parts) ? n.parts : [];
+					const partFns = partsArray.map((p) => ({
+						label: p.label,
+						fn: p.expr ? this._compileExpr(p.expr) : null,
+					}));
+
+					const valueFormatter = (p) => {
+						const v0 = typeof p.value === 'number' ? p.value : number(p.value);
+						const v = Number.isFinite(v0) ? v0 : null;
+						if (v == null) return p.value ?? '';
+						if (n.format === 'int') return intFmt.format(Math.round(v));
+						if (n.format === 'raw') return String(v);
+						if (n.format === 'percent') return cc_percentFormat(v);
+						return currencyFormatter({ value: v });
+					};
+
+					const tooltipValueGetter = (p) => {
 						const row = p?.data || {};
-						const val = totalFn ? totalFn(row) : null;
-						return Number.isFinite(val) ? val : null;
-					},
-					valueFormatter,
-					tooltipValueGetter,
-					cellRenderer: StackBelowRenderer,
-					cellRendererParams: {
-						partsMaxHeight: 40,
-						onlyLevel0: !!n.onlyLevel0,
-						format:
-							n.partsFormat === 'int'
-								? 'int'
-								: n.partsFormat === 'raw'
-								? 'raw'
-								: n.partsFormat === 'percent'
-								? 'percent'
-								: 'currency',
-						showTop: !n.hideTop,
-						partsLabelOnly: !!n.partsLabelOnly,
-						showLabels: n.mini,
-						forceShowLabels: n.mini,
-						maxParts: Number(n.maxParts) || 0,
-						getParts: (p) => {
+						const tot = totalFn ? totalFn(row) : null;
+						const lines = [`${n.totalLabel}: ${this._fmtBy(n.format, tot)}`];
+						for (const { label, fn } of partFns) {
+							if (fn) {
+								const value = fn(row);
+								lines.push(`${label || ''}: ${this._fmtBy(n.partsFormat, value)}`);
+							}
+						}
+						return lines.join('\n');
+					};
+
+					return {
+						headerName: n.headerName,
+						colId: n.id,
+						minWidth: 150,
+						flex: 1,
+						pinned: null,
+						valueGetter: (p) => {
 							const row = p?.data || {};
-							const list = [];
-							const pushPart = (label, value, isTotal, fmt) => {
-								const formatted = Number.isFinite(value) ? this._fmtBy(fmt, value) : '—';
-								list.push({
-									label,
-									name: label,
-									value,
-									text: `${label}: ${formatted}`,
-									labelWithValue: `${label}: ${formatted}`,
-									isTotal: !!isTotal,
-								});
-							};
-							if (n.includeTotalAsPart) {
-								const tot = totalFn ? totalFn(row) : null;
-								pushPart(n.totalLabel, tot, true, n.format);
-							}
-							for (const { label, fn } of partFns) {
-								const v = fn ? fn(row) : null;
-								pushPart(label, v, false, n.partsFormat);
-							}
-							return list;
+							const val = totalFn ? totalFn(row) : null;
+							return Number.isFinite(val) ? val : null;
 						},
-					},
-					__after: n.after,
-				};
+						valueFormatter,
+						tooltipValueGetter,
+						cellRenderer: StackBelowRenderer,
+						cellRendererParams: {
+							partsMaxHeight: 40,
+							onlyLevel0: !!n.onlyLevel0,
+							format:
+								n.partsFormat === 'int'
+									? 'int'
+									: n.partsFormat === 'raw'
+									? 'raw'
+									: n.partsFormat === 'percent'
+									? 'percent'
+									: 'currency',
+							showTop: !n.hideTop,
+							partsLabelOnly: !!n.partsLabelOnly,
+							showLabels: n.mini,
+							forceShowLabels: n.mini,
+							maxParts: Number(n.maxParts) || 0,
+							getParts: (p) => {
+								const row = p?.data || {};
+								const list = [];
+								const pushPart = (label, value, isTotal, fmt) => {
+									const formatted = Number.isFinite(value)
+										? this._fmtBy(fmt, value)
+										: '—';
+									list.push({
+										label,
+										name: label,
+										value,
+										text: `${label}: ${formatted}`,
+										labelWithValue: `${label}: ${formatted}`,
+										isTotal: !!isTotal,
+									});
+								};
+								if (n.includeTotalAsPart) {
+									const tot = totalFn ? totalFn(row) : null;
+									pushPart(n.totalLabel, tot, true, n.format);
+								}
+								for (const { label, fn } of partFns) {
+									if (fn) {
+										const v = fn(row);
+										pushPart(label, v, false, n.partsFormat);
+									}
+								}
+								return list;
+							},
+						},
+						__after: n.after,
+					};
+				} catch (error) {
+					console.error('Error building column definition:', error);
+					return null;
+				}
 			}
 
 			_registerAndActivate(cfg) {
-				const colDef = this._buildColDef(cfg);
-				if (!colDef) return false;
-				this.composite.register(colDef.colId, () => colDef);
-				console.log(`[CalcCols] Registering "${colDef.colId}":`, colDef.cellRendererParams);
 				try {
-					return this.composite.activate([colDef.colId]) || true;
+					const colDef = this._buildColDef(cfg);
+					if (!colDef) {
+						console.warn('[CalcCols] Failed to build column definition for:', cfg.id);
+						return false;
+					}
+
+					this.composite.register(colDef.colId, () => colDef);
+					console.log(`[CalcCols] Registering "${colDef.colId}"`);
+
+					const result = this.composite.activate([colDef.colId]);
+					if (!result) {
+						console.warn('[CalcCols] Activation failed for:', colDef.colId);
+					}
+					return result;
 				} catch (e) {
-					console.warn('[CalcCols] activate failed', e);
+					console.error('[CalcCols] Error in registerAndActivate:', e);
 					return false;
 				}
 			}
 
 			_migrateLegacyColumn(cfg) {
-				if (cfg.parts && cfg.parts.length > 0) return cfg;
-				const fieldMatches = (cfg.expression || '').match(/\b([a-zA-Z_]\w*)(?!\s*\()/g);
+				const migrated = { ...cfg };
+
+				if (migrated.parts && migrated.parts.length > 0) return migrated;
+
+				const fieldMatches = (migrated.expression || '').match(/\b([a-zA-Z_]\w*)(?!\s*\()/g);
 				if (fieldMatches && fieldMatches.length > 0) {
 					const known = ['number', 'cc_evalExpression', 'Math'];
 					const unique = [...new Set(fieldMatches)].filter((f) => !known.includes(f));
-					cfg.parts = unique.slice(0, 5).map((field) => ({
+					migrated.parts = unique.slice(0, 5).map((field) => ({
 						label: field
 							.replace(/_/g, ' ')
 							.replace(/\b\w/g, (l) => l.toUpperCase())
 							.trim(),
 						expr: field,
 					}));
-					console.log(`[CalcCols] Migrated "${cfg.id}" with auto-parts:`, cfg.parts);
+					console.log(`[CalcCols] Migrated "${migrated.id}" with auto-parts:`, migrated.parts);
 				}
-				return cfg;
+				return migrated;
 			}
 
 			add(config) {
-				let cfg = this._norm(config);
-				cfg = this._migrateLegacyColumn(cfg);
-				if (!cfg.id || !cfg.expression) {
-					showToast('Invalid config (id/expression required)', 'danger');
-					return false;
-				}
-				if (!this._compileExpr(cfg.expression)) {
-					showToast('Invalid expression', 'danger');
-					return false;
-				}
-				for (const p of cfg.parts) {
-					if (p.expr && !this._compileExpr(p.expr)) {
-						showToast(`Invalid part: ${p.label || '(no label)'}`, 'danger');
+				try {
+					let cfg = this._norm(config);
+					cfg = this._migrateLegacyColumn(cfg);
+
+					if (!cfg.id?.trim()) {
+						showToast('Column ID is required', 'danger');
 						return false;
 					}
+					if (!cfg.expression?.trim()) {
+						showToast('Expression is required', 'danger');
+						return false;
+					}
+
+					const compiledMain = this._compileExpr(cfg.expression);
+					if (!compiledMain) {
+						showToast('Invalid expression - check syntax', 'danger');
+						return false;
+					}
+
+					if (cfg.parts && Array.isArray(cfg.parts)) {
+						for (const p of cfg.parts) {
+							if (p.expr && !this._compileExpr(p.expr)) {
+								showToast(`Invalid part expression: ${p.label || p.expr}`, 'danger');
+								return false;
+							}
+						}
+					}
+
+					const colDef = this._buildColDef(cfg);
+					if (!colDef) {
+						showToast('Failed to create column definition', 'danger');
+						return false;
+					}
+
+					const bag = this._read();
+					const idx = bag.findIndex((c) => String(c.id) === cfg.id);
+					if (idx >= 0) bag[idx] = cfg;
+					else bag.push(cfg);
+					this._write(bag);
+
+					const ok = this._registerAndActivate(cfg);
+					if (ok) {
+						showToast(`Column "${cfg.headerName}" added successfully`, 'success');
+						return true;
+					} else {
+						showToast('Failed to activate column', 'warning');
+						return false;
+					}
+				} catch (error) {
+					console.error('Error in add method:', error);
+					showToast('Unexpected error adding column', 'danger');
+					return false;
 				}
-				const bag = this._read();
-				const idx = bag.findIndex((c) => String(c.id) === cfg.id);
-				if (idx >= 0) bag[idx] = cfg;
-				else bag.push(cfg);
-				this._write(bag);
-				const ok = this._registerAndActivate(cfg);
-				if (ok) showToast(`Column "${cfg.headerName}" ready`, 'success');
-				return !!ok;
 			}
 
 			remove(id) {
@@ -620,19 +674,40 @@ export class Table {
 				return this._read();
 			}
 
+			// Substitua o método 'activateAll' dentro da class LionCalcColumns por este:
 			activateAll() {
 				const bag = this._read();
 				const migrated = [];
+				const idsToActivate = [];
 				let cnt = 0;
+
 				for (const cfg of bag) {
+					// 1. Migração e Normalização
 					const m = this._migrateLegacyColumn(cfg);
 					if (m.parts && m.parts.length > 0 && (!cfg.parts || cfg.parts.length === 0)) cnt++;
 					migrated.push(m);
-					this._registerAndActivate(m);
+
+					// 2. Construção da Definição (sem tocar na grid ainda)
+					const colDef = this._buildColDef(m);
+
+					// 3. Registro no Composite
+					if (colDef) {
+						this.composite.register(colDef.colId, () => colDef);
+						idsToActivate.push(colDef.colId);
+					}
 				}
+
+				// 4. Salva migrações pendentes no localStorage
 				if (cnt > 0) {
 					this._write(migrated);
 					console.log(`[CalcCols] Migrated ${cnt} column(s)`);
+				}
+
+				// 5. Ativação em LOTE (Otimização Principal)
+				if (idsToActivate.length > 0) {
+					// Chama o activate otimizado que passamos acima
+					this.composite.activate(idsToActivate);
+					console.log(`[CalcCols] Batch activated ${idsToActivate.length} columns`);
 				}
 			}
 
@@ -677,10 +752,24 @@ export class Table {
 				}
 				this._write([]);
 			}
+			deactivateAllVisuals() {
+				const bag = this._read(); // Lê o que está salvo
+				// Pega apenas os IDs
+				const ids = bag.map((c) => String(c.id));
+
+				if (ids.length > 0) {
+					try {
+						// Remove as colunas da definição da Grid
+						this.composite.deactivate(ids);
+						console.log('[CalcCols] Visuals deactivated (storage kept)');
+					} catch (e) {
+						console.warn('[CalcCols] Failed to deactivate visuals', e);
+					}
+				}
+			}
 		}
-		this.composite = new LionCompositeColumns(this); // ✅ Passar 'this'
+		this.composite = new LionCompositeColumns(this);
 		this.calc = new LionCalcColumns(this.composite);
-		// se quiser expor globalmente
 	}
 	init() {
 		this.ensureLoadingStyles();
@@ -694,11 +783,11 @@ export class Table {
 	}
 
 	setupToolbar() {
-		const tableInstance = this; // ✅ Guarda referência da instância Table
+		const tableInstance = this;
 		const byId = (id) => document.getElementById(id);
 
 		const ensureApi = () => {
-			if (!this.api) throw new Error('[CompositeColumns] Grid API indisponível');
+			if (!this.api) throw new Error('[Table] Grid API indisponível');
 			return this.api;
 		};
 
@@ -706,8 +795,30 @@ export class Table {
 		const LS_KEY_PRESETS = 'lion.aggrid.presets.v1';
 		const LS_KEY_ACTIVE_PRESET = 'lion.aggrid.activePreset.v1';
 
+		// === Helper: Sincroniza Checkboxes com a Realidade ===
+		const syncTogglesUI = () => {
+			const api = tableInstance.api;
+			if (!api) return;
+
+			// 1. Sync Pinned (Baseado na Grid)
+			const pinToggle = byId('pinToggle');
+			if (pinToggle) {
+				const col = api.getColumn('ag-Grid-SelectionColumn');
+				const isPinned = col ? col.isPinnedLeft() : true;
+				pinToggle.checked = !!isPinned;
+				tableInstance._setPinnedState(!!isPinned);
+			}
+
+			// 2. Sync Size (Baseado no Storage)
+			const sizeToggle = byId('colSizeModeToggle');
+			if (sizeToggle) {
+				const mode = tableInstance._getSizeMode();
+				// Se for 'auto', marca. Se for 'fit', desmarca.
+				sizeToggle.checked = mode === 'auto';
+			}
+		};
+
 		const getState = () => {
-			// ✅ Arrow function
 			const api = ensureApi();
 			if (!api) return null;
 			try {
@@ -718,7 +829,6 @@ export class Table {
 		};
 
 		const setState = (state, ignore = []) => {
-			// ✅ Arrow function
 			const api = ensureApi();
 			if (!api) return;
 			try {
@@ -728,26 +838,68 @@ export class Table {
 			}
 		};
 
+		// Helper local para aplicar tamanho
+		const applySizeMode = (mode) => {
+			const api = tableInstance.api;
+			if (!api) return;
+			try {
+				if (mode === 'auto') {
+					const all = api.getColumns()?.map((c) => c.getColId()) || [];
+					api.autoSizeColumns(all, false);
+				} else {
+					api.sizeColumnsToFit();
+				}
+			} catch {}
+		};
+
 		const resetLayout = () => {
-			// ✅ Arrow function
 			const api = ensureApi();
 			if (!api) return;
+
 			try {
 				sessionStorage.removeItem(SS_KEY_STATE);
 				localStorage.removeItem(LS_KEY_ACTIVE_PRESET);
+
+				const sel = byId('presetUserSelect');
+				if (sel) sel.value = '';
+
+				// 1. Remove colunas calculadas da tela (mantendo no banco de dados/modal)
+				tableInstance.calc?.deactivateAllVisuals?.();
+
+				// 2. FORÇA PINNED (TRUE)
+				const pinToggle = byId('pinToggle');
+				if (pinToggle) pinToggle.checked = true;
+				tableInstance._setPinnedState(true);
+
+				// 3. FORÇA SIZE (FIT / FALSE)
+				const sizeToggle = byId('colSizeModeToggle');
+				if (sizeToggle) sizeToggle.checked = false;
+				tableInstance._setSizeMode('fit');
+
+				// 4. Reseta Grid
 				api.setState({}, []);
 				api.resetColumnState?.();
 				api.setFilterModel?.(null);
 				api.setSortModel?.([]);
-				refreshPresetUserSelect();
-				showToast('Layout Reset', 'info');
+
+				// 5. Aplica tudo
+				setTimeout(() => {
+					// Aplica Pinned
+					tableInstance.togglePinnedColsFromCheckbox(true);
+
+					// Aplica Size
+					applySizeMode('fit');
+
+					// Garante sync visual final
+					syncTogglesUI();
+
+					showToast('Layout & Columns Reset', 'info');
+				}, 50);
 			} catch (e) {
 				console.warn('resetLayout fail', e);
 			}
 		};
-
 		const readPresets = () => {
-			// ✅ Arrow function
 			try {
 				return JSON.parse(localStorage.getItem(LS_KEY_PRESETS) || '{}');
 			} catch {
@@ -756,17 +908,14 @@ export class Table {
 		};
 
 		const writePresets = (obj) => {
-			// ✅ Arrow function
 			localStorage.setItem(LS_KEY_PRESETS, JSON.stringify(obj));
 		};
 
 		const listPresetNames = () => {
-			// ✅ Arrow function
 			return Object.keys(readPresets()).sort((a, b) => a.localeCompare(b, 'pt-BR'));
 		};
 
 		const refreshPresetUserSelect = () => {
-			// ✅ Arrow function
 			const sel = byId('presetUserSelect');
 			if (!sel) return;
 			const activePreset = localStorage.getItem(LS_KEY_ACTIVE_PRESET) || '';
@@ -779,495 +928,8 @@ export class Table {
 			else sel.value = '';
 		};
 
-		// ===== Calculated Columns Modal (KTUI) =====
-		(function setupCalcColsModal(instance) {
-			// ✅ Recebe a instância como parâmetro
-			const tableInstance = instance; // ✅ Usa a referência passada
-			const $ = (sel) => document.querySelector(sel);
-			const DEFAULT_OPERATORS = [
-				{ value: 'custom', label: '✎ Custom Expression', template: '' },
-				{
-					value: 'divide',
-					label: '÷ Division (A / B)',
-					template: 'number({col1}) / number({col2})',
-				},
-				{
-					value: 'multiply',
-					label: '× Multiplication (A × B)',
-					template: 'number({col1}) * number({col2})',
-				},
-				{
-					value: 'add',
-					label: '+ Addition (A + B)',
-					template: 'number({col1}) + number({col2})',
-				},
-				{
-					value: 'subtract',
-					label: '− Subtraction (A − B)',
-					template: 'number({col1}) - number({col2})',
-				},
-				{
-					value: 'percent',
-					label: '% Percentage (A / B × 100)',
-					template: '(number({col1}) / number({col2})) * 100',
-				},
-				{
-					value: 'percent_change',
-					label: 'Δ% Change ((B-A)/A × 100)',
-					template: '((number({col2}) - number({col1})) / number({col1})) * 100',
-				},
-				{
-					value: 'average',
-					label: '⌀ Average ((A+B)/2)',
-					template: '(number({col1}) + number({col2})) / 2',
-				},
-			];
-
-			const populateExpressionSelect = () => {
-				// ✅ Arrow function
-				const sel = $('#cc-format');
-				if (!sel) return;
-				sel.innerHTML = '';
-				DEFAULT_OPERATORS.forEach((op) => {
-					const option = document.createElement('option');
-					option.value = op.value;
-					option.textContent = op.label;
-					option.dataset.template = op.template;
-					sel.appendChild(option);
-				});
-				if (globalThis.KT && KT.Select && KT.Select.getOrCreateInstance) {
-					try {
-						const instance = KT.Select.getOrCreateInstance(sel);
-						if (instance) {
-							instance.destroy();
-							KT.Select.getInstance(sel)?.init();
-						}
-					} catch (e) {
-						console.warn('Failed to reinitialize cc-format select:', e);
-					}
-				}
-			};
-
-			const populateColumnSelects = () => {
-				// ✅ Arrow function
-				const api = ensureApi();
-				if (!api) return;
-
-				const _isCalculableByDef = (def) => {
-					// ✅ Arrow function
-					if (!def) return false;
-					if (def.calcEligible === true) return true;
-					if (def.calcType === 'numeric') return true;
-					if (def.valueType === 'number') return true;
-					if (def.cellDataType === 'number') return true;
-					if (def.type === 'numericColumn') return true;
-					if (def.filter === 'agNumberColumnFilter') return true;
-					if (typeof def.valueParser === 'function') return true;
-					return false;
-				};
-
-				const _flattenColDefs = (defOrArray) => {
-					// ✅ Arrow function
-					const out = [];
-					const walk = (arr) => {
-						(arr || []).forEach((def) => {
-							if (def?.children?.length) walk(def.children);
-							else out.push(def);
-						});
-					};
-					if (Array.isArray(defOrArray)) walk(defOrArray);
-					else if (defOrArray) walk([defOrArray]);
-					return out;
-				};
-
-				const _getSelectableColumns = () => {
-					// ✅ Arrow function
-					let defs = [];
-					try {
-						const displayed = api.getAllDisplayedColumns?.() || [];
-						if (displayed.length) {
-							defs = displayed
-								.map((gc) => gc.getColDef?.() || gc.colDef || null)
-								.filter(Boolean);
-						}
-					} catch {}
-					if (!defs.length) {
-						const columnState = api.getColumnState?.() || [];
-						const viaState = columnState
-							.map((s) => api.getColumn?.(s.colId)?.getColDef?.())
-							.filter(Boolean);
-						if (viaState.length) defs = viaState;
-						else defs = (api.getColumnDefs?.() || []).flatMap(_flattenColDefs);
-					}
-
-					const deny = new Set(['ag-Grid-AutoColumn', 'ag-Grid-RowGroup', '__autoGroup']);
-					defs = defs.filter((def) => {
-						if (!def) return false;
-						const field = def.field || def.colId;
-						const header = def.headerName || field;
-						if (!field || !header) return false;
-						if (deny.has(field)) return false;
-						if (String(field).startsWith('__')) return false;
-						if (def.checkboxSelection) return false;
-						if (def.rowGroup || def.pivot) return false;
-						const h = String(header).toLowerCase();
-						if (h.includes('select') || h.includes('ação') || h.includes('action'))
-							return false;
-						return true;
-					});
-
-					defs = defs.filter(_isCalculableByDef);
-
-					const mapped = defs.map((def) => ({
-						field: String(def.field || def.colId),
-						label: String(def.headerName || def.field || def.colId),
-					}));
-					const seen = new Set();
-					const unique = [];
-					for (const it of mapped) {
-						if (seen.has(it.field)) continue;
-						seen.add(it.field);
-						unique.push(it);
-					}
-					unique.sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'));
-					return unique;
-				};
-
-				const col1Sel = document.querySelector('#cc-col1');
-				const col2Sel = document.querySelector('#cc-col2');
-				if (!col1Sel || !col2Sel) return;
-
-				const options = _getSelectableColumns();
-				[col1Sel, col2Sel].forEach((sel) => {
-					sel.innerHTML = '';
-					for (const col of options) {
-						const opt = document.createElement('option');
-						opt.value = col.field;
-						opt.textContent = `${col.label} (${col.field})`;
-						sel.appendChild(opt);
-					}
-					if (globalThis.KT && KT.Select && KT.Select.getOrCreateInstance) {
-						try {
-							const instance = KT.Select.getOrCreateInstance(sel);
-							if (instance) {
-								instance.destroy();
-								KT.Select.getInstance(sel)?.init();
-							}
-						} catch (e) {
-							console.warn('Failed to reinitialize column select:', e);
-						}
-					}
-				});
-			};
-
-			const updateExpressionFromSelects = () => {
-				// ✅ Arrow function
-				const formatSel = $('#cc-format');
-				const col1Sel = $('#cc-col1');
-				const col2Sel = $('#cc-col2');
-				const exprInput = $('#cc-expression');
-				const partsInput = $('#cc-parts');
-				if (!formatSel || !col1Sel || !col2Sel || !exprInput) return;
-				const selectedOp = formatSel.options[formatSel.selectedIndex];
-				const template = selectedOp?.dataset?.template;
-				if (!template || formatSel.value === 'custom') return;
-				const col1 = col1Sel.value;
-				const col2 = col2Sel.value;
-				if (col1 && col2) {
-					const expression = template.replace(/{col1}/g, col1).replace(/{col2}/g, col2);
-					exprInput.value = expression;
-					if (partsInput) {
-						const col1Label = col1Sel.options[col1Sel.selectedIndex]?.textContent || col1;
-						const col2Label = col2Sel.options[col2Sel.selectedIndex]?.textContent || col2;
-						const parts = [
-							{ label: col1Label.replace(/number/gi, '').trim(), expr: col1 },
-							{ label: col2Label.replace(/number/gi, '').trim(), expr: col2 },
-						];
-						partsInput.value = JSON.stringify(parts, null, 2);
-					}
-				}
-			};
-
-			const modalShow = (selector) => {
-				// ✅ Arrow function
-				const el = document.querySelector(selector);
-				if (!el) return;
-				if (globalThis.KT && KT.Modal && KT.Modal.getOrCreateInstance)
-					KT.Modal.getOrCreateInstance(el).show();
-				else {
-					el.classList.remove('hidden');
-					el.style.display = 'block';
-					el.setAttribute('aria-hidden', 'false');
-					el.classList.add('kt-modal--open');
-				}
-			};
-
-			const modalHide = (selector) => {
-				// ✅ Arrow function
-				const el = document.querySelector(selector);
-				if (!el) return;
-				if (globalThis.KT && KT.Modal && KT.Modal.getOrCreateInstance)
-					KT.Modal.getOrCreateInstance(el).hide();
-				else {
-					el.style.display = 'none';
-					el.classList.add('hidden');
-					el.classList.remove('kt-modal--open');
-					el.setAttribute('aria-hidden', 'true');
-				}
-			};
-
-			const btn = document.getElementById('btnCalcCols');
-			if (btn) {
-				btn.addEventListener('click', (e) => {
-					const sel = btn.getAttribute('data-kt-modal-toggle') || '#calcColsModal';
-					setTimeout(() => {
-						modalShow(sel);
-						clearForm();
-						populateExpressionSelect();
-						populateColumnSelects();
-						renderList();
-					}, 0);
-				});
-			}
-
-			const formatSel = $('#cc-format');
-			const col1Sel = $('#cc-col1');
-			const col2Sel = $('#cc-col2');
-			if (formatSel) formatSel.addEventListener('change', updateExpressionFromSelects);
-			if (col1Sel) col1Sel.addEventListener('change', updateExpressionFromSelects);
-			if (col2Sel) col2Sel.addEventListener('change', updateExpressionFromSelects);
-
-			const modalEl = document.getElementById('calcColsModal');
-			if (modalEl)
-				modalEl.addEventListener('show.kt.modal', () => {
-					clearForm();
-					populateExpressionSelect();
-					populateColumnSelects();
-					renderList();
-				});
-
-			const list = $('#cc-list');
-			const empty = $('#cc-empty');
-			const saveBtn = $('#cc-save');
-			const reloadBtn = $('#cc-reload');
-			const resetBtn = $('#cc-reset-form');
-			const activateAllBtn = $('#cc-activate-all');
-
-			if (typeof document !== 'undefined') {
-				if (document.readyState === 'loading') {
-					document.addEventListener('DOMContentLoaded', () => {
-						setTimeout(() => {
-							populateExpressionSelect();
-							populateColumnSelects();
-						}, 100);
-					});
-				} else {
-					setTimeout(() => {
-						populateExpressionSelect();
-						populateColumnSelects();
-					}, 100);
-				}
-			}
-
-			const readForm = () => {
-				// ✅ Arrow function
-				const headerName = ($('#cc-header')?.value || '').trim();
-				let id = ($('#cc-id')?.value || '').trim();
-				const format = ($('#cc-type')?.value || 'currency').trim().toLowerCase();
-				const expression = ($('#cc-expression')?.value || '').trim();
-				const onlyLevel0 = !!$('#cc-only-level0')?.checked;
-				const after = ($('#cc-after')?.value || 'Revenue').trim() || 'Revenue';
-				const mini = !!$('#cc-mini')?.checked;
-
-				if (!id && headerName)
-					id = headerName.toLowerCase().replace(/\s+/g, '_').replace(/[^\w]/g, '');
-
-				let parts = [];
-				const raw = ($('#cc-parts')?.value || '').trim();
-				if (raw) {
-					try {
-						parts = JSON.parse(raw);
-					} catch {
-						showToast('Invalid Parts JSON', 'danger');
-						parts = null;
-					}
-				}
-				return { id, headerName, format, expression, parts, onlyLevel0, after, mini };
-			};
-
-			const clearForm = () => {
-				// ✅ Arrow function
-				$('#cc-header').value = '';
-				$('#cc-id').value = '';
-				const formatSel = $('#cc-format');
-				if (formatSel && formatSel.options.length > 0) formatSel.selectedIndex = 0;
-				const col1Sel = $('#cc-col1');
-				const col2Sel = $('#cc-col2');
-				if (col1Sel && col1Sel.options.length > 0) col1Sel.selectedIndex = 0;
-				if (col2Sel && col2Sel.options.length > 0) col2Sel.selectedIndex = 0;
-				$('#cc-expression').value = '';
-				$('#cc-parts').value = '[]';
-				$('#cc-only-level0').checked = true;
-				$('#cc-after').value = 'Revenue';
-				$('#cc-type').value = 'currency';
-				const miniEl = $('#cc-mini');
-				if (miniEl) miniEl.checked = false;
-				updateExpressionFromSelects();
-			};
-
-			const renderList = () => {
-				// ✅ Arrow function
-				if (!list) return;
-				// ✅ Usa tableInstance em vez de this
-				const items = tableInstance?.calc?.list() || [];
-				list.innerHTML = '';
-				if (!items.length) {
-					empty?.classList.remove('hidden');
-					return;
-				}
-				empty?.classList.add('hidden');
-
-				for (const c of items) {
-					const li = document.createElement('li');
-					li.className = 'flex items-center justify-between p-3';
-					const left = document.createElement('div');
-					left.className = 'min-w-0';
-					left.innerHTML = `
-                    <div class="font-medium">${c.headerName || c.id}</div>
-                    <div class="text-xs opacity-70 break-words">id: <code>${c.id}</code></div>
-                    <div class="text-xs opacity-70 break-words">expr: <code>${c.expression}</code></div>
-                `;
-					const right = document.createElement('div');
-					right.className = 'flex items-center gap-2';
-
-					const btnApply = document.createElement('button');
-					btnApply.className = 'kt-btn kt-btn-xs';
-					btnApply.textContent = 'Activate';
-					btnApply.addEventListener('click', () => {
-						tableInstance.calc.add(c); // ✅ Usa tableInstance
-					});
-
-					const btnEdit = document.createElement('button');
-					btnEdit.className = 'kt-btn kt-btn-light kt-btn-xs';
-					btnEdit.textContent = 'Edit';
-					btnEdit.addEventListener('click', () => {
-						$('#cc-header').value = c.headerName || '';
-						$('#cc-id').value = c.id || '';
-						$('#cc-type').value = c.format || 'currency';
-						$('#cc-expression').value = c.expression || '';
-						$('#cc-parts').value = (c.parts && JSON.stringify(c.parts)) || '';
-						$('#cc-only-level0').checked = !!c.onlyLevel0;
-						$('#cc-after').value = c.after || 'Revenue';
-						const miniEl = $('#cc-mini');
-						if (miniEl) miniEl.checked = !!c.mini;
-					});
-
-					const btnRemove = document.createElement('button');
-					btnRemove.className = 'kt-btn kt-btn-danger kt-btn-xs';
-					btnRemove.textContent = 'Remove';
-					btnRemove.addEventListener('click', () => {
-						if (!confirm(`Remove column "${c.id}"?`)) return;
-						tableInstance.calc.remove(c.id); // ✅ Usa tableInstance
-						renderList();
-					});
-
-					right.append(btnApply, btnEdit, btnRemove);
-					li.append(left, right);
-					list.appendChild(li);
-				}
-			};
-
-			saveBtn?.addEventListener('click', (e) => {
-				e.preventDefault();
-
-				const cfg = readForm();
-				if (!cfg) return;
-				if (!cfg.id || !cfg.expression) {
-					showToast('ID and Expression are required', 'danger');
-					return;
-				}
-
-				try {
-					const ok = tableInstance.calc.add(cfg); // ✅ Usa tableInstance
-					if (!ok) return;
-
-					try {
-						modalHide('#calcColsModal');
-					} catch {}
-
-					const api = globalThis.LionGrid?.api || null;
-					if (api) {
-						try {
-							api.ensureColumnVisible(cfg.id, 'auto');
-						} catch {}
-						try {
-							api.refreshHeader?.();
-						} catch {}
-						try {
-							api.redrawRows?.();
-						} catch {}
-
-						try {
-							refreshSSRM(api);
-						} catch {}
-
-						setTimeout(() => {
-							try {
-								api.sizeColumnsToFit?.();
-							} catch {}
-							try {
-								api.resetRowHeights?.();
-							} catch {}
-						}, 50);
-					}
-
-					renderList();
-					showToast('Calculated column saved and applied!', 'success');
-				} catch (err) {
-					showToast('Failed to save column ', 'danger');
-					console.warn(err);
-				}
-			});
-
-			resetBtn?.addEventListener('click', (e) => {
-				e.preventDefault();
-				clearForm();
-			});
-
-			reloadBtn?.addEventListener('click', (e) => {
-				e.preventDefault();
-				populateColumnSelects();
-				renderList();
-			});
-
-			activateAllBtn?.addEventListener('click', (e) => {
-				e.preventDefault();
-				try {
-					tableInstance.calc.activateAll(); // ✅ Usa tableInstance
-					showToast('All calculated columns activated', 'success');
-				} catch (err) {
-					showToast('Failed to activate all', 'danger');
-				}
-			});
-
-			document.addEventListener('click', (ev) => {
-				const t = ev.target;
-				if (!(t instanceof Element)) return;
-				const toggle = t.closest('[data-kt-modal-toggle="#calcColsModal"]');
-				if (toggle) {
-					setTimeout(() => {
-						clearForm();
-						populateExpressionSelect();
-						populateColumnSelects();
-						renderList();
-					}, 50);
-				}
-			});
-		})(tableInstance); // ✅ Passa a instância Table para o IIFE
-
 		const saveAsPreset = () => {
-			// ✅ Arrow function
-			const api = globalThis.LionGrid?.api;
+			const api = this.api;
 			if (!api) return showToast('Grid API not ready', 'warning');
 			const name = prompt('Preset name:');
 			if (!name) return;
@@ -1280,7 +942,7 @@ export class Table {
 				return showToast("Couldn't capture grid state", 'danger');
 			}
 
-			const calcColumns = tableInstance.calc?.exportForPreset?.() || []; // ✅ Usa tableInstance
+			const calcColumns = tableInstance.calc?.exportForPreset?.() || [];
 			const bag = readPresets();
 			bag[name] = {
 				version: 1,
@@ -1291,30 +953,43 @@ export class Table {
 			};
 			writePresets(bag);
 			refreshPresetUserSelect();
+
+			localStorage.setItem(LS_KEY_ACTIVE_PRESET, name);
 			showToast(`Preset "${name}" saved`, 'success');
 		};
 
 		const applyPresetUser = (name) => {
-			// ✅ Arrow function
 			if (!name) return;
 			const bag = readPresets();
 			const p = bag[name];
-			if (!p || !p.gridState) {
+			const stateToLoad = p?.gridState || p?.grid;
+
+			if (!p || !stateToLoad) {
 				return showToast('Preset not found or invalid', 'warning');
 			}
 
-			tableInstance.calc?.clear?.(); // ✅ Usa tableInstance
+			localStorage.setItem(LS_KEY_ACTIVE_PRESET, name);
+
+			tableInstance.calc?.clear?.();
 
 			if (Array.isArray(p.calcColumns) && p.calcColumns.length > 0) {
-				tableInstance.calc?.importFromPreset(p.calcColumns); // ✅ Usa tableInstance
+				tableInstance.calc?.importFromPreset(p.calcColumns);
 			}
 
-			const api = globalThis.LionGrid?.api;
+			const api = this.api;
 			if (!api) {
 				return showToast('Grid API not ready', 'warning');
 			}
 			try {
-				api.setState(p.gridState, ['pagination', 'scroll', 'rowSelection', 'focusedCell']);
+				api.setState(stateToLoad, ['pagination', 'scroll', 'rowSelection', 'focusedCell']);
+
+				// Presets geralmente têm larguras fixas, então assumimos 'fit' ou 'manual'
+				// Desmarcamos o Auto Size para não confundir
+				tableInstance._setSizeMode('fit');
+
+				setTimeout(() => {
+					syncTogglesUI();
+				}, 100);
 			} catch (e) {
 				console.error('applyPresetUser setState error', e);
 			}
@@ -1325,7 +1000,6 @@ export class Table {
 		};
 
 		const deletePreset = () => {
-			// ✅ Arrow function
 			const sel = byId('presetUserSelect');
 			const name = sel?.value || '';
 			if (!name) return showToast('Pick a preset first', 'warning');
@@ -1340,7 +1014,6 @@ export class Table {
 		};
 
 		const downloadPreset = () => {
-			// ✅ Arrow function
 			const sel = byId('presetUserSelect');
 			const name = sel?.value || '';
 			if (!name) return showToast('Pick a preset first', 'warning');
@@ -1362,7 +1035,6 @@ export class Table {
 		};
 
 		const uploadPreset = () => {
-			// ✅ Arrow function
 			const input = byId('presetFileInput');
 			if (!input) return;
 			input.value = '';
@@ -1376,72 +1048,91 @@ export class Table {
 			reader.onload = () => {
 				try {
 					const parsed = JSON.parse(String(reader.result || '{}'));
-					if (!parsed?.grid) return showToast('Invalid preset file', 'danger');
+					if (!parsed?.gridState && !parsed?.grid) {
+						return showToast('Invalid preset file: missing grid state', 'danger');
+					}
 					const name = prompt(
 						'Name to save this preset as:',
 						parsed.name || file.name.replace(/\.json$/i, '')
 					);
 					if (!name) return;
 					const bag = readPresets();
-					bag[name] = { ...parsed, name, importedAt: Date.now() };
+					bag[name] = {
+						...parsed,
+						name,
+						importedAt: Date.now(),
+						gridState: parsed.gridState || parsed.grid,
+					};
 					writePresets(bag);
 					refreshPresetUserSelect();
 					const sel = byId('presetUserSelect');
 					if (sel) sel.value = name;
 					applyPresetUser(name);
-				} catch {
+				} catch (err) {
+					console.error(err);
 					showToast('Failed to read JSON', 'danger');
 				}
 			};
 			reader.readAsText(file, 'utf-8');
 		});
 
-		const LS_KEY_SIZE_MODE = 'lion.aggrid.sizeMode';
-		const applySizeMode = (mode) => {
-			// ✅ Arrow function
-			const api = (globalThis.LionGrid || {}).api;
-			if (!api) return;
-			try {
-				if (mode === 'auto') {
-					const all = api.getColumns()?.map((c) => c.getColId()) || [];
-					api.autoSizeColumns(all, false);
-				} else api.sizeColumnsToFit();
-			} catch {}
-		};
-
-		const getSizeMode = () => {
-			// ✅ Arrow function
-			const v = localStorage.getItem(LS_KEY_SIZE_MODE);
-			return v === 'auto' ? 'auto' : 'fit';
-		};
-
-		const setSizeMode = (mode) => {
-			// ✅ Arrow function
-			localStorage.setItem(LS_KEY_SIZE_MODE, mode);
-		};
-
+		// Inicializa o listener do toggle de tamanho
 		(function initSizeModeToggle() {
 			const el = byId('colSizeModeToggle');
 			if (!el) return;
-			const mode = getSizeMode();
-			el.checked = mode === 'auto';
-			applySizeMode(mode);
+			// Não aplicamos aqui, deixamos o lionGridReady aplicar o estado inicial
 			el.addEventListener('change', () => {
 				const next = el.checked ? 'auto' : 'fit';
-				setSizeMode(next);
+				tableInstance._setSizeMode(next);
 				applySizeMode(next);
 				showToast(next === 'auto' ? 'Mode: Auto Size' : 'Mode: Size To Fit', 'info');
 			});
-			window.addEventListener('resize', () => applySizeMode(getSizeMode()));
+			window.addEventListener('resize', () => applySizeMode(tableInstance._getSizeMode()));
+		})();
+
+		(function initQuickFilter() {
+			const input = document.getElementById('quickFilter');
+			if (!input) return;
+			try {
+				input.setAttribute('accesskey', 'k');
+			} catch {}
+
+			window.addEventListener(
+				'keydown',
+				(e) => {
+					const tag = e.target?.tagName?.toLowerCase?.() || '';
+					const isEditable =
+						tag === 'input' || tag === 'textarea' || e.target?.isContentEditable;
+					if (isEditable) return;
+					const key = String(e.key || '').toLowerCase();
+					if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && key === 'k') {
+						e.preventDefault();
+						input.focus();
+						input.select?.();
+					}
+				},
+				{ capture: true }
+			);
+
+			let t = null;
+			input.addEventListener('input', () => {
+				clearTimeout(t);
+				t = setTimeout(() => {
+					const val = input.value.trim();
+					GLOBAL_QUICK_FILTER = val;
+					const api = tableInstance.api;
+					if (api) refreshSSRM(api);
+				}, 250);
+			});
+			if (input.value) GLOBAL_QUICK_FILTER = input.value.trim();
 		})();
 
 		byId('btnResetLayout')?.addEventListener('click', resetLayout);
+
 		byId('presetUserSelect')?.addEventListener('change', (e) => {
 			const v = e.target.value;
 			if (!v) {
 				resetLayout();
-				localStorage.removeItem(LS_KEY_ACTIVE_PRESET);
-				refreshPresetUserSelect();
 				return;
 			}
 			applyPresetUser(v);
@@ -1449,15 +1140,16 @@ export class Table {
 
 		byId('btnAddCalcCol')?.addEventListener('click', () => {
 			try {
-				tableInstance.calc.openQuickBuilder(); // ✅ Usa tableInstance
+				const btn = byId('btnCalcCols');
+				if (btn) btn.click();
 			} catch (e) {
 				console.warn(e);
 			}
 		});
-
 		byId('btnManageCalcCols')?.addEventListener('click', () => {
 			try {
-				tableInstance.calc.manage(); // ✅ Usa tableInstance
+				const btn = byId('btnCalcCols');
+				if (btn) btn.click();
 			} catch (e) {
 				console.warn(e);
 			}
@@ -1470,23 +1162,50 @@ export class Table {
 
 		refreshPresetUserSelect();
 
+		// === Listener Principal da Grid ===
 		globalThis.addEventListener('lionGridReady', () => {
 			const activePreset = localStorage.getItem(LS_KEY_ACTIVE_PRESET);
+
 			if (activePreset) {
 				const bag = readPresets();
 				const p = bag[activePreset];
-				if (p?.grid) {
-					setState(p.grid, ['pagination', 'scroll', 'rowSelection', 'focusedCell']);
+				const stateToLoad = p?.gridState || p?.grid;
+
+				if (stateToLoad) {
+					setState(stateToLoad, ['pagination', 'scroll', 'rowSelection', 'focusedCell']);
 					console.log(`[Preset] Auto-applied: "${activePreset}"`);
+					setTimeout(syncTogglesUI, 100);
 				}
 			} else {
-				const api = globalThis.LionGrid?.api;
+				const api = this.api;
 				if (api) {
 					try {
+						// Estado Default (Sem Preset)
 						api.setState({}, []);
 						api.resetColumnState?.();
 						api.setFilterModel?.(null);
 						api.setSortModel?.([]);
+
+						// Força Estados Default
+						setTimeout(() => {
+							console.log('[LionGrid] Forcing initial state...');
+
+							// 1. Force Pinned Checkbox & Logic
+							const pinToggle = byId('pinToggle');
+							if (pinToggle) pinToggle.checked = true;
+							tableInstance._setPinnedState(true);
+							tableInstance.togglePinnedColsFromCheckbox(true);
+
+							// 2. Force Size Checkbox & Logic
+							const sizeToggle = byId('colSizeModeToggle');
+							if (sizeToggle) sizeToggle.checked = false; // Fit
+							tableInstance._setSizeMode('fit');
+							applySizeMode('fit');
+
+							// Sync final
+							syncTogglesUI();
+						}, 50);
+
 						console.log('[Preset] Complete initialization applied - no active preset');
 					} catch (e) {
 						console.warn('[Preset] Failed to apply complete initialization:', e);
@@ -1495,7 +1214,7 @@ export class Table {
 			}
 		});
 
-		globalThis.LionGrid = Object.assign(globalThis.LionGrid || {}, {
+		Object.assign(this, {
 			getState,
 			setState,
 			resetLayout,
@@ -1503,17 +1222,11 @@ export class Table {
 			applyPresetUser,
 		});
 	}
-	_applySizeMode(mode) {
-		const api = this.api || globalThis.LionGrid?.api;
-		if (!api) return;
-		try {
-			if (mode === 'auto') {
-				const all = api.getColumns?.()?.map((c) => c.getColId()) || [];
-				api.autoSizeColumns?.(all, false);
-			} else {
-				api.sizeColumnsToFit?.();
-			}
-		} catch {}
+	setParentRowLoading(api, parentId, on) {
+		if (!api || !parentId) return;
+		const node = api.getRowNode(parentId);
+		if (!node || !node.data) return;
+		node.data.__rowLoading = !!on;
 	}
 	_getPinnedState() {
 		const LS_KEY_PINNED_STATE = 'lion.aggrid.pinnedState';
@@ -1541,6 +1254,7 @@ export class Table {
 		if (!el) return;
 		if (!el.hasAttribute('data-init-bound')) {
 			el.checked = true;
+			// O FIX: garante que o 'this' seja a classe Table
 			el.addEventListener('change', () => this.togglePinnedColsFromCheckbox(false));
 			el.setAttribute('data-init-bound', '1');
 		}
@@ -1553,29 +1267,55 @@ export class Table {
 	togglePinnedColsFromCheckbox(silent = false) {
 		const api = this.api;
 		if (!api) return;
-		const el = document.getElementById('pinToggle');
-		if (!el) return;
-		const checked = !!el.checked;
 
-		// ✅ SALVAR ESTADO
+		const el = document.getElementById('pinToggle');
+		// Se o elemento não existir, tenta ler do state ou assume true
+		const checked = el ? !!el.checked : this._getPinnedState();
+
 		this._setPinnedState(checked);
 
-		const selectionColId = this.getSelectionColId(api);
+		// Pega o ID da coluna de seleção
+		const selectionColId = this.getSelectionColId() || 'ag-Grid-SelectionColumn';
+
+		// Define a ordem EXATA que você quer na esquerda
+		// A ordem do array dita a ordem visual quando applyOrder: true
 		const leftPins = [
-			{ colId: 'ag-Grid-SelectionColumn', pinned: checked ? 'left' : null },
+			// 1. Seleção SEMPRE primeiro
+			{ colId: selectionColId, pinned: checked ? 'left' : null },
+			// 2. Campanha (Auto Group) em segundo
+			{ colId: 'campaign', pinned: checked ? 'left' : null },
+			// (Adicionando fallback para garantir compatibilidade com versões antigas de cache)
 			{ colId: 'ag-Grid-AutoColumn', pinned: checked ? 'left' : null },
+			// 3. Profile em terceiro
 			{ colId: 'profile_name', pinned: checked ? 'left' : null },
 		];
-		if (selectionColId) leftPins.push({ colId: selectionColId, pinned: checked ? 'left' : null });
+
 		const rightPins = [
 			{ colId: 'spent', pinned: checked ? 'right' : null },
 			{ colId: 'revenue', pinned: checked ? 'right' : null },
 			{ colId: 'mx', pinned: checked ? 'right' : null },
 			{ colId: 'profit', pinned: checked ? 'right' : null },
 		];
-		api.applyColumnState({ state: [...leftPins, ...rightPins], defaultState: { pinned: null } });
-		if (!silent)
+
+		// O segredo está aqui: applyOrder: true
+		api.applyColumnState({
+			state: [...leftPins, ...rightPins],
+			defaultState: { pinned: null },
+			applyOrder: true,
+		});
+
+		// Garantia extra: Move explicitamente a seleção para o índice 0
+		if (checked) {
+			try {
+				api.moveColumn(selectionColId, 0);
+			} catch (e) {}
+		}
+
+		if (!silent && el) {
+			// Sincroniza o checkbox visualmente caso a função tenha sido chamada via código
+			el.checked = checked;
 			showToast(checked ? 'Columns Pinned' : 'Columns Unpinned', checked ? 'success' : 'info');
+		}
 	}
 
 	initModalClickEvents() {
@@ -1585,7 +1325,6 @@ export class Table {
 		el.addEventListener(
 			'click',
 			(e) => {
-				// só fecha se o clique for no fundo (e não no conteúdo interno)
 				if (e.target.id !== 'calcColsModal') return;
 
 				try {
@@ -1627,12 +1366,16 @@ export class Table {
 		);
 	}
 
-	getSelectionColId(api) {
+	getSelectionColId() {
+		const api = this.api;
+		if (!api) return null;
 		try {
-			const selectionColumn = this.selectionColumn;
 			const cols = api.getColumns() || [];
 			const ids = cols.map((c) => c.getColId());
-			if (ids.includes(selectionColumn)) return selectionColumn;
+			// Verifica ID legado
+			if (ids.includes('ag-Grid-Selection')) return 'ag-Grid-Selection';
+
+			// Busca dinâmica por checkbox
 			const found = cols.find(
 				(c) => c.getColDef()?.headerCheckboxSelection || c.getColDef()?.checkboxSelection
 			);
@@ -1651,21 +1394,18 @@ export class Table {
 		if (!modal) return;
 
 		function hideModal() {
-			// Prefer KT if present
 			try {
 				if (window.KT?.Modal?.getOrCreateInstance) {
 					window.KT.Modal.getOrCreateInstance(modal).hide();
 					return;
 				}
 			} catch {}
-			// Fallback manual
 			modal.style.display = 'none';
 			modal.classList.add('hidden');
 			modal.classList.remove('kt-modal--open');
 			modal.setAttribute('aria-hidden', 'true');
 		}
 
-		// Wire both the "Close" button and the X icon
 		const closeBtns = modal.querySelectorAll(
 			'[data-kt-modal-dismiss="#calcColsModal"], .kt-modal-close'
 		);
@@ -1705,8 +1445,6 @@ export class Table {
 .ag-cell.lion-cell-error .lion-editable-val{ color: #ef4444; font-weight: 600; }
 .ag-cell.lion-cell-error.ag-cell-focus, .ag-cell.lion-cell-error:hover{ background: rgba(239, 68, 68, 0.18); box-shadow: inset 0 0 0 1px rgba(239,68,68,.5); }
 
-/* ===== Centralização real para células que podem quebrar linha ===== */
-/* 1) Remove o viés de -1px do tema nas colunas marcadas como 'lion-center-cell' */
 .ag-theme-quartz :where(.ag-ltr) .ag-center-cols-container
   .ag-cell.lion-center-cell:not(.ag-cell-inline-editing):not([col-id="ag-Grid-AutoColumn"]):not([col-id="campaign"]) {
   padding-left: var(--ag-cell-horizontal-padding) !important;
@@ -1714,22 +1452,20 @@ export class Table {
   display: flex;
   align-items: center;
   justify-content: center;
-  text-align: center;      /* texto multi-linha centraliza */
+  text-align: center;
 }
 
-/* 2) Faz os wrappers ocuparem a largura toda */
 .ag-theme-quartz .ag-center-cols-container
   .ag-cell.lion-center-cell:not(.ag-cell-inline-editing) .ag-cell-wrapper {
   width: 100%;
 }
 
-/* 3) Garante que o conteúdo (quebrando linha) centralize */
 .ag-theme-quartz .ag-center-cols-container
   .ag-cell.lion-center-cell:not(.ag-cell-inline-editing) .ag-cell-value {
-  display: block;          /* evita inline-size encolhendo */
-  width: 100%;             /* ocupa a célula toda */
-  text-align: center;      /* linhas quebradas centralizadas */
-  white-space: normal;     /* habilita wrap */
+  display: block;
+  width: 100%;
+  text-align: center;
+  white-space: normal;
   word-break: break-word;
   overflow-wrap: anywhere;
 }
@@ -1740,7 +1476,6 @@ export class Table {
 		document.head.appendChild(el);
 	}
 
-	// Agora você chama manualmente quando quiser:
 	normalizeCampaignRow(r) {
 		const label = stripHtml(r.campaign_name || '(no name)');
 		const utm = String(r.utm_campaign || r.id || '');
@@ -1773,7 +1508,6 @@ export class Table {
 				let av = a[colId],
 					bv = b[colId];
 
-				// status custom
 				if (colId === 'account_status' || colId === 'campaign_status' || colId === 'status') {
 					const ai = orderStatus.indexOf(String(av ?? '').toUpperCase());
 					const bi = orderStatus.indexOf(String(bv ?? '').toUpperCase());
@@ -1784,7 +1518,6 @@ export class Table {
 					continue;
 				}
 
-				// revenue: pega primeiro número da string
 				if (colId === 'revenue') {
 					const an = frontToNumberFirst(av);
 					const bn = frontToNumberFirst(bv);
@@ -1795,7 +1528,6 @@ export class Table {
 					continue;
 				}
 
-				// padrão: numérico se possível, senão texto
 				const an = frontToNumberBR(av);
 				const bn = frontToNumberBR(bv);
 				const bothNum = an != null && bn != null;
@@ -1826,7 +1558,6 @@ export class Table {
 					field === 'ag-Grid-AutoColumn' ||
 					field.startsWith('ag-Grid-AutoColumn');
 
-				// CAMPANHA (nome + UTM)
 				if (isCampaignCol) {
 					const comp = String(f.type || 'contains');
 					const needle = String(f.filter ?? '').toLowerCase();
@@ -1853,7 +1584,6 @@ export class Table {
 					};
 				}
 
-				// includes / excludes (lista)
 				if (ft === 'includes' && Array.isArray(f.values)) {
 					const set = new Set(f.values.map((v) => String(v).toLowerCase()));
 					return (r) => set.has(String(r[field] ?? '').toLowerCase());
@@ -1863,7 +1593,6 @@ export class Table {
 					return (r) => !set.has(String(r[field] ?? '').toLowerCase());
 				}
 
-				// texto (genérico)
 				if (ft === 'text') {
 					const comp = String(f.type || 'contains');
 					const needle = String(f.filter ?? '').toLowerCase();
@@ -1888,7 +1617,6 @@ export class Table {
 					};
 				}
 
-				// number
 				if (ft === 'number') {
 					const comp = String(f.type || 'equals');
 					const val = Number(f.filter);
@@ -1932,12 +1660,10 @@ export class Table {
 		});
 	}
 	computeClientTotals(rows) {
-		// Garante que existam as funções auxiliares, usando fallback
 		const sum = this.sumNum || sumNum;
 		const num = this.numBR || numBR;
 		const div = this.safeDiv || safeDiv;
 
-		// Cálculos principais
 		const spent_sum = sum(rows, (r) => num(r.spent));
 		const fb_revenue_sum = sum(rows, (r) => num(r.fb_revenue));
 		const push_revenue_sum = sum(rows, (r) => num(r.push_revenue));
@@ -1983,9 +1709,6 @@ export class Table {
 		};
 	}
 
-	/**
-	 * Reseta o layout da grid para o padrão
-	 */
 	resetLayout() {
 		if (!this.api) {
 			console.warn('[LionGrid] API não inicializada');
@@ -2007,16 +1730,10 @@ export class Table {
 		}
 	}
 
-	/**
-	 * Retorna a API do AG-Grid
-	 */
 	getApi() {
 		return this.api;
 	}
 
-	/**
-	 * Salva o estado atual da grid
-	 */
 	saveState() {
 		if (!this.api) return;
 
@@ -2028,9 +1745,6 @@ export class Table {
 		}
 	}
 
-	/**
-	 * Restaura o estado salvo da grid
-	 */
 	restoreState() {
 		if (!this.api) return;
 
@@ -2068,7 +1782,7 @@ export class Table {
 	}
 
 	showKTModal({ title = 'Details', content = '' } = {}) {
-		this.ensureKtModalDom(); // ✅ Adicionado this.
+		this.ensureKtModalDom();
 		const modal = document.querySelector('#lionKtModal');
 		if (!modal) return;
 
@@ -2111,7 +1825,6 @@ export class Table {
 		});
 	}
 
-	// Este método agora inclui: listeners dos selects, renderList, readForm, clearForm, save/load, etc.
 	CalcColsPopulate() {
 		const $ = (sel) => document.querySelector(sel);
 		const $col1 = document.getElementById('cc-col1');
@@ -2495,23 +2208,57 @@ export class Table {
 			}
 		}
 
+		// Adicionado listener de Save que estava faltando na versão da classe,
+		// mas presente na IIFE removida
 		saveBtn?.addEventListener('click', (e) => {
 			e.preventDefault();
+
 			const cfg = readForm();
 			if (!cfg) return;
 			if (!cfg.id || !cfg.expression) {
 				showToast('ID and Expression are required', 'danger');
 				return;
 			}
+
 			try {
 				const ok = this.calc.add(cfg);
-				if (ok) {
-					clearForm();
-					renderList();
+				if (!ok) return;
+
+				try {
 					modalHide('#calcColsModal');
+				} catch {}
+
+				const api = this.api;
+				if (api) {
+					try {
+						api.ensureColumnVisible(cfg.id, 'auto');
+					} catch {}
+					try {
+						api.refreshHeader?.();
+					} catch {}
+					try {
+						api.redrawRows?.();
+					} catch {}
+
+					try {
+						refreshSSRM(api);
+					} catch {}
+
+					setTimeout(() => {
+						try {
+							api.sizeColumnsToFit?.();
+						} catch {}
+						try {
+							api.resetRowHeights?.();
+						} catch {}
+					}, 50);
 				}
-			} catch (e) {
-				console.warn(e);
+
+				renderList();
+				showToast('Calculated column saved and applied!', 'success');
+			} catch (err) {
+				showToast('Failed to save column ', 'danger');
+				console.warn(err);
 			}
 		});
 
@@ -2533,8 +2280,24 @@ export class Table {
 
 		reloadBtn?.addEventListener('click', (e) => {
 			e.preventDefault();
-			populateColumnSelects();
-			renderList();
+			// FIX: Adicionado tratamento de erro e feedback visual
+			const originalText = reloadBtn.innerHTML;
+			reloadBtn.disabled = true;
+			reloadBtn.style.opacity = '0.7';
+
+			try {
+				// Tenta repopular
+				populateColumnSelects();
+				renderList();
+			} catch (err) {
+				console.error(err);
+			} finally {
+				setTimeout(() => {
+					reloadBtn.innerHTML = originalText;
+					reloadBtn.disabled = false;
+					reloadBtn.style.opacity = '1';
+				}, 600);
+			}
 		});
 	}
 
@@ -2560,6 +2323,10 @@ export class Table {
 			return null;
 		}
 		this.gridDiv.classList.add('ag-theme-quartz');
+
+		// [OTIMIZAÇÃO 1] Cache local para evitar acesso ao 'this' dentro do loop quente do getRowHeight
+		const WRAP_FIELDS_LOCAL = this.WRAP_FIELDS;
+		const tableInstance = this; // Captura referência estável da classe
 
 		const autoGroupColumnDef = {
 			headerName: 'Campaign',
@@ -2619,7 +2386,8 @@ export class Table {
 				return (name + ' ' + utm).trim();
 			},
 		};
-		// ===== [1] Medidor offscreen (singleton) =====
+
+		// [HELPERS LOCAIS DE LAYOUT]
 		const _rowHeightMeasure = (() => {
 			let box = null;
 			return {
@@ -2654,43 +2422,45 @@ export class Table {
 			};
 		})();
 
-		// ===== [2] Largura útil da coluna autoGroup =====
 		function getAutoGroupContentWidth(api) {
 			try {
-				const col =
-					api.getColumn('campaign') ||
-					api.getDisplayedCenterColumns().find((c) => c.getColId?.() === 'campaign');
+				const col = api.getColumn('campaign');
 				if (!col) return 300;
-				api.getDisplayedColAfter?.(col);
 				const colW = col.getActualWidth();
-				const padding = 16;
-				const iconArea = 28;
-				return Math.max(40, colW - padding - iconArea);
+				// 44 = padding(16) + icon(28)
+				return Math.max(40, colW - 44);
 			} catch {
 				return 300;
 			}
 		}
 
-		// ===== [2.1] Largura útil de QUALQUER coluna folha =====
 		function getFieldContentWidth(api, field) {
 			try {
 				const col = api.getColumn(field);
 				if (!col) return null;
 				const w = col.getActualWidth?.();
-				if (!w || !Number.isFinite(w)) return null;
-				const horizontalPadding = 12;
-				return Math.max(0, w - horizontalPadding);
+				return w && Number.isFinite(w) ? Math.max(0, w - 12) : null;
 			} catch {
 				return null;
 			}
 		}
 
-		// ===== [3] Texto que realmente aparece na célula por campo =====
+		// Função local para evitar chamar this.getCellTextForField repetidamente
+		function getCellTextLocal(p, field) {
+			const d = p?.data || {};
+			if (field === 'campaign') {
+				if ((p?.node?.level ?? 0) !== 0) return String(d.__label || '');
+				const label = String(d.__label || '');
+				const utm = String(d.utm_campaign || '');
+				return utm ? `${label}\n${utm}` : label;
+			}
+			if (field === 'bc_name') {
+				return String(d.bc_name || '');
+			}
+			return String(d[field] ?? '');
+		}
 
-		// ===== [4] Cache simples por rowId + largura =====
 		const _rowHCache = new Map();
-
-		// ===== [5] getRowHeight dinâmico por nº de linhas =====
 		const BASE_ROW_MIN = 50;
 		const VERT_PAD = 12;
 
@@ -2737,31 +2507,32 @@ export class Table {
 			},
 
 			rowHeight: BASE_ROW_MIN,
+
+			// [OTIMIZAÇÃO 2] getRowHeight sem 'this' e com cache de largura
 			getRowHeight: (p) => {
 				const widthBag = {};
+				// Otimização: Tenta pegar larguras críticas primeiro
 				widthBag.campaign = getAutoGroupContentWidth(p.api);
-				const bmW = getFieldContentWidth(p.api, 'bc_name');
-				if (bmW != null) widthBag.bc_name = bmW;
+				// Apenas calcula bc_name se ele estiver na lista de wraps
+				if (WRAP_FIELDS_LOCAL.includes('bc_name')) {
+					const bmW = getFieldContentWidth(p.api, 'bc_name');
+					if (bmW != null) widthBag.bc_name = bmW;
+				}
 
+				// Key simplificada para velocidade
 				const key =
-					(p?.node?.id ||
-						(p?.node?.data?.__nodeType === 'campaign'
-							? `c:${p?.node?.data?.__groupKey}`
-							: p?.node?.data?.__nodeType === 'adset'
-							? `s:${p?.node?.data?.__groupKey}`
-							: p?.node?.data?.id || Math.random())) +
+					(p.node.id || Math.random()) +
 					'|' +
-					Object.entries(widthBag)
-						.map(([k, v]) => `${k}:${Math.round(v || 0)}`)
-						.join('|');
+					(widthBag.campaign + ':' + (widthBag.bc_name || 0));
 
 				if (_rowHCache.has(key)) return _rowHCache.get(key);
 
 				let maxTextH = 0;
-				for (const field of this.WRAP_FIELDS) {
+				// Loop sobre array local (rápido)
+				for (const field of WRAP_FIELDS_LOCAL) {
 					const w = widthBag[field];
 					if (!w) continue;
-					const text = this.getCellTextForField(p, field);
+					const text = getCellTextLocal(p, field);
 					const textH = _rowHeightMeasure.measure(text, w);
 					if (textH > maxTextH) maxTextH = textH;
 				}
@@ -2801,6 +2572,7 @@ export class Table {
 			},
 			theme: this.createAgTheme(),
 
+			// --- Context Menu ---
 			getContextMenuItems: (params) => {
 				const d = params.node?.data || {};
 				const colId = params.column?.getColDef?.().colId ?? params.column?.colId;
@@ -2919,13 +2691,12 @@ export class Table {
 				return items;
 			},
 
+			// --- Cell Click ---
 			onCellClicked: (params) => {
 				const node = params.node;
 				const eventTarget = params.event?.target;
 
-				if (node?.data?.__rowLoading) {
-					return;
-				}
+				if (node?.data?.__rowLoading) return;
 
 				if (node.group) {
 					const clickedExpanderOrCheckbox = !!eventTarget?.closest?.(
@@ -3020,9 +2791,8 @@ export class Table {
 						display = String(val);
 					}
 				}
-
 				const title = params.colDef?.headerName || 'Details';
-				this.showKTModal({ title: 'Details', content: display || '(empty)' });
+				this.showKTModal({ title, content: display || '(empty)' });
 			},
 
 			onGridReady: (params) => {
@@ -3030,6 +2800,7 @@ export class Table {
 				this.api = params.api;
 				this.columnApi = params.columnApi;
 				this.composite?.initGridApi(this.api, this.columnApi);
+
 				const dataSource = {
 					getRows: async (req) => {
 						try {
@@ -3152,7 +2923,7 @@ export class Table {
 									}
 								}
 
-								setParentRowLoading(apiTarget, parentId, true);
+								tableInstance.setParentRowLoading(apiTarget, parentId, true);
 
 								const qs = new URLSearchParams({
 									campaign_id: campaignId,
@@ -3177,7 +2948,7 @@ export class Table {
 
 								req.success({ rowData: rows, rowCount: data.lastRow ?? rows.length });
 
-								setParentRowLoading(apiTarget, parentId, false);
+								tableInstance.setParentRowLoading(apiTarget, parentId, false);
 								return;
 							}
 
@@ -3195,7 +2966,7 @@ export class Table {
 									}
 								}
 
-								setParentRowLoading(apiTarget, parentId, true);
+								tableInstance.setParentRowLoading(apiTarget, parentId, true);
 
 								const qs = new URLSearchParams({
 									adset_id: adsetId,
@@ -3219,7 +2990,7 @@ export class Table {
 
 								req.success({ rowData: rows, rowCount: data.lastRow ?? rows.length });
 
-								setParentRowLoading(apiTarget, parentId, false);
+								tableInstance.setParentRowLoading(apiTarget, parentId, false);
 								return;
 							}
 
@@ -3243,33 +3014,28 @@ export class Table {
 					} catch {}
 				}, 0);
 
+				// [OTIMIZAÇÃO 3] Inicialização em LOTE antes do evento global
 				setTimeout(() => {
-					globalThis.dispatchEvent(new CustomEvent('lionGridReady'));
-
-					// ✅ Ativar composite SOMENTE quando API está pronta
 					try {
-						this.composite.activate();
-						console.log('[GridReady] Composite columns activated');
+						this.calc?.activateAll?.(); // Ativa tudo de uma vez
+						console.log('[GridReady] Calculated columns batch activated');
 					} catch (e) {
-						console.warn('[GridReady] Erro ao ativar composite:', e);
+						console.warn('[GridReady] Erro ao ativar calc columns:', e);
 					}
+
+					globalThis.dispatchEvent(new CustomEvent('lionGridReady'));
 				}, 100);
 			},
 		};
 
-		const apiOrInstance =
-			typeof AG.createGrid === 'function'
-				? AG.createGrid(this.gridDiv, gridOptions)
-				: new AG.Grid(this.gridDiv, gridOptions);
+		typeof AG.createGrid === 'function'
+			? AG.createGrid(this.gridDiv, gridOptions)
+			: new AG.Grid(this.gridDiv, gridOptions);
 
 		this._bindPinnedToggle();
 
 		return { api: this.api, gridDiv: this.gridDiv };
 	}
-
-	/**
-	 * Destrói a grid e limpa recursos
-	 */
 	destroy() {
 		if (this.api) {
 			this.saveState();
