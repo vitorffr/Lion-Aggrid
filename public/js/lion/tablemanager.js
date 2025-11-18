@@ -62,48 +62,6 @@ function refreshSSRM(api) {
 		api.onFilterChanged();
 	}
 }
-(function setupGlobalQuickFilter() {
-	function focusQuickFilter() {
-		const input = document.getElementById('quickFilter');
-		if (!input) return;
-		input.focus();
-		input.select?.();
-	}
-	function applyGlobalFilter(val) {
-		GLOBAL_QUICK_FILTER = String(val || '');
-		const api = globalThis.LionGrid?.api;
-		if (!api) return;
-		refreshSSRM(api);
-	}
-	function init() {
-		const input = document.getElementById('quickFilter');
-		if (!input) return;
-		try {
-			input.setAttribute('accesskey', 'k');
-		} catch {}
-		let t = null;
-		input.addEventListener('input', () => {
-			clearTimeout(t);
-			t = setTimeout(() => applyGlobalFilter(input.value.trim()), 250);
-		});
-		if (input.value) applyGlobalFilter(input.value.trim());
-	}
-	window.addEventListener(
-		'keydown',
-		(e) => {
-			const tag = e.target?.tagName?.toLowerCase?.() || '';
-			const editable = tag === 'input' || tag === 'textarea' || e.target?.isContentEditable;
-			if (editable) return;
-			const key = String(e.key || '').toLowerCase();
-			if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && key === 'k') {
-				e.preventDefault();
-				focusQuickFilter();
-			}
-		},
-		{ capture: true }
-	);
-	globalThis.addEventListener('lionGridReady', init);
-})();
 
 function buildFilterModelWithGlobal(baseFilterModel) {
 	const fm = { ...(baseFilterModel || {}) };
@@ -136,9 +94,8 @@ export class Table {
 
 				// Calc Columns Modal & Botões
 				modalCalcCols: opts.selectors?.modalCalcCols || '#calcColsModal',
-				btnAddCalcCol: opts.selectors?.btnAddCalcCol || '#btnAddCalcCol',
+				btnAddCalcCol: opts.selectors?.btnAddCalcCol || '#btnCalcCols',
 				btnManageCalcCols: opts.selectors?.btnManageCalcCols || '#btnManageCalcCols',
-
 				// Campos internos do Modal (IDs sem # se preferir, mas aqui assumo seletores)
 				ccCol1: opts.selectors?.ccCol1 || '#cc-col1',
 				ccCol2: opts.selectors?.ccCol2 || '#cc-col2',
@@ -579,8 +536,6 @@ export class Table {
 
 	init() {
 		this.ensureLoadingStyles();
-		this.bindCalcColsModalClose();
-		this.initModalClickEvents();
 		this.initModalEvents();
 		this.CalcColsPopulate();
 		this.setupToolbar();
@@ -921,7 +876,32 @@ export class Table {
 
 		Object.assign(this, { getState, setState, resetLayout, saveAsPreset, applyPresetUser });
 	}
+	_setupQuickFilter() {
+		const input = this._el('quickFilter');
+		if (!input) return;
 
+		// 1. Atalho de Teclado (Ctrl+K / Cmd+K)
+		this._quickFilterKeyHandler = (e) => {
+			const tag = e.target?.tagName?.toLowerCase?.() || '';
+			const editable = tag === 'input' || tag === 'textarea' || e.target?.isContentEditable;
+			if (editable) return;
+
+			const key = String(e.key || '').toLowerCase();
+			if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && key === 'k') {
+				e.preventDefault();
+				input.focus();
+				input.select?.();
+			}
+		};
+		window.addEventListener('keydown', this._quickFilterKeyHandler, { capture: true });
+
+		// 2. Lógica de Input (Já existente no setupToolbar, mas reforçamos o foco inicial se tiver valor)
+		if (input.value) {
+			GLOBAL_QUICK_FILTER = String(input.value || '').trim();
+			// Se a API já estiver pronta, aplica. Se não, o onGridReady pega depois.
+			if (this.api) refreshSSRM(this.api);
+		}
+	}
 	_getPinnedState() {
 		const v = localStorage.getItem(this.config.storageKeys.pinnedState);
 		return v === 'false' ? false : true;
@@ -996,11 +976,125 @@ export class Table {
 		}
 	}
 	CalcColsPopulate() {
+		// ============================================================
+		// 1. PREPARAÇÃO E ESTADO
+		// ============================================================
 		const $col1 = this._el('ccCol1');
 		const $col2 = this._el('ccCol2');
 		const $reload = this._el('ccReload');
 		let lastSelection = { col1: null, col2: null };
 
+		// ============================================================
+		// 2. FUNÇÕES DO MODAL (VISUAL NATIVO)
+		// ============================================================
+
+		// Cria o fundo preto IDÊNTICO ao nativo (Bootstrap/Metronic)
+		const ensureBackdrop = () => {
+			if (!document.querySelector('.modal-backdrop')) {
+				const bd = document.createElement('div');
+				bd.className = 'modal-backdrop fade show'; // Classes padrão
+
+				// CSS inline para garantir o visual exato
+				bd.style.cssText = `
+					position: fixed;
+					top: 0;
+					left: 0;
+					width: 100vw;
+					height: 100vh;
+					z-index: 1050;
+					background-color: #000 !important; /* Preto Sólido */
+					opacity: 0.5 !important;           /* Intensidade Padrão (Ajuste para 0.6 ou 0.7 se quiser mais escuro) */
+					transition: opacity 0.15s linear;
+				`;
+				document.body.appendChild(bd);
+			}
+			document.body.classList.add('modal-open');
+		};
+
+		const modalShow = (selector) => {
+			const el = selector ? document.querySelector(selector) : this._el('modalCalcCols');
+			if (!el) return console.error('Modal não encontrado');
+
+			// Limpeza
+			el.classList.remove('hidden');
+			el.style.removeProperty('display');
+			el.setAttribute('aria-hidden', 'false');
+
+			// Tenta via biblioteca
+			let libSuccess = false;
+			try {
+				if (window.KT?.Modal?.getOrCreateInstance) {
+					window.KT.Modal.getOrCreateInstance(el).show();
+					libSuccess = true;
+				} else if (window.bootstrap?.Modal?.getOrCreateInstance) {
+					window.bootstrap.Modal.getOrCreateInstance(el).show();
+					libSuccess = true;
+				}
+			} catch (e) {
+				console.warn('Lib falhou:', e);
+			}
+
+			// GARANTIA VISUAL (Backdrop + Z-Index)
+			setTimeout(
+				() => {
+					// 1. Cria o fundo preto padrão
+					ensureBackdrop();
+
+					// 2. Força o modal para frente
+					el.style.display = 'block';
+					el.style.zIndex = '1055'; // Acima do backdrop (1050)
+					el.style.opacity = '1';
+					el.classList.add('show', 'kt-modal--open');
+				},
+				libSuccess ? 50 : 0
+			);
+		};
+
+		const modalHide = () => {
+			const el = this._el('modalCalcCols');
+			if (!el) return;
+
+			let handled = false;
+			try {
+				if (window.KT?.Modal?.getInstance(el)) {
+					window.KT.Modal.getInstance(el).hide();
+					handled = true;
+				} else if (window.bootstrap?.Modal?.getInstance(el)) {
+					window.bootstrap.Modal.getInstance(el).hide();
+					handled = true;
+				}
+			} catch (e) {}
+
+			// Limpeza Forçada
+			setTimeout(
+				() => {
+					el.classList.add('hidden');
+					el.style.display = 'none';
+					el.classList.remove('show', 'kt-modal--open');
+					el.setAttribute('aria-hidden', 'true');
+
+					// Remove backdrop
+					document.querySelectorAll('.modal-backdrop').forEach((b) => b.remove());
+					document.body.classList.remove('modal-open');
+					document.body.style.overflow = '';
+					document.body.style.paddingRight = '';
+				},
+				handled ? 200 : 50
+			);
+		};
+
+		const handleOpenModal = () => {
+			console.log('[EVENT] handleOpenModal executado');
+			clearForm();
+			populateExpressionSelect();
+			populateColumnSelects();
+			renderList();
+			modalShow();
+		};
+
+		// ============================================================
+		// 3. LÓGICA DO FORMULÁRIO
+		// ============================================================
 		const DEFAULT_OPERATORS = [
 			{ value: 'custom', label: '✎ Custom Expression', template: '' },
 			{
@@ -1036,7 +1130,6 @@ export class Table {
 			},
 		];
 
-		// --- Helpers de Colunas ---
 		const _getSelectableColumns = () => {
 			const api = this.api;
 			if (!api) return [];
@@ -1046,26 +1139,17 @@ export class Table {
 				if (displayed.length)
 					defs = displayed.map((gc) => gc.getColDef?.() || gc.colDef).filter(Boolean);
 			} catch {}
-
 			if (!defs.length) {
-				const columnState = api.getColumnState?.() || [];
-				const viaState = columnState
-					.map((s) => api.getColumn?.(s.colId)?.getColDef?.())
-					.filter(Boolean);
-				if (viaState.length) defs = viaState;
-				else {
-					const flattenColDefs = (arr) => {
-						const out = [];
-						(arr || []).forEach((def) => {
-							if (def?.children?.length) out.push(...flattenColDefs(def.children));
-							else out.push(def);
-						});
-						return out;
-					};
-					defs = flattenColDefs(api.getColumnDefs?.() || []);
-				}
+				const flattenColDefs = (arr) => {
+					const out = [];
+					(arr || []).forEach((def) => {
+						if (def?.children?.length) out.push(...flattenColDefs(def.children));
+						else out.push(def);
+					});
+					return out;
+				};
+				defs = flattenColDefs(api.getColumnDefs?.() || []);
 			}
-
 			const deny = new Set([
 				'ag-Grid-AutoColumn',
 				'ag-Grid-RowGroup',
@@ -1075,16 +1159,11 @@ export class Table {
 			defs = defs.filter((def) => {
 				if (!def) return false;
 				const field = def.field || def.colId;
-				const header = def.headerName || field;
-				if (!field || !header) return false;
-				if (deny.has(field)) return false;
-				if (String(field).startsWith('__')) return false;
+				if (!field || deny.has(field) || String(field).startsWith('__')) return false;
 				if (def.checkboxSelection || def.rowGroup || def.pivot) return false;
-				const h = String(header).toLowerCase();
-				if (h.includes('select') || h.includes('ação') || h.includes('action')) return false;
-				return true;
+				const h = String(def.headerName || field).toLowerCase();
+				return !(h.includes('select') || h.includes('ação') || h.includes('action'));
 			});
-
 			const _isCalculable = (def) => {
 				if (def.calcEligible === true) return true;
 				if (
@@ -1094,16 +1173,13 @@ export class Table {
 				)
 					return true;
 				if (def.type === 'numericColumn' || def.filter === 'agNumberColumnFilter') return true;
-				if (typeof def.valueParser === 'function') return true;
-				return false;
+				return typeof def.valueParser === 'function';
 			};
 			defs = defs.filter(_isCalculable);
-
 			const mapped = defs.map((def) => ({
 				field: String(def.field || def.colId),
 				headerName: String(def.headerName || def.field || def.colId),
 			}));
-
 			const unique = [];
 			const seen = new Set();
 			for (const it of mapped) {
@@ -1119,24 +1195,13 @@ export class Table {
 
 		const _fillSelect = (selectEl, items, keepValue) => {
 			if (!selectEl) return;
-			const current = selectEl.value || null;
-			const desired = keepValue ?? current ?? '';
+			const desired = keepValue ?? selectEl.value ?? '';
 			while (selectEl.options.length) selectEl.remove(0);
-
-			const placeholderText = selectEl.getAttribute('data-kt-select-placeholder') || 'Select';
-			const hasDesired = desired && items.some((it) => it.field === desired);
-
-			const ph = new Option(placeholderText, '');
-			if (!hasDesired) {
-				ph.disabled = true;
-				ph.selected = true;
-			}
+			const ph = new Option('Select', '');
+			if (!desired) ph.selected = true;
 			selectEl.add(ph);
-
-			for (const it of items) {
-				selectEl.add(new Option(`${it.headerName} (${it.field})`, it.field));
-			}
-			if (hasDesired) selectEl.value = desired;
+			for (const it of items) selectEl.add(new Option(`${it.headerName} (${it.field})`, it.field));
+			if (desired) selectEl.value = desired;
 			try {
 				if (window.KT?.Select?.getInstance) window.KT.Select.getInstance(selectEl)?.init();
 			} catch {}
@@ -1145,10 +1210,8 @@ export class Table {
 		const populateColumnSelects = () => {
 			if (!$col1 || !$col2) return;
 			const items = _getSelectableColumns();
-			if (!$col1.value) lastSelection.col1 = lastSelection.col1 || null;
-			else lastSelection.col1 = $col1.value;
-			if (!$col2.value) lastSelection.col2 = lastSelection.col2 || null;
-			else lastSelection.col2 = $col2.value;
+			lastSelection.col1 = $col1.value || null;
+			lastSelection.col2 = $col2.value || null;
 			_fillSelect($col1, items, lastSelection.col1);
 			_fillSelect($col2, items, lastSelection.col2);
 		};
@@ -1158,11 +1221,9 @@ export class Table {
 			const exprInput = this._el('ccExpression');
 			const partsInput = this._el('ccParts');
 			if (!formatSel || !$col1 || !$col2 || !exprInput) return;
-
 			const selectedOp = formatSel.options[formatSel.selectedIndex];
 			const template = selectedOp?.dataset?.template;
 			if (!template || formatSel.value === 'custom') return;
-
 			const val1 = $col1.value;
 			const val2 = $col2.value;
 			if (val1 && val2) {
@@ -1183,7 +1244,6 @@ export class Table {
 			}
 		};
 
-		// === ESTILOS RESTAURADOS (kt-btn) ===
 		const renderList = () => {
 			const list = this._el('ccList');
 			if (!list) return;
@@ -1199,70 +1259,39 @@ export class Table {
 			for (const c of items) {
 				const li = document.createElement('li');
 				li.className = 'flex items-center justify-between p-3 border-b border-gray-800';
-
-				const left = document.createElement('div');
-				left.className = 'min-w-0';
-				left.innerHTML = `
-					<div class="font-medium text-sm">${c.headerName || c.id}</div>
-					<div class="text-xs opacity-60 font-mono mt-1 truncate">${c.expression}</div>
-				`;
-
-				const right = document.createElement('div');
-				right.className = 'flex items-center gap-2';
-
-				// Activate Button (Estilo anterior.js)
-				const btnActivate = document.createElement('button');
-				btnActivate.className = 'kt-btn kt-btn-xs';
-				btnActivate.textContent = 'Activate';
-				btnActivate.type = 'button';
-				btnActivate.addEventListener('click', (e) => {
+				li.innerHTML = `
+					<div class="min-w-0"><div class="font-medium text-sm">${
+						c.headerName || c.id
+					}</div><div class="text-xs opacity-60 font-mono mt-1 truncate">${
+					c.expression
+				}</div></div>
+					<div class="flex items-center gap-2">
+						<button class="kt-btn kt-btn-xs btn-activate">Activate</button>
+						<button class="kt-btn kt-btn-light kt-btn-xs btn-edit">Edit</button>
+						<button class="kt-btn kt-btn-danger kt-btn-xs btn-del">Remove</button>
+					</div>`;
+				li.querySelector('.btn-activate').addEventListener('click', (e) => {
 					e.preventDefault();
-					e.stopPropagation();
 					this.calc.add(c);
 				});
-
-				// Edit Button (Estilo anterior.js)
-				const btnEdit = document.createElement('button');
-				btnEdit.className = 'kt-btn kt-btn-light kt-btn-xs';
-				btnEdit.textContent = 'Edit';
-				btnEdit.type = 'button';
-				btnEdit.addEventListener('click', (e) => {
+				li.querySelector('.btn-edit').addEventListener('click', (e) => {
 					e.preventDefault();
-					e.stopPropagation();
-					const idEl = this._el('ccId');
-					if (idEl) idEl.value = c.id;
-					const hEl = this._el('ccHeader');
-					if (hEl) hEl.value = c.headerName;
-					const tEl = this._el('ccType');
-					if (tEl) tEl.value = c.format;
-					const eEl = this._el('ccExpression');
-					if (eEl) eEl.value = c.expression;
-					const pEl = this._el('ccParts');
-					if (pEl) pEl.value = JSON.stringify(c.parts || []);
-					const oEl = this._el('ccOnlyLevel0');
-					if (oEl) oEl.checked = !!c.onlyLevel0;
-					const aEl = this._el('ccAfter');
-					if (aEl) aEl.value = c.after || 'Revenue';
-					const mEl = this._el('ccMini');
-					if (mEl) mEl.checked = !!c.mini;
+					this._el('ccId').value = c.id || '';
+					this._el('ccHeader').value = c.headerName || '';
+					this._el('ccType').value = c.format || 'currency';
+					this._el('ccExpression').value = c.expression || '';
+					this._el('ccParts').value = JSON.stringify(c.parts || []);
+					this._el('ccOnlyLevel0').checked = !!c.onlyLevel0;
+					this._el('ccAfter').value = c.after || 'Revenue';
+					this._el('ccMini').checked = !!c.mini;
 				});
-
-				// Remove Button (Estilo anterior.js)
-				const btnDel = document.createElement('button');
-				btnDel.className = 'kt-btn kt-btn-danger kt-btn-xs';
-				btnDel.textContent = 'Remove';
-				btnDel.type = 'button';
-				btnDel.addEventListener('click', (e) => {
+				li.querySelector('.btn-del').addEventListener('click', (e) => {
 					e.preventDefault();
-					e.stopPropagation();
-					if (confirm(`Delete column "${c.id}"?`)) {
+					if (confirm(`Delete "${c.id}"?`)) {
 						this.calc.remove(c.id);
 						renderList();
 					}
 				});
-
-				right.append(btnActivate, btnEdit, btnDel);
-				li.append(left, right);
 				list.appendChild(li);
 			}
 		};
@@ -1303,68 +1332,13 @@ export class Table {
 			const onlyLevel0 = !!this._el('ccOnlyLevel0')?.checked;
 			const mini = !!this._el('ccMini')?.checked;
 			const after = this._el('ccAfter')?.value || 'Revenue';
-
 			let parts = [];
 			try {
 				parts = JSON.parse(this._el('ccParts')?.value || '[]');
 			} catch {}
 			let finalId = id;
 			if (!finalId && headerName) finalId = headerName.toLowerCase().replace(/[^a-z0-9]/g, '_');
-
 			return { id: finalId, headerName, expression, format, onlyLevel0, mini, after, parts };
-		};
-
-		const modalShow = (selector) => {
-			const el = selector ? document.querySelector(selector) : this._el('modalCalcCols');
-			if (!el) return;
-			try {
-				if (window.KT?.Modal?.getOrCreateInstance) {
-					window.KT.Modal.getOrCreateInstance(el).show();
-				} else if (window.bootstrap?.Modal?.getOrCreateInstance) {
-					window.bootstrap.Modal.getOrCreateInstance(el).show();
-				} else {
-					el.classList.remove('hidden');
-					el.style.display = 'block';
-					el.setAttribute('aria-hidden', 'false');
-				}
-			} catch (e) {
-				console.warn('Modal open fallback', e);
-			}
-		};
-
-		// === FIX: Fechamento Robusto do Modal ===
-		const modalHide = () => {
-			const el = this._el('modalCalcCols');
-			if (!el) return;
-
-			try {
-				const instance =
-					window.KT?.Modal?.getInstance(el) || window.bootstrap?.Modal?.getInstance(el);
-				if (instance) {
-					instance.hide();
-					// Força extra caso o framework falhe na limpeza
-					setTimeout(() => {
-						document.querySelectorAll('.modal-backdrop').forEach((b) => b.remove());
-						document.body.classList.remove('modal-open');
-						document.body.style.overflow = '';
-						document.body.style.paddingRight = '';
-					}, 300);
-					return;
-				}
-			} catch {}
-
-			// Fallback manual
-			el.classList.add('hidden');
-			el.style.display = 'none';
-			el.classList.remove('show');
-			el.setAttribute('aria-hidden', 'true');
-
-			// Limpa Backdrops
-			const backdrops = document.querySelectorAll('.modal-backdrop');
-			backdrops.forEach((b) => b.remove());
-			document.body.classList.remove('modal-open');
-			document.body.style.overflow = '';
-			document.body.style.paddingRight = '';
 		};
 
 		// Listeners
@@ -1376,7 +1350,6 @@ export class Table {
 			e.preventDefault();
 			const cfg = readForm();
 			if (!cfg.id || !cfg.expression) return showToast('Missing Fields', 'danger');
-
 			if (this.calc.add(cfg)) {
 				modalHide();
 				this.api?.refreshHeader?.();
@@ -1394,62 +1367,61 @@ export class Table {
 			e.preventDefault();
 			this.calc.activateAll();
 			renderList();
-			showToast('All activated', 'success');
+			showToast('Activated', 'success');
 		});
-
 		if ($reload) {
 			$reload.addEventListener('click', (e) => {
 				e.preventDefault();
-				const oldHTML = $reload.innerHTML;
+				const old = $reload.innerHTML;
 				$reload.innerHTML = '...';
-				$reload.disabled = true;
 				setTimeout(() => {
 					populateColumnSelects();
 					renderList();
-					$reload.innerHTML = oldHTML;
-					$reload.disabled = false;
+					$reload.innerHTML = old;
 				}, 300);
 			});
 		}
 
-		const handleOpenModal = () => {
-			clearForm();
-			populateExpressionSelect();
-			populateColumnSelects();
-			renderList();
-			const selector = this._sel('modalCalcCols') || '#calcColsModal';
-			modalShow(selector);
-		};
+		// ============================================================
+		// 4. EVENT DELEGATION (Capture Phase)
+		// ============================================================
 
-		const modal = this._el('modalCalcCols');
-		if (modal) {
-			modal.addEventListener('lion:open:calc', handleOpenModal);
+		document.addEventListener(
+			'click',
+			(e) => {
+				const expectedAdd = this._sel('btnAddCalcCol') || '#btnCalcCols';
+				const expectedManage = this._sel('btnManageCalcCols') || '#btnManageCalcCols';
+				const btnAdd = e.target.closest(expectedAdd);
+				const btnManage = e.target.closest(expectedManage);
 
-			const closeSelector = `[data-kt-modal-dismiss="${this._sel(
-				'modalCalcCols'
-			)}"], .kt-modal-close`;
-			modal.querySelectorAll(closeSelector).forEach((btn) => {
-				btn.addEventListener('click', (e) => {
+				if (btnAdd || btnManage) {
+					console.log(`[CAPTURE] Modal Acionado: ${btnAdd ? 'Add' : 'Manage'}`);
 					e.preventDefault();
-					modalHide();
-				});
-			});
-
-			const obs = new MutationObserver((muts) => {
-				for (const m of muts) {
-					if (
-						(m.attributeName === 'class' || m.attributeName === 'style') &&
-						!modal.classList.contains('hidden') &&
-						modal.style.display !== 'none'
-					) {
-						if (this._el('ccList')?.children.length === 0) handleOpenModal();
-					}
+					e.stopPropagation();
+					handleOpenModal();
 				}
-			});
-			obs.observe(modal, { attributes: true });
-		}
-	}
+			},
+			true
+		);
 
+		const modalSel = this._sel('modalCalcCols') || '#calcColsModal';
+		document.addEventListener(
+			'click',
+			(e) => {
+				const modal = document.querySelector(modalSel);
+				if (!modal) return;
+				const closeBtn = e.target.closest(
+					`[data-kt-modal-dismiss="${modalSel}"], .kt-modal-close`
+				);
+				if (closeBtn && modal.contains(closeBtn)) {
+					e.preventDefault();
+					e.stopPropagation();
+					modalHide();
+				}
+			},
+			true
+		);
+	} // Fim do CalcColsPopulate
 	makeGrid() {
 		const AG = getAgGrid();
 		const containerSelector = this.config.selectors.container;
@@ -1579,18 +1551,6 @@ export class Table {
 			}
 		}
 
-		function getCellTextLocal(p, field) {
-			const d = p?.data || {};
-			if (field === 'campaign') {
-				if ((p?.node?.level ?? 0) !== 0) return String(d.__label || '');
-				const label = String(d.__label || '');
-				const utm = String(d.utm_campaign || '');
-				return utm ? `${label}\n${utm}` : label;
-			}
-			if (field === 'bc_name') return String(d.bc_name || '');
-			return String(d[field] ?? '');
-		}
-
 		const _rowHCache = new Map();
 		const BASE_ROW_MIN = 50;
 		const VERT_PAD = 12;
@@ -1653,7 +1613,7 @@ export class Table {
 				for (const field of WRAP_FIELDS_LOCAL) {
 					const w = widthBag[field];
 					if (!w) continue;
-					const text = getCellTextLocal(p, field);
+					const text = tableInstance.getCellTextForField(p, field);
 					const textH = _rowHeightMeasure.measure(text, w);
 					if (textH > maxTextH) maxTextH = textH;
 				}
@@ -2034,50 +1994,40 @@ export class Table {
 		document.head.appendChild(el);
 	}
 
-	initModalClickEvents() {
-		const modal = this._el('modalCalcCols');
-		if (!modal) return;
-		modal.addEventListener(
-			'click',
-			(e) => {
-				if (e.target === modal) {
-					modal.style.display = 'none';
-					modal.classList.add('hidden');
-					modal.setAttribute('aria-hidden', 'true');
-				}
-			},
-			{ passive: true }
-		);
-	}
-
 	initModalEvents() {
 		document.addEventListener(
 			'keydown',
 			(e) => {
 				if (e.key !== 'Escape') return;
-				const modal = this._el('modalCalcCols');
-				if (!modal || modal.getAttribute('aria-hidden') !== 'false') return;
-				modal.style.display = 'none';
-				modal.classList.add('hidden');
-				modal.setAttribute('aria-hidden', 'true');
+				const ktModal = document.getElementById('lionKtModal');
+				if (
+					ktModal &&
+					!ktModal.classList.contains('hidden') &&
+					ktModal.style.display !== 'none'
+				) {
+					this.closeKTModal('#lionKtModal');
+					return;
+				}
+				const calcModal = this._el('modalCalcCols');
+				const isVisible =
+					calcModal &&
+					!calcModal.classList.contains('hidden') &&
+					calcModal.style.display !== 'none';
+
+				if (isVisible) {
+					const closeBtn = calcModal.querySelector('.kt-modal-close, [data-kt-modal-dismiss]');
+					if (closeBtn) {
+						closeBtn.click();
+					} else {
+						calcModal.style.display = 'none';
+						calcModal.classList.add('hidden');
+						document.querySelectorAll('.modal-backdrop').forEach((b) => b.remove());
+						document.body.classList.remove('modal-open');
+					}
+				}
 			},
 			{ passive: true }
 		);
-	}
-
-	bindCalcColsModalClose() {
-		const modal = this._el('modalCalcCols');
-		if (!modal) return;
-		const closeSelector = `[data-kt-modal-dismiss="${this._sel('modalCalcCols')}"], .kt-modal-close`;
-		const btns = modal.querySelectorAll(closeSelector);
-		btns.forEach((btn) => {
-			btn.addEventListener('click', (e) => {
-				e.preventDefault();
-				modal.style.display = 'none';
-				modal.classList.add('hidden');
-				modal.setAttribute('aria-hidden', 'true');
-			});
-		});
 	}
 
 	showKTModal({ title = 'Details', content = '' } = {}) {
@@ -2150,70 +2100,6 @@ export class Table {
 			fontFamily: t.fontFamily || { googleFont: 'IBM Plex Sans' },
 			fontSize: t.fontSize || 14,
 			spacing: t.spacing || 6,
-		});
-	}
-
-	ensureLoadingStyles() {
-		if (document.getElementById('lion-loading-styles')) return;
-		const css = `
-			.ag-cell.ag-cell-loading * { visibility: hidden !important; }
-			.ag-cell.ag-cell-loading::after { content:""; position:absolute; left:50%; top:50%; width:14px; height:14px; margin-left:-7px; margin-top:-7px; border-radius:50%; border:2px solid #9ca3af; border-top-color:transparent; animation: lion-spin .8s linear infinite; z-index:2; pointer-events:none; }
-			@keyframes lion-spin { to { transform: rotate(360deg); } }
-			.ag-theme-quartz .ag-cell.lion-center-cell { text-align: center; display: flex; align-items: center; justify-content: center; padding: 0 4px; }
-			.ag-theme-quartz .ag-cell.lion-center-cell .ag-cell-value { width: 100%; white-space: normal; word-break: break-word; line-height: 1.2; }
-		`;
-		const el = document.createElement('style');
-		el.id = 'lion-loading-styles';
-		el.textContent = css;
-		document.head.appendChild(el);
-	}
-
-	initModalClickEvents() {
-		const modal = this._el('modalCalcCols');
-		if (!modal) return;
-		modal.addEventListener(
-			'click',
-			(e) => {
-				if (e.target === modal) {
-					modal.style.display = 'none';
-					modal.classList.add('hidden');
-					modal.setAttribute('aria-hidden', 'true');
-				}
-			},
-			{ passive: true }
-		);
-	}
-
-	initModalEvents() {
-		document.addEventListener(
-			'keydown',
-			(e) => {
-				if (e.key !== 'Escape') return;
-				const modal = this._el('modalCalcCols');
-				if (!modal || modal.getAttribute('aria-hidden') !== 'false') return;
-				modal.style.display = 'none';
-				modal.classList.add('hidden');
-				modal.setAttribute('aria-hidden', 'true');
-			},
-			{ passive: true }
-		);
-	}
-
-	bindCalcColsModalClose() {
-		const modal = this._el('modalCalcCols');
-		if (!modal) return;
-		// Usa seletor dinâmico se disponível ou padrão
-		const selectorRaw = this.config.selectors.modalCalcCols || '#calcColsModal';
-		const closeSelector = `[data-kt-modal-dismiss="${selectorRaw}"], .kt-modal-close`;
-
-		const btns = modal.querySelectorAll(closeSelector);
-		btns.forEach((btn) => {
-			btn.addEventListener('click', (e) => {
-				e.preventDefault();
-				modal.style.display = 'none';
-				modal.classList.add('hidden');
-				modal.setAttribute('aria-hidden', 'true');
-			});
 		});
 	}
 
@@ -2361,6 +2247,12 @@ export class Table {
 	}
 
 	destroy() {
+		// Limpeza do listener global de teclado
+		if (this._quickFilterKeyHandler) {
+			window.removeEventListener('keydown', this._quickFilterKeyHandler, { capture: true });
+			this._quickFilterKeyHandler = null;
+		}
+
 		if (this.api) {
 			this.saveState();
 			this.api.destroy();
