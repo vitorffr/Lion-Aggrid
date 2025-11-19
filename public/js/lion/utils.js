@@ -119,11 +119,11 @@ export class StackBelowRenderer {
 		const showTop = params.showTop !== false;
 		const partsLabelOnly = !!params.partsLabelOnly;
 		const maxParts = Number(params.maxParts) || 0;
+		// Formato global da coluna (fallback)
 		const fmtKey = String(params.format || 'raw');
 
 		const partsMaxHeight = Number(params.partsMaxHeight) > 0 ? Number(params.partsMaxHeight) : 72;
 
-		// 👉 Se for pinned/total, deixa como estava (texto simples)
 		if (isPinnedOrTotal(p)) {
 			const span = document.createElement('span');
 			span.textContent = stripHtml(p.value ?? '');
@@ -134,7 +134,6 @@ export class StackBelowRenderer {
 			return;
 		}
 
-		// 👉 Se onlyLevel0 e NÃO é raiz, deixa vazio para manter altura/linha
 		if (onlyLevel0 && lvl !== 0) {
 			this.topEl = null;
 			this.partsBox = null;
@@ -142,31 +141,28 @@ export class StackBelowRenderer {
 			return;
 		}
 
-		// --------------------------------------------------------
-		// Função interna para formatar valores numéricos
-		// --------------------------------------------------------
-		const formatVal = (v) => {
+		// Função auxiliar de formatação
+		const resolveFormat = (v, fmt) => {
 			if (v == null) return '';
-			if (fmtKey === 'currency') return cc_currencyFormat(Number(v));
-			if (fmtKey === 'int') return intFmt.format(Math.round(Number(v)));
-			if (fmtKey === 'percent') return cc_percentFormat(Number(v));
+			if (fmt === 'currency') return cc_currencyFormat(Number(v));
+			if (fmt === 'int') return intFmt.format(Math.round(Number(v)));
+			if (fmt === 'percent') return cc_percentFormat(Number(v)); // Usa padrão de 3 casas do utils
 			return String(v);
 		};
 
-		// Linha superior (valor principal)
+		// 1. Topo (Valor Principal)
 		this.topEl = null;
 		if (showTop) {
 			const topEl = document.createElement('span');
 			const topVal = p.valueFormatted != null ? p.valueFormatted : p.value;
+			// O topo sempre usa o formato principal da coluna (fmtKey)
 			const coerced = typeof topVal === 'number' ? topVal : number(topVal);
-			topEl.textContent = formatVal(Number.isFinite(coerced) ? coerced : topVal);
+			topEl.textContent = resolveFormat(Number.isFinite(coerced) ? coerced : topVal, fmtKey);
 			wrap.appendChild(topEl);
 			this.topEl = topEl;
 		}
 
-		// --------------------------------------------------------
-		// Container scrollável das “partes”
-		// --------------------------------------------------------
+		// 2. Partes (Lista Scrollável)
 		const partsBox = document.createElement('span');
 		partsBox.className = 'lion-stack-scroll';
 		partsBox.style.display = 'inline-flex';
@@ -192,15 +188,19 @@ export class StackBelowRenderer {
 			line.style.opacity = '0.85';
 			const lab = String(row?.label ?? '').trim();
 			const valNum = Number.isFinite(row?.value) ? row.value : number(row?.value);
-			line.textContent = partsLabelOnly ? lab || '' : (lab ? `${lab}: ` : '') + formatVal(valNum);
+
+			// [CORREÇÃO] Usa formato específico da linha se existir, senão usa o global
+			const rowFmt = row.format || fmtKey;
+
+			line.textContent = partsLabelOnly
+				? lab || ''
+				: (lab ? `${lab}: ` : '') + resolveFormat(valNum, rowFmt);
+
 			partsBox.appendChild(line);
 		});
 
 		if (partsBox.childNodes.length > 0) wrap.appendChild(partsBox);
 
-		// --------------------------------------------------------
-		// Dblclick copia exatamente o que está visível
-		// --------------------------------------------------------
 		wrap.addEventListener('dblclick', () => {
 			const txt = this.getCopyText();
 			if (txt) {
@@ -213,7 +213,6 @@ export class StackBelowRenderer {
 
 		this.eGui = wrap;
 	}
-
 	getGui() {
 		return this.eGui;
 	}
@@ -507,11 +506,18 @@ export function cc_currencyFormat(n, currency = 'BRL', locale = 'pt-BR') {
 	return new Intl.NumberFormat(locale, { style: 'currency', currency }).format(n);
 }
 
-export function cc_percentFormat(n, digits = 1) {
-	// Esse não depende de moeda, ok manter
+export function cc_percentFormat(n, digits = 3) {
+	// Validação de segurança
 	if (!Number.isFinite(n)) return '';
-	return (n * 100).toFixed(digits) + '%';
+
+	return (
+		n.toLocaleString('pt-BR', {
+			minimumFractionDigits: digits,
+			maximumFractionDigits: digits,
+		}) + '%'
+	);
 }
+
 export function currencyFormatter(p) {
 	const currency = getAppCurrency();
 	const locale = currency === 'USD' ? 'en-US' : 'pt-BR';

@@ -89,6 +89,8 @@ export class Table {
 				btnDeletePreset: opts.selectors?.btnDeletePreset || '#btnDeletePreset',
 				btnDownloadPreset: opts.selectors?.btnDownloadPreset || '#btnDownloadPreset',
 				btnUploadPreset: opts.selectors?.btnUploadPreset || '#btnUploadPreset',
+
+				// Modal Calc Cols
 				modalCalcCols: opts.selectors?.modalCalcCols || '#calcColsModal',
 				btnAddCalcCol: opts.selectors?.btnAddCalcCol || '#btnCalcCols',
 				btnManageCalcCols: opts.selectors?.btnManageCalcCols || '#btnManageCalcCols',
@@ -454,7 +456,6 @@ export class Table {
 					const colKey = this._normKey(String(colDef.colId || colDef.field || ''));
 					if (!colKey || idxMap.has(colKey)) continue;
 
-					// [NOVO] Usa o defaultInsertAfter da config
 					let afterRaw =
 						colDef.__afterId ||
 						colDef.__after ||
@@ -510,15 +511,29 @@ export class Table {
 			}
 
 			_norm(cfg) {
+				const mini = !!cfg.mini;
+				const format = (cfg.format || 'currency').toLowerCase();
+
+				// [CORREÇÃO] Define partsFormat automaticamente
+				// Se o principal for Porcentagem (ex: Margin), as partes (Profit, Revenue) geralmente são Moeda.
+				const partsFormat = (
+					cfg.partsFormat || (format === 'percent' ? 'currency' : format)
+				).toLowerCase();
+
 				return {
 					...cfg,
 					id: String(cfg.id || '').trim(),
 					expression: String(cfg.expression || '').trim(),
-					format: (cfg.format || 'currency').toLowerCase(),
+					format: format,
+					partsFormat: partsFormat, // <--- Agora existe
 					parts: Array.isArray(cfg.parts) ? cfg.parts : [],
+					mini: mini,
+					hideTop: mini,
+					includeTotalAsPart: mini,
+					onlyLevel0: cfg.onlyLevel0 ?? cfg.onlyRoot ?? true,
+					after: cfg.after || 'Revenue',
 				};
 			}
-
 			_migrateLegacyColumn(cfg) {
 				const m = { ...cfg };
 				if ((!m.parts || m.parts.length === 0) && m.expression) {
@@ -537,8 +552,23 @@ export class Table {
 
 			_fmtBy(fmt, n) {
 				if (!Number.isFinite(n)) return '—';
+
+				// INTEIRO: Arredonda e remove decimais
 				if (fmt === 'int') return intFmt.format(Math.round(n));
+
+				// [CORREÇÃO] RAW: Garante que mostre as casas decimais (ponto flutuante)
+				// Usamos toLocaleString para manter a vírgula (padrão BR do seu sistema)
+				if (fmt === 'raw') {
+					return n.toLocaleString('pt-BR', {
+						minimumFractionDigits: 2,
+						maximumFractionDigits: 6, // Mostra até 6 casas se existirem
+					});
+				}
+
+				// PERCENTUAL
 				if (fmt === 'percent') return cc_percentFormat(n);
+
+				// FALLBACK: MOEDA
 				return cc_currencyFormat(n);
 			}
 
@@ -549,7 +579,6 @@ export class Table {
 					label: p.label,
 					fn: this._compileExpr(p.expr),
 				}));
-
 				const defaultAfter = parentTable.config.behavior.defaultInsertAfter;
 
 				return {
@@ -557,12 +586,9 @@ export class Table {
 					colId: n.id,
 					minWidth: 150,
 					flex: 1,
-
-					// [REMOVIDO] Sort e Filter desativados para colunas calculadas
 					sortable: false,
 					filter: false,
 					floatingFilter: false,
-
 					valueGetter: (p) => (totalFn ? totalFn(p.data || {}) : null),
 					valueFormatter: (p) => {
 						const v = p.value;
@@ -585,6 +611,7 @@ export class Table {
 					},
 					cellRenderer: StackBelowRenderer,
 					cellRendererParams: {
+						format: n.format, // [IMPORTANTE] Passa o formato principal
 						partsMaxHeight: 40,
 						onlyLevel0: !!n.onlyLevel0,
 						showTop: !n.hideTop,
@@ -592,15 +619,22 @@ export class Table {
 						getParts: (p) => {
 							const row = p.data || {};
 							const list = [];
+							// Se "Total" for incluído como parte (mini mode), ele deve ser % (n.format)
 							if (n.includeTotalAsPart) {
 								list.push({
 									label: n.totalLabel || 'Total',
 									value: totalFn ? totalFn(row) : null,
 									isTotal: true,
+									format: n.format, // <--- Formato específico para o Total
 								});
 							}
+							// As partes constituintes (A, B) usam o partsFormat (ex: currency)
 							partFns.forEach(({ label, fn }) => {
-								list.push({ label, value: fn ? fn(row) : null });
+								list.push({
+									label,
+									value: fn ? fn(row) : null,
+									format: n.partsFormat, // <--- Formato específico para as partes
+								});
 							});
 							return list;
 						},
@@ -2531,7 +2565,12 @@ export class Table {
 				// Lógica Numérica (com suporte a colunas calculadas)
 				if (ft === 'number') {
 					const comp = String(f.type || 'equals');
-					const val = Number(f.filter);
+
+					// [FIX] Permite virgula decimal (ex: 6,50 -> 6.50)
+					let rawFilter = String(f.filter ?? '');
+					if (rawFilter.includes(',')) rawFilter = rawFilter.replace(',', '.');
+					const val = Number(rawFilter);
+
 					return (r) => {
 						// [FIX] Prepara getter de valor (Raw ou Calculated)
 						let rawVal = r[field];
