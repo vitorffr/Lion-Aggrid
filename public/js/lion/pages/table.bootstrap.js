@@ -235,14 +235,19 @@ class EditableMoneyCellRenderer {
 	}
 }
 // 6.2 Editor com máscara tipo “R$ 1.234,56”
+// 6.2 Editor com máscara dinâmica (BRL: "1,00" | USD: "1.00")
 class CurrencyMaskEditor {
 	init(params) {
 		this.params = params;
 
+		// Detecta moeda global (definida via setAppCurrency no tablemanager)
+		const currency = getAppCurrency(); // 'BRL' ou 'USD'
+		const locale = currency === 'USD' ? 'en-US' : 'pt-BR';
+
 		const startNumber =
 			typeof params.value === 'number'
 				? params.value
-				: parseCurrencyFlexible(params.value, getAppCurrency());
+				: parseCurrencyFlexible(params.value, currency);
 
 		this.input = document.createElement('input');
 		this.input.type = 'text';
@@ -254,10 +259,11 @@ class CurrencyMaskEditor {
 		this.input.autocomplete = 'off';
 		this.input.inputMode = 'numeric';
 
+		// Formatador dinâmico baseado no locale
 		const fmt = (n) =>
 			n == null || !Number.isFinite(n)
 				? ''
-				: new Intl.NumberFormat('pt-BR', {
+				: new Intl.NumberFormat(locale, {
 						minimumFractionDigits: 2,
 						maximumFractionDigits: 2,
 				  }).format(n);
@@ -279,6 +285,7 @@ class CurrencyMaskEditor {
 
 		this.onInput = () => {
 			formatFromRawInput();
+			// Mantém cursor no final
 			this.input.setSelectionRange(this.input.value.length, this.input.value.length);
 		};
 
@@ -293,21 +300,17 @@ class CurrencyMaskEditor {
 	getGui() {
 		return this.input;
 	}
-
 	afterGuiAttached() {
 		this.input.focus();
 		this.input.select();
 	}
-
 	getValue() {
 		return this.input.value;
 	}
-
 	destroy() {
 		this.input?.removeEventListener?.('input', this.onInput);
 		this.input?.removeEventListener?.('keydown', this.onKeyDown);
 	}
-
 	isPopup() {
 		return false;
 	}
@@ -1634,6 +1637,7 @@ const table = new Table(columnDefs, {
 		fakeNetworkMs: 0,
 	},
 	pinToggleSelector: '#pinToggle',
+	currency: 'BRL',
 	defaultColDef: {
 		sortable: true,
 		filter: 'agTextColumnFilter',
@@ -1650,9 +1654,3 @@ const table = new Table(columnDefs, {
 });
 
 table.init();
-
-// Ex.: trocar colunas em runtime
-// tabela.setColumnDefs([{ headerName: 'Novo', field: 'novo' }]);
-
-// Exporta utilidades de moeda se quiser controlar via console:
-// window.setLionCurrency = setLionCurrency;

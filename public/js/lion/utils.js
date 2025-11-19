@@ -3,15 +3,22 @@
  * =======================================*/
 
 /* ========== 2.1 Tempo / Async ========== */
+/* ========== 2.1 Tempo / Async ========== */
+
+let LION_CURRENCY = 'BRL'; // 'BRL' | 'USD'
+
+// [ADICIONE ESTA FUNÇÃO EXPORTADA]
+export function setAppCurrency(code) {
+	if (code) LION_CURRENCY = String(code).toUpperCase();
+}
+
+export function getAppCurrency() {
+	return LION_CURRENCY;
+}
+
 export async function withMinSpinner(startMs, minMs) {
 	const elapsed = performance.now() - startMs;
 	if (elapsed < minMs) await sleep(minMs - elapsed);
-}
-let LION_CURRENCY = 'BRL'; // 'BRL' | 'USD'
-
-/* Depende de LION_CURRENCY global no seu app */
-export function getAppCurrency() {
-	return LION_CURRENCY;
 }
 
 export function cc_evalExpression(expr, row) {
@@ -230,27 +237,24 @@ export class StackBelowRenderer {
 		return lines.join('\n');
 	}
 }
-/** Parser tolerante a BRL/USD (string → number) */
-export function parseCurrencyFlexible(value, mode = getAppCurrency()) {
+export function parseCurrencyFlexible(value, currency = 'BRL') {
 	if (value == null || value === '') return null;
 	if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+
 	let s = String(value).trim();
-	s = s.replace(/[^\d.,\-+]/g, '');
-	if (!s) return null;
-	const lastDot = s.lastIndexOf('.');
-	const lastComma = s.lastIndexOf(',');
-	const hasSep = lastDot !== -1 || lastComma !== -1;
-	let normalized;
-	if (!hasSep) {
-		normalized = s.replace(/[^\d\-+]/g, '');
+	// Lógica de detecção baseada na moeda passada (BRL vs USD)
+	// Se BRL, assume milhar=ponto, decimal=virgula. Se USD, oposto.
+	const isBRL = currency === 'BRL';
+
+	if (isBRL) {
+		// Remove tudo que não for dígito, vírgula ou menos
+		s = s.replace(/[^\d,-]/g, '').replace(',', '.');
 	} else {
-		const decSep = lastDot > lastComma ? '.' : ',';
-		const i = s.lastIndexOf(decSep);
-		const intPart = s.slice(0, i).replace(/[^\d\-+]/g, '');
-		const fracPart = s.slice(i + 1).replace(/[^\d]/g, '');
-		normalized = intPart + (fracPart ? '.' + fracPart : '');
+		// USD: Remove tudo que não for dígito, ponto ou menos
+		s = s.replace(/[^\d.-]/g, '');
 	}
-	const n = parseFloat(normalized);
+
+	const n = parseFloat(s);
 	return Number.isFinite(n) ? n : null;
 }
 
@@ -490,21 +494,21 @@ export function sumNum(arr, pick) {
 export function safeDiv(num, den) {
 	return den > 0 ? num / den : 0;
 }
-export function numBR(x) {
-	const n1 = toNumberBR(x);
-	if (n1 != null) return n1;
-	const n2 = parseCurrencyFlexible(x, getAppCurrency());
-	return Number.isFinite(n2) ? n2 : null;
+export function numBR(x, currency = 'BRL') {
+	// Tenta nativo
+	if (typeof x === 'number') return Number.isFinite(x) ? x : 0;
+	// Tenta parse string
+	const n = parseCurrencyFlexible(x, currency);
+	return Number.isFinite(n) ? n : 0;
 }
 
-/** Formatadores rápidos */
-export function cc_currencyFormat(n) {
+export function cc_currencyFormat(n, currency = 'BRL', locale = 'pt-BR') {
 	if (!Number.isFinite(n)) return '';
-	const cur = getAppCurrency();
-	const locale = cur === 'USD' ? 'en-US' : 'pt-BR';
-	return new Intl.NumberFormat(locale, { style: 'currency', currency: cur }).format(n);
+	return new Intl.NumberFormat(locale, { style: 'currency', currency }).format(n);
 }
+
 export function cc_percentFormat(n, digits = 1) {
+	// Esse não depende de moeda, ok manter
 	if (!Number.isFinite(n)) return '';
 	return (n * 100).toFixed(digits) + '%';
 }

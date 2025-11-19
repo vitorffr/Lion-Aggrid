@@ -1,32 +1,30 @@
 import {
 	withMinSpinner,
-	getAppCurrency,
 	showToast,
 	sleep,
 	stripHtml,
-	strongText,
 	intFmt,
-	toNumberBR,
 	frontToNumberBR,
 	frontToNumberFirst,
-	number,
 	sumNum,
 	safeDiv,
 	numBR,
 	cc_currencyFormat,
 	cc_percentFormat,
-	currencyFormatter,
 	copyToClipboard,
 	StackBelowRenderer,
 	cc_evalExpression,
+	setAppCurrency,
 } from './utils.js';
 
 export let GLOBAL_QUICK_FILTER = '';
+
 function getAgGrid() {
 	const AG = globalThis.agGrid;
 	if (!AG) throw new Error('AG Grid UMD not loaded. Check the script ORDER and the CDN path.');
 	return AG;
 }
+
 (function applyAgGridLicense() {
 	try {
 		const AG = getAgGrid();
@@ -35,6 +33,7 @@ function getAgGrid() {
 		if (key && LM?.setLicenseKey) LM.setLicenseKey(key);
 	} catch {}
 })();
+
 async function fetchJSON(url, opts) {
 	const res = await fetch(url, {
 		headers: { 'Content-Type': 'application/json' },
@@ -50,6 +49,14 @@ async function fetchJSON(url, opts) {
 	if (!res.ok) throw new Error(data?.error || res.statusText || 'Request failed');
 	return data;
 }
+
+function buildFilterModelWithGlobal(baseFilterModel) {
+	const fm = { ...(baseFilterModel || {}) };
+	const gf = (GLOBAL_QUICK_FILTER || '').trim();
+	fm._global = Object.assign({}, fm._global, { filter: gf });
+	return fm;
+}
+
 function refreshSSRM(api) {
 	if (!api) return;
 	if (typeof api.refreshServerSideStore === 'function') {
@@ -63,27 +70,18 @@ function refreshSSRM(api) {
 	}
 }
 
-function buildFilterModelWithGlobal(baseFilterModel) {
-	const fm = { ...(baseFilterModel || {}) };
-	const gf = (GLOBAL_QUICK_FILTER || '').trim();
-	fm._global = Object.assign({}, fm._global, { filter: gf });
-	return fm;
-}
-
 export class Table {
 	constructor(columnDefs = [], opts = {}) {
 		// =================================================================
-		// 1. CONFIGURAÇÃO CENTRALIZADA (Dynamic Config w/ Fallbacks)
+		// 1. CONFIGURAÇÃO CENTRALIZADA (Padrão "Ou um Ou Outro" ||)
 		// =================================================================
 		this.config = {
-			// Seletores DOM (IDs e Classes)
+			// Seletores DOM
 			selectors: {
 				container: opts.container || opts.selectors?.container || '#lionGrid',
 				quickFilter: opts.selectors?.quickFilter || '#quickFilter',
 				pinToggle: opts.selectors?.pinToggle || '#pinToggle',
 				sizeModeToggle: opts.selectors?.sizeModeToggle || '#colSizeModeToggle',
-
-				// Toolbar & Presets
 				presetSelect: opts.selectors?.presetSelect || '#presetUserSelect',
 				presetFileInput: opts.selectors?.presetFileInput || '#presetFileInput',
 				btnResetLayout: opts.selectors?.btnResetLayout || '#btnResetLayout',
@@ -92,11 +90,10 @@ export class Table {
 				btnDownloadPreset: opts.selectors?.btnDownloadPreset || '#btnDownloadPreset',
 				btnUploadPreset: opts.selectors?.btnUploadPreset || '#btnUploadPreset',
 
-				// Calc Columns Modal & Botões
+				// Modal Calc Cols
 				modalCalcCols: opts.selectors?.modalCalcCols || '#calcColsModal',
 				btnAddCalcCol: opts.selectors?.btnAddCalcCol || '#btnCalcCols',
 				btnManageCalcCols: opts.selectors?.btnManageCalcCols || '#btnManageCalcCols',
-				// Campos internos do Modal (IDs sem # se preferir, mas aqui assumo seletores)
 				ccCol1: opts.selectors?.ccCol1 || '#cc-col1',
 				ccCol2: opts.selectors?.ccCol2 || '#cc-col2',
 				ccFormat: opts.selectors?.ccFormat || '#cc-format',
@@ -114,9 +111,33 @@ export class Table {
 				ccOnlyLevel0: opts.selectors?.ccOnlyLevel0 || '#cc-only-level0',
 				ccAfter: opts.selectors?.ccAfter || '#cc-after',
 				ccMini: opts.selectors?.ccMini || '#cc-mini',
+
+				// [NOVO] Modal de Drilldown/Detalhes (Parametrizado)
+				modalDrilldown: opts.selectors?.modalDrilldown || '#lionKtModal',
+				modalDrilldownTitle: opts.selectors?.modalDrilldownTitle || '.kt-modal-title',
+				modalDrilldownBody: opts.selectors?.modalDrilldownBody || '.kt-modal-body > pre',
+				modalDrilldownClose: opts.selectors?.modalDrilldownClose || '.kt-modal-close',
 			},
 
-			// Chaves de LocalStorage/SessionStorage
+			// [NOVO] Templates HTML (para injeção dinâmica)
+			templates: {
+				// O ID do modal será injetado dinamicamente se usar o template padrão.
+				// Use {id} como placeholder.
+				modalDrilldown:
+					opts.templates?.modalDrilldown ||
+					`
+					<div class="kt-modal hidden" id="{id}" aria-hidden="true" style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:9999;align-items:center;justify-content:center;">
+						<div class="kt-modal-content" style="background:#09090B;color:#fff;padding:20px;border-radius:8px;max-width:500px;width:90%;max-height:80vh;overflow:auto;position:relative;">
+							<div class="kt-modal-header" style="display:flex;justify-content:space-between;margin-bottom:15px;">
+								<h3 class="kt-modal-title" style="font-weight:bold;font-size:1.1rem;">Details</h3>
+								<button type="button" class="kt-modal-close" style="background:none;border:none;color:#fff;font-size:1.2rem;cursor:pointer;">✕</button>
+							</div>
+							<div class="kt-modal-body"><pre class="whitespace-pre-wrap text-sm" style="white-space:pre-wrap;word-break:break-word;"></pre></div>
+						</div>
+					</div>`,
+			},
+
+			// Chaves de Storage
 			storageKeys: {
 				gridState: opts.storageKeys?.gridState || opts.GRID_STATE_KEY || 'lion.aggrid.state.v1',
 				presets: opts.storageKeys?.presets || 'lion.aggrid.presets.v1',
@@ -126,7 +147,44 @@ export class Table {
 				calcCols: opts.storageKeys?.calcCols || 'lion.aggrid.calcCols.v1',
 			},
 
-			// Comportamento
+			// Callbacks
+			callbacks: {
+				computeTotals: opts.callbacks?.computeTotals || null,
+				customSort: opts.callbacks?.customSort || null,
+				getCalculableColumns: opts.callbacks?.getCalculableColumns || null,
+				getCellText: opts.callbacks?.getCellText || null,
+				// [NOVO] Callback para normalizar linhas (override total se o user passar)
+				normalizeRow: opts.callbacks?.normalizeRow || null,
+			},
+
+			// Mapeamento de Chaves de Dados
+			dataKeys: opts.dataKeys || {
+				id: 'id',
+				campaign_name: 'campaign_name',
+				utm_campaign: 'utm_campaign',
+				adset_name: 'name',
+				ad_name: 'name',
+				revenue: 'revenue',
+				spent: 'spent',
+				profit: 'profit',
+				mx: 'mx',
+				fb_revenue: 'fb_revenue',
+				push_revenue: 'push_revenue',
+				budget: 'budget',
+				impressions: 'impressions',
+				clicks: 'clicks',
+				visitors: 'visitors',
+				conversions: 'conversions',
+				real_conversions: 'real_conversions',
+				cpc_total: 'cpc_total',
+				cpa_fb_total: 'cpa_fb_total',
+				real_cpa_total: 'real_cpa_total',
+				ctr_total: 'ctr_total',
+				epc_total: 'epc_total',
+				mx_total: 'mx_total',
+			},
+
+			// Comportamento e Dados
 			behavior: {
 				currency: opts.currency || opts.LION_CURRENCY || 'BRL',
 				locale: opts.locale || 'pt-BR',
@@ -135,7 +193,29 @@ export class Table {
 				selectionColumnId:
 					opts.selectionColumnId || opts.selectionColumn || 'ag-Grid-SelectionColumn',
 				autoGroupColumnId: opts.autoGroupColumnId || 'campaign',
-				legacyAutoGroupIds: ['ag-Grid-AutoColumn'], // Para compatibilidade
+				autoGroupHeader: opts.autoGroupHeader || 'Campaign',
+
+				defaultInsertAfter: opts.behavior?.defaultInsertAfter || 'Revenue',
+				pinnedRight: opts.pinnedRight || ['spent', 'revenue', 'mx', 'profit'],
+				pinnedLeft: opts.pinnedLeft || ['profile_name'],
+				statusOrder: opts.statusOrder || ['ACTIVE', 'PAUSED', 'DISABLED', 'CLOSED'],
+				statusColIds: opts.statusColIds || ['account_status', 'campaign_status', 'status'],
+				totalLabelPrefix: opts.totalLabelPrefix || 'CAMPAIGNS: ',
+				calcDenyList: opts.calcDenyList || [
+					'ag-Grid-AutoColumn',
+					'ag-Grid-RowGroup',
+					'__autoGroup',
+				],
+				modalOpenFields: opts.modalOpenFields || [
+					'profile_name',
+					'bc_name',
+					'account_name',
+					'account_status',
+					'account_limit',
+					'campaign_name',
+					'utm_campaign',
+				],
+				legacyAutoGroupIds: ['ag-Grid-AutoColumn'],
 				ignoreOnRestore: opts.ignoreOnRestore || [
 					'pagination',
 					'scroll',
@@ -143,35 +223,111 @@ export class Table {
 					'focusedCell',
 				],
 			},
+
+			// Layout
+			layout: opts.layout || {
+				headerHeight: 62,
+				groupHeaderHeight: 35,
+				floatingFiltersHeight: 35,
+				rowHeightMin: 50,
+				rowVertPad: 12,
+				autoGroupMinWidth: 280,
+				cacheBlockSize: 200,
+			},
+
+			// Textos UI
+			text: opts.text || {
+				copyCampaign: 'Copy Campaign',
+				copyUTM: 'Copy UTM',
+				copyWithParts: 'Copy with parts',
+				modalDetailsTitle: 'Details',
+				modalCampaignTitle: 'Campaign',
+			},
+
+			// Modal de Colunas Calculadas
+			calcConfig: opts.calcConfig || {
+				ignoredHeaderPatterns: ['select', 'ação', 'action'],
+				operators: [
+					{ value: 'custom', label: '✎ Custom Expression', template: '' },
+					{
+						value: 'divide',
+						label: '÷ Division (A / B)',
+						template: 'number({col1}) / number({col2})',
+					},
+					{
+						value: 'multiply',
+						label: '× Multiplication (A × B)',
+						template: 'number({col1}) * number({col2})',
+					},
+					{
+						value: 'add',
+						label: '+ Addition (A + B)',
+						template: 'number({col1}) + number({col2})',
+					},
+					{
+						value: 'subtract',
+						label: '− Subtraction (A − B)',
+						template: 'number({col1}) - number({col2})',
+					},
+					{
+						value: 'percent',
+						label: '% Percentage (A / B × 100)',
+						template: '(number({col1}) / number({col2})) * 100',
+					},
+					{
+						value: 'percent_change',
+						label: 'Δ% Change ((B-A)/A × 100)',
+						template: '((number({col2}) - number({col1})) / number({col1})) * 100',
+					},
+					{
+						value: 'average',
+						label: '⌀ Average ((A+B)/2)',
+						template: '(number({col1}) + number({col2})) / 2',
+					},
+				],
+			},
+
+			theme: opts.theme || {},
 		};
 
-		// Propriedades da Classe
+		setAppCurrency(this.config.behavior.currency);
 		this.columnDefs = Array.isArray(columnDefs) ? columnDefs : [];
 		this.defaultColDef = opts.defaultColDef;
 		this.gridDiv = null;
-		this.gridApi = null; // Legacy alias
-		this.gridColumnApi = null; // Legacy alias
-		this.api = null; // Main API reference
+		this.gridApi = null;
+		this.gridColumnApi = null;
+		this.api = null;
 
-		// Endpoints
-		this.endpoints = Object.assign(
-			{ SSRM: '/api/ssrm/?clean=1&mode=full', ADSETS: '/api/adsets/', ADS: '/api/ads/' },
-			opts.endpoints || {}
-		);
+		this.map = opts.map || {
+			revenue: ['revenue', 'receita', 'receitas', 'rev', 'fat', 'faturamento'],
+			spent: ['spent', 'gasto', 'gastos', 'spend', 'despesa', 'custo'],
+			profit: ['profit', 'lucro', 'resultado', 'ganho'],
+			mx: ['mx', 'roi', 'roas', 'retorno'],
+			ctr: ['ctr', 'taxadeclique'],
+			clicks: ['clicks', 'cliques'],
+		};
 
-		// Drill settings
-		this.drill = Object.assign(
-			{ period: 'TODAY', minSpinnerMs: 900, fakeNetworkMs: 0 },
-			opts.drill || {}
-		);
+		this.endpoints = opts.endpoints || {
+			SSRM: '/api/ssrm/?clean=1&mode=full',
+			ADSETS: '/api/adsets/',
+			ADS: '/api/ads/',
+		};
 
-		// === 2. CLASSES INTERNAS (Usam config do pai) ===
+		this.drill = opts.drill || {
+			period: 'TODAY',
+			minSpinnerMs: 900,
+			fakeNetworkMs: 0,
+		};
+
 		const parentTable = this;
 
+		// --- Classes Internas ---
+
 		class LionCompositeColumns {
-			constructor() {
+			constructor(map) {
 				this.registry = new Map();
 				this.api = null;
+				this.map = map;
 			}
 
 			initGridApi(api, columnApi) {
@@ -237,15 +393,8 @@ export class Table {
 				const s = String(raw || '')
 					.trim()
 					.toLowerCase();
-				const map = {
-					revenue: ['revenue', 'receita', 'receitas', 'rev', 'fat', 'faturamento'],
-					spent: ['spent', 'gasto', 'gastos', 'spend', 'despesa', 'custo'],
-					profit: ['profit', 'lucro', 'resultado', 'ganho'],
-					mx: ['mx', 'roi', 'roas', 'retorno'],
-					ctr: ['ctr', 'taxadeclique'],
-					clicks: ['clicks', 'cliques'],
-				};
-				for (const [k, arr] of Object.entries(map)) {
+
+				for (const [k, arr] of Object.entries(this.map)) {
 					if (arr.includes(s)) return [k, ...arr];
 				}
 				return [raw];
@@ -307,7 +456,11 @@ export class Table {
 					const colKey = this._normKey(String(colDef.colId || colDef.field || ''));
 					if (!colKey || idxMap.has(colKey)) continue;
 
-					let afterRaw = colDef.__afterId || colDef.__after || 'Revenue';
+					// [NOVO] Usa o defaultInsertAfter da config
+					let afterRaw =
+						colDef.__afterId ||
+						colDef.__after ||
+						parentTable.config.behavior.defaultInsertAfter;
 					this._insertAfter(newDefs, colDef, afterRaw, fallbackGroupNode);
 					idxMap = this._buildColIndex(newDefs);
 					hasChanges = true;
@@ -331,7 +484,7 @@ export class Table {
 		class LionCalcColumns {
 			constructor(compositeInstance) {
 				this.composite = compositeInstance;
-				this.LS_KEY = parentTable.config.storageKeys.calcCols; // Chave dinâmica
+				this.LS_KEY = parentTable.config.storageKeys.calcCols;
 			}
 
 			_read() {
@@ -359,7 +512,6 @@ export class Table {
 			}
 
 			_norm(cfg) {
-				// Normalização simplificada
 				return {
 					...cfg,
 					id: String(cfg.id || '').trim(),
@@ -400,11 +552,17 @@ export class Table {
 					fn: this._compileExpr(p.expr),
 				}));
 
+				// [NOVO] Usa o defaultInsertAfter da config
+				const defaultAfter = parentTable.config.behavior.defaultInsertAfter;
+
 				return {
 					headerName: n.headerName || n.id,
 					colId: n.id,
 					minWidth: 150,
 					flex: 1,
+					sortable: true,
+					filter: 'agNumberColumnFilter',
+					floatingFilter: true,
 					valueGetter: (p) => (totalFn ? totalFn(p.data || {}) : null),
 					valueFormatter: (p) => {
 						const v = p.value;
@@ -447,7 +605,7 @@ export class Table {
 							return list;
 						},
 					},
-					__after: n.after,
+					__after: n.after || defaultAfter,
 				};
 			}
 
@@ -521,7 +679,7 @@ export class Table {
 			}
 		}
 
-		this.composite = new LionCompositeColumns();
+		this.composite = new LionCompositeColumns(this.map);
 		this.calc = new LionCalcColumns(this.composite);
 	}
 
@@ -554,6 +712,18 @@ export class Table {
 		const SS_KEY_STATE = this.config.storageKeys.gridState;
 		const LS_KEY_PRESETS = this.config.storageKeys.presets;
 		const LS_KEY_ACTIVE_PRESET = this.config.storageKeys.activePreset;
+
+		// [NOVO] Implementação do saveState para usar no destroy()
+		const saveState = () => {
+			const api = ensureApi();
+			if (!api) return;
+			try {
+				const state = api.getState();
+				sessionStorage.setItem(SS_KEY_STATE, JSON.stringify({ state }));
+			} catch (e) {
+				console.warn('Failed to save state', e);
+			}
+		};
 
 		// --- Helper UI Sync ---
 		const syncTogglesUI = () => {
@@ -701,7 +871,6 @@ export class Table {
 			showToast(`Preset "${name}" applied`, 'success');
 		};
 
-		// === FIX: Implementação do Delete ===
 		const deletePreset = () => {
 			const sel = this._el('presetSelect');
 			const name = sel?.value;
@@ -719,7 +888,6 @@ export class Table {
 			showToast(`Preset "${name}" removed`, 'info');
 		};
 
-		// === FIX: Implementação do Download ===
 		const downloadPreset = () => {
 			const sel = this._el('presetSelect');
 			const name = sel?.value;
@@ -805,7 +973,7 @@ export class Table {
 
 		this._el('btnSavePreset')?.addEventListener('click', saveAsPreset);
 		this._el('btnUploadPreset')?.addEventListener('click', uploadPreset);
-		// FIX: Bind do Download e Delete
+
 		this._el('btnDownloadPreset')?.addEventListener('click', downloadPreset);
 		this._el('btnDeletePreset')?.addEventListener('click', deletePreset);
 
@@ -874,7 +1042,15 @@ export class Table {
 			}
 		});
 
-		Object.assign(this, { getState, setState, resetLayout, saveAsPreset, applyPresetUser });
+		// [IMPORTANTE] Agora expõe o saveState
+		Object.assign(this, {
+			getState,
+			setState,
+			resetLayout,
+			saveAsPreset,
+			applyPresetUser,
+			saveState,
+		});
 	}
 	_setupQuickFilter() {
 		const input = this._el('quickFilter');
@@ -944,7 +1120,11 @@ export class Table {
 		const leftPins = [
 			{ colId: selectionColId, pinned: checked ? 'left' : null },
 			{ colId: autoGroupColId, pinned: checked ? 'left' : null },
-			{ colId: 'profile_name', pinned: checked ? 'left' : null },
+			// [ALTERADO] Usa array parametrizado 'pinnedLeft' (perfil, id, etc.)
+			...this.config.behavior.pinnedLeft.map((colId) => ({
+				colId,
+				pinned: checked ? 'left' : null,
+			})),
 		];
 
 		// Adiciona legados
@@ -952,12 +1132,10 @@ export class Table {
 			leftPins.push({ colId: id, pinned: checked ? 'left' : null });
 		});
 
-		const rightPins = [
-			{ colId: 'spent', pinned: checked ? 'right' : null },
-			{ colId: 'revenue', pinned: checked ? 'right' : null },
-			{ colId: 'mx', pinned: checked ? 'right' : null },
-			{ colId: 'profit', pinned: checked ? 'right' : null },
-		];
+		const rightPins = this.config.behavior.pinnedRight.map((colId) => ({
+			colId,
+			pinned: checked ? 'right' : null,
+		}));
 
 		api.applyColumnState({
 			state: [...leftPins, ...rightPins],
@@ -1095,42 +1273,15 @@ export class Table {
 		// ============================================================
 		// 3. LÓGICA DO FORMULÁRIO
 		// ============================================================
-		const DEFAULT_OPERATORS = [
-			{ value: 'custom', label: '✎ Custom Expression', template: '' },
-			{
-				value: 'divide',
-				label: '÷ Division (A / B)',
-				template: 'number({col1}) / number({col2})',
-			},
-			{
-				value: 'multiply',
-				label: '× Multiplication (A × B)',
-				template: 'number({col1}) * number({col2})',
-			},
-			{ value: 'add', label: '+ Addition (A + B)', template: 'number({col1}) + number({col2})' },
-			{
-				value: 'subtract',
-				label: '− Subtraction (A − B)',
-				template: 'number({col1}) - number({col2})',
-			},
-			{
-				value: 'percent',
-				label: '% Percentage (A / B × 100)',
-				template: '(number({col1}) / number({col2})) * 100',
-			},
-			{
-				value: 'percent_change',
-				label: 'Δ% Change ((B-A)/A × 100)',
-				template: '((number({col2}) - number({col1})) / number({col1})) * 100',
-			},
-			{
-				value: 'average',
-				label: '⌀ Average ((A+B)/2)',
-				template: '(number({col1}) + number({col2})) / 2',
-			},
-		];
+
+		// [NOVO] Usa operadores configuráveis via this.config.calcModal.operators
+		const getOperators = () => this.config.calcConfig.operators;
 
 		const _getSelectableColumns = () => {
+			// 1. Hook Customizado
+			if (typeof this.config.callbacks.getCalculableColumns === 'function') {
+				return this.config.callbacks.getCalculableColumns(this.api);
+			}
 			const api = this.api;
 			if (!api) return [];
 			let defs = [];
@@ -1150,20 +1301,24 @@ export class Table {
 				};
 				defs = flattenColDefs(api.getColumnDefs?.() || []);
 			}
+
 			const deny = new Set([
-				'ag-Grid-AutoColumn',
-				'ag-Grid-RowGroup',
-				'__autoGroup',
+				...this.config.behavior.calcDenyList,
 				this.config.behavior.autoGroupColumnId,
 			]);
+
 			defs = defs.filter((def) => {
 				if (!def) return false;
 				const field = def.field || def.colId;
 				if (!field || deny.has(field) || String(field).startsWith('__')) return false;
 				if (def.checkboxSelection || def.rowGroup || def.pivot) return false;
 				const h = String(def.headerName || field).toLowerCase();
-				return !(h.includes('select') || h.includes('ação') || h.includes('action'));
+
+				// [NOVO] Usa padrões ignorados da config
+				const ignored = this.config.calcConfig.ignoredHeaderPatterns;
+				return !ignored.some((pattern) => h.includes(pattern.toLowerCase()));
 			});
+
 			const _isCalculable = (def) => {
 				if (def.calcEligible === true) return true;
 				if (
@@ -1300,7 +1455,7 @@ export class Table {
 			const sel = this._el('ccFormat');
 			if (!sel) return;
 			sel.innerHTML = '';
-			DEFAULT_OPERATORS.forEach((op) => {
+			getOperators().forEach((op) => {
 				const o = document.createElement('option');
 				o.value = op.value;
 				o.textContent = op.label;
@@ -1437,13 +1592,13 @@ export class Table {
 		const tableInstance = this;
 
 		const autoGroupColumnDef = {
-			headerName: 'Campaign',
+			headerName: this.config.behavior.autoGroupHeader,
 			colId: AUTO_GROUP_ID,
 			filter: 'agTextColumnFilter',
 			floatingFilter: true,
 			sortable: false,
 			wrapText: true,
-			minWidth: 280,
+			minWidth: this.config.layout.autoGroupMinWidth, // [NOVO] Parametrizado
 			pinned: 'left',
 			cellClass: (p) =>
 				['camp-root', 'camp-child', 'camp-grand'][Math.min(p?.node?.level ?? 0, 2)],
@@ -1501,7 +1656,8 @@ export class Table {
 		const _rowHeightMeasure = (() => {
 			let box = null;
 			return {
-				measure(text, widthPx) {
+				// [NOVO] Aceita fontFamily como argumento
+				measure(text, widthPx, fontFamily = 'IBM Plex Sans, system-ui') {
 					if (!box) {
 						box = document.createElement('div');
 						box.id = 'lion-rowheight-measurer';
@@ -1514,8 +1670,7 @@ export class Table {
 							wordBreak: 'break-word',
 							overflowWrap: 'anywhere',
 							lineHeight: '1.25',
-							fontFamily: 'IBM Plex Sans, system-ui',
-							fontSize: '14px',
+							fontSize: '14px', // Pode ser parametrizado se quiser ser ultra-perfeccionista
 							padding: '0',
 							margin: '0',
 							width: '0',
@@ -1523,6 +1678,7 @@ export class Table {
 						document.body.appendChild(box);
 					}
 					box.style.width = Math.max(0, widthPx) + 'px';
+					box.style.fontFamily = fontFamily; // Aplica a fonte
 					box.textContent = text || '';
 					return box.scrollHeight || 0;
 				},
@@ -1552,13 +1708,20 @@ export class Table {
 		}
 
 		const _rowHCache = new Map();
-		const BASE_ROW_MIN = 50;
-		const VERT_PAD = 12;
+
+		// [NOVO] Usa layout config
+		const BASE_ROW_MIN = this.config.layout.rowHeightMin;
+		const VERT_PAD = this.config.layout.rowVertPad;
+
+		// [NOVO] Pega fonte do tema para medição correta
+		const themeFont = this.config.theme?.fontFamily?.googleFont || 'IBM Plex Sans, system-ui';
 
 		const gridOptions = {
-			floatingFiltersHeight: 35,
-			groupHeaderHeight: 35,
-			headerHeight: 62,
+			// [NOVO] Usa layout config
+			floatingFiltersHeight: this.config.layout.floatingFiltersHeight,
+			groupHeaderHeight: this.config.layout.groupHeaderHeight,
+			headerHeight: this.config.layout.headerHeight,
+
 			// FIX: Usa showToast importado para garantir compatibilidade com utils.js
 			context: { showToast: (msg, type) => showToast(msg, type) },
 			rowModelType: 'serverSide',
@@ -1568,12 +1731,28 @@ export class Table {
 			isServerSideGroup: (data) => data?.__nodeType === 'campaign' || data?.__nodeType === 'adset',
 			getServerSideGroupKey: (data) => data?.__groupKey ?? '',
 
-			getRowId: function (params) {
-				if (params.data?.__nodeType === 'campaign') return `c:${params.data.__groupKey}`;
-				if (params.data?.__nodeType === 'adset') return `s:${params.data.__groupKey}`;
-				if (params.data?.__nodeType === 'ad')
-					return `a:${params.data.id || params.data.story_id || params.data.__label}`;
-				return params.data?.id ? String(params.data.id) : `${Math.random()}`;
+			// [CORREÇÃO CRÍTICA] Mudança de 'function(params)' para '(params) =>'
+			// Isso garante que 'this' se refira à classe Table
+			getRowId: (params) => {
+				const data = params.data;
+				if (!data) return `${Math.random()}`;
+
+				// Usando chaves parametrizadas para robustez total
+				if (data.__nodeType === 'campaign') {
+					return `c:${data.__groupKey}`;
+				}
+				if (data.__nodeType === 'adset') {
+					return `s:${data.__groupKey}`;
+				}
+				if (data.__nodeType === 'ad') {
+					// Tenta usar o ID configurado, senão cai no fallback
+					const idKey = this.config.dataKeys.id;
+					return `a:${data[idKey] || data.story_id || data.__label}`;
+				}
+
+				// Fallback genérico usando a chave de ID configurada
+				const idKey = this.config.dataKeys.id;
+				return data[idKey] ? String(data[idKey]) : `${Math.random()}`;
 			},
 
 			columnDefs: [].concat(this.columnDefs),
@@ -1614,7 +1793,8 @@ export class Table {
 					const w = widthBag[field];
 					if (!w) continue;
 					const text = tableInstance.getCellTextForField(p, field);
-					const textH = _rowHeightMeasure.measure(text, w);
+					// [FIX] Passa a fonte configurada
+					const textH = _rowHeightMeasure.measure(text, w, themeFont);
 					if (textH > maxTextH) maxTextH = textH;
 				}
 
@@ -1677,9 +1857,9 @@ export class Table {
 					const utm = d.utm_campaign || '';
 					if (label) {
 						items.push({
-							name: 'Copy Campaign',
+							// [NOVO] Usa texto configurável
+							name: this.config.text.copyCampaign,
 							action: () => {
-								// Usa utils.js
 								copyToClipboard(label);
 								showToast('Campaign name copied', 'success');
 							},
@@ -1688,7 +1868,8 @@ export class Table {
 					}
 					if (utm) {
 						items.push({
-							name: 'Copy UTM',
+							// [NOVO] Usa texto configurável
+							name: this.config.text.copyUTM,
 							action: () => {
 								copyToClipboard(utm);
 								showToast('UTM copied', 'success');
@@ -1706,7 +1887,8 @@ export class Table {
 				) {
 					items.push('separator');
 					items.push({
-						name: 'Copy with parts',
+						// [NOVO] Usa texto configurável
+						name: this.config.text.copyWithParts,
 						action: () => {
 							const txt = buildCopyWithPartsText(params);
 							copyToClipboard(txt);
@@ -1751,15 +1933,8 @@ export class Table {
 					return;
 				}
 
-				const MODAL_FIELDS = new Set([
-					'profile_name',
-					'bc_name',
-					'account_name',
-					'account_status',
-					'account_limit',
-					'campaign_name',
-					'utm_campaign',
-				]);
+				const MODAL_FIELDS = new Set(this.config.behavior.modalOpenFields);
+
 				const field = params.colDef?.field;
 				if (!field || !MODAL_FIELDS.has(field)) return;
 
@@ -1810,7 +1985,10 @@ export class Table {
 								const all = this.ROOT_CACHE.rowsRaw;
 								const filtered = this.frontApplyFilters(all, filterModelWithGlobal);
 								const ordered = this.frontApplySort(filtered, sortModel || []);
-								const rowsNorm = ordered.map(this.normalizeCampaignRow);
+
+								// [CORREÇÃO DO BUG DE CONTEXTO] Usando arrow function
+								const rowsNorm = ordered.map((r) => this.normalizeCampaignRow(r));
+
 								const slice = rowsNorm.slice(
 									startRow,
 									Math.min(endRow, rowsNorm.length)
@@ -1824,28 +2002,38 @@ export class Table {
 									currency,
 								});
 
+								// [NOVO] Uso de chaves de dados parametrizadas
+								const k = this.config.dataKeys;
+
 								const pinnedTotal = {
 									id: '__pinned_total__',
 									bc_name: 'TOTAL',
-									__label: `CAMPAIGNS: ${intFmt.format(rowsNorm.length)}`,
-									impressions: intFmt.format(totals.impressions_sum || 0),
-									clicks: intFmt.format(totals.clicks_sum || 0),
-									visitors: intFmt.format(totals.visitors_sum || 0),
-									conversions: intFmt.format(totals.conversions_sum || 0),
-									real_conversions: intFmt.format(totals.real_conversions_sum || 0),
-									ctr: totals.ctr_total
-										? (totals.ctr_total * 100).toFixed(2) + '%'
+									__label: `${this.config.behavior.totalLabelPrefix}${intFmt.format(
+										rowsNorm.length
+									)}`,
+
+									[k.impressions]: intFmt.format(totals[k.impressions] || 0),
+									[k.clicks]: intFmt.format(totals[k.clicks] || 0),
+									[k.visitors]: intFmt.format(totals[k.visitors] || 0),
+									[k.conversions]: intFmt.format(totals[k.conversions] || 0),
+									[k.real_conversions]: intFmt.format(totals[k.real_conversions] || 0),
+
+									[k.ctr_total]: totals[k.ctr_total]
+										? (totals[k.ctr_total] * 100).toFixed(2) + '%'
 										: '0.00%',
-									spent: nfCur.format(totals.spent_sum || 0),
-									revenue: nfCur.format(totals.revenue_sum || 0),
-									fb_revenue: nfCur.format(totals.fb_revenue_sum || 0),
-									push_revenue: nfCur.format(totals.push_revenue_sum || 0),
-									profit: nfCur.format(totals.profit_sum || 0),
-									budget: nfCur.format(totals.budget_sum || 0),
-									cpc: nfCur.format(totals.cpc_total || 0),
-									cpa_fb: nfCur.format(totals.cpa_fb_total || 0),
-									real_cpa: nfCur.format(totals.real_cpa_total || 0),
-									mx: totals.mx_total ? totals.mx_total.toFixed(2) + 'x' : '0x',
+
+									[k.spent]: nfCur.format(totals[k.spent] || 0),
+									[k.revenue]: nfCur.format(totals[k.revenue] || 0),
+									[k.fb_revenue]: nfCur.format(totals[k.fb_revenue] || 0),
+									[k.push_revenue]: nfCur.format(totals[k.push_revenue] || 0),
+									[k.profit]: nfCur.format(totals[k.profit] || 0),
+									[k.budget]: nfCur.format(totals[k.budget] || 0),
+									[k.cpc_total]: nfCur.format(totals[k.cpc_total] || 0),
+									[k.cpa_fb_total]: nfCur.format(totals[k.cpa_fb_total] || 0),
+									[k.real_cpa_total]: nfCur.format(totals[k.real_cpa_total] || 0),
+									[k.mx_total]: totals[k.mx_total]
+										? totals[k.mx_total].toFixed(2) + 'x'
+										: '0x',
 								};
 
 								try {
@@ -1879,6 +2067,8 @@ export class Table {
 								const data = await fetchJSON(
 									`${this.endpoints.ADSETS}?${qs.toString()}`
 								);
+
+								// [CORREÇÃO DO BUG DE CONTEXTO] Usando arrow function
 								const rows = (data.rows || []).map((row) => this.normalizeAdsetRow(row));
 
 								await withMinSpinner(req.request, this.drill.minSpinnerMs);
@@ -1906,7 +2096,9 @@ export class Table {
 								if (this.drill.fakeNetworkMs > 0) await sleep(this.drill.fakeNetworkMs);
 
 								const data = await fetchJSON(`${this.endpoints.ADS}?${qs.toString()}`);
-								const rows = (data.rows || []).map(this.normalizeAdRow);
+
+								// [CORREÇÃO DO BUG DE CONTEXTO] Usando arrow function
+								const rows = (data.rows || []).map((r) => this.normalizeAdRow(r));
 
 								await withMinSpinner(req.request, this.drill.minSpinnerMs);
 								req.success({ rowData: rows, rowCount: data.lastRow ?? rows.length });
@@ -1968,14 +2160,22 @@ export class Table {
 	}
 
 	getCellTextForField(p, field) {
-		const d = p?.data || {};
-		if (field === 'campaign') {
-			if ((p?.node?.level ?? 0) !== 0) return String(d.__label || '');
-			const label = String(d.__label || '');
-			const utm = String(d.utm_campaign || '');
-			return utm ? `${label}\n${utm}` : label;
+		// 1. Hook Customizado (Se você passar no bootstrap, ele usa)
+		if (typeof this.config.callbacks.getCellText === 'function') {
+			return this.config.callbacks.getCellText(p, field);
 		}
-		if (field === 'bc_name') return String(d.bc_name || '');
+
+		// 2. Fallback Padrão (Lógica do Lion/Genérica)
+		const d = p?.data || {};
+
+		// Lógica para agrupar texto + ID (ex: Nome da Campanha + UTM)
+		if (p?.node?.group && field === this.config.behavior.autoGroupColumnId) {
+			const label = String(d.__label || '');
+			const meta = String(d.__groupKey || ''); // UTM ou ID
+			return meta ? `${label}\n${meta}` : label;
+		}
+
+		// Retorno simples para colunas normais
 		return String(d[field] ?? '');
 	}
 
@@ -1999,13 +2199,15 @@ export class Table {
 			'keydown',
 			(e) => {
 				if (e.key !== 'Escape') return;
-				const ktModal = document.getElementById('lionKtModal');
+				// Usa o ID configurado para o modal drilldown
+				const drilldownId = this.config.selectors.modalDrilldown.replace(/^#/, '');
+				const ktModal = document.getElementById(drilldownId);
 				if (
 					ktModal &&
 					!ktModal.classList.contains('hidden') &&
 					ktModal.style.display !== 'none'
 				) {
-					this.closeKTModal('#lionKtModal');
+					this.closeKTModal(this.config.selectors.modalDrilldown);
 					return;
 				}
 				const calcModal = this._el('modalCalcCols');
@@ -2032,20 +2234,25 @@ export class Table {
 
 	showKTModal({ title = 'Details', content = '' } = {}) {
 		this.ensureKtModalDom();
-		const modal = document.getElementById('lionKtModal');
+		const modalSelector = this.config.selectors.modalDrilldown;
+		const modal = document.querySelector(modalSelector);
 		if (!modal) return;
-		const tEl = modal.querySelector('.kt-modal-title');
+
+		const tEl = modal.querySelector(this.config.selectors.modalDrilldownTitle);
 		if (tEl) tEl.textContent = title;
-		const bEl = modal.querySelector('.kt-modal-body > pre');
+
+		const bEl = modal.querySelector(this.config.selectors.modalDrilldownBody);
 		if (bEl) bEl.textContent = content;
+
 		modal.setAttribute('aria-hidden', 'false');
 		modal.style.display = 'flex';
 		modal.classList.add('kt-modal--open');
 		modal.classList.remove('hidden');
 	}
 
-	closeKTModal(selector = '#lionKtModal') {
-		const modal = document.querySelector(selector);
+	closeKTModal(selector) {
+		const targetSelector = selector || this.config.selectors.modalDrilldown;
+		const modal = document.querySelector(targetSelector);
 		if (!modal) return;
 		modal.setAttribute('aria-hidden', 'true');
 		modal.style.display = 'none';
@@ -2054,24 +2261,30 @@ export class Table {
 	}
 
 	ensureKtModalDom() {
-		if (document.getElementById('lionKtModal')) return;
+		const modalSelector = this.config.selectors.modalDrilldown;
+		const modalId = modalSelector.replace(/^#/, '');
+		if (document.getElementById(modalId)) return;
+
 		const tpl = document.createElement('div');
-		tpl.innerHTML = `
-			<div class="kt-modal hidden" id="lionKtModal" aria-hidden="true" style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:9999;align-items:center;justify-content:center;">
-				<div class="kt-modal-content" style="background:#09090B;color:#fff;padding:20px;border-radius:8px;max-width:500px;width:90%;max-height:80vh;overflow:auto;position:relative;">
-					<div class="kt-modal-header" style="display:flex;justify-content:space-between;margin-bottom:15px;">
-						<h3 class="kt-modal-title" style="font-weight:bold;font-size:1.1rem;">Details</h3>
-						<button type="button" class="kt-modal-close" style="background:none;border:none;color:#fff;font-size:1.2rem;cursor:pointer;">✕</button>
-					</div>
-					<div class="kt-modal-body"><pre class="whitespace-pre-wrap text-sm" style="white-space:pre-wrap;word-break:break-word;"></pre></div>
-				</div>
-			</div>`;
+		// Injeta o template configurado. Substitui {id} pelo ID real.
+		let html = this.config.templates.modalDrilldown;
+		if (html.includes('{id}')) {
+			html = html.replace('{id}', modalId);
+		}
+		tpl.innerHTML = html;
+
 		document.body.appendChild(tpl.firstElementChild);
-		document
-			.querySelector('#lionKtModal .kt-modal-close')
-			?.addEventListener('click', () => this.closeKTModal('#lionKtModal'));
-		document.getElementById('lionKtModal')?.addEventListener('click', (e) => {
-			if (e.target.id === 'lionKtModal') this.closeKTModal('#lionKtModal');
+
+		// Bind do botão de fechar
+		const closeSelector = this.config.selectors.modalDrilldownClose;
+		// Ajusta seletor para buscar dentro do modal criado
+		const closeBtn = document.querySelector(`${modalSelector} ${closeSelector}`);
+		closeBtn?.addEventListener('click', () => this.closeKTModal(modalSelector));
+
+		// Fecha ao clicar fora (overlay)
+		const modalEl = document.getElementById(modalId);
+		modalEl?.addEventListener('click', (e) => {
+			if (e.target.id === modalId) this.closeKTModal(modalSelector);
 		});
 	}
 
@@ -2105,32 +2318,73 @@ export class Table {
 
 	// Normalizadores de Linha (Usados no DataSource do makeGrid)
 	normalizeCampaignRow(r) {
-		const label = stripHtml(r.campaign_name || '(no name)');
-		const utm = String(r.utm_campaign || r.id || '');
+		// [NOVO] Checa callback customizado primeiro
+		if (typeof this.config.callbacks.normalizeRow === 'function') {
+			return this.config.callbacks.normalizeRow(r, 'campaign', {
+				stripHtml,
+				...this.config.dataKeys,
+			});
+		}
+
+		// [NOVO] Usa chaves dinâmicas
+		const k = this.config.dataKeys;
+
+		const label = stripHtml(r[k.campaign_name] || '(no name)');
+		const utm = String(r[k.utm_campaign] || r[k.id] || '');
 		return {
 			__nodeType: 'campaign',
 			__groupKey: utm,
 			__label: label,
+			// Mantem 'campaign' hardcoded APENAS como chave interna do AG Grid se o colId for 'campaign'
+			// Se o colId mudar, isso aqui não importa tanto, pois o valueGetter resolve.
 			campaign: (label + ' ' + utm).trim(),
 			...r,
 		};
 	}
 	normalizeAdsetRow(r) {
+		// [NOVO] Checa callback customizado primeiro
+		if (typeof this.config.callbacks.normalizeRow === 'function') {
+			return this.config.callbacks.normalizeRow(r, 'adset', {
+				stripHtml,
+				...this.config.dataKeys,
+			});
+		}
+
+		const k = this.config.dataKeys;
 		return {
 			__nodeType: 'adset',
-			__groupKey: String(r.id || ''),
-			__label: stripHtml(r.name || '(adset)'),
+			__groupKey: String(r[k.id] || ''),
+			__label: stripHtml(r[k.adset_name] || '(adset)'),
 			...r,
 		};
 	}
 	normalizeAdRow(r) {
-		return { __nodeType: 'ad', __label: stripHtml(r.name || '(ad)'), ...r };
+		// [NOVO] Checa callback customizado primeiro
+		if (typeof this.config.callbacks.normalizeRow === 'function') {
+			return this.config.callbacks.normalizeRow(r, 'ad', { stripHtml, ...this.config.dataKeys });
+		}
+
+		const k = this.config.dataKeys;
+		return { __nodeType: 'ad', __label: stripHtml(r[k.ad_name] || '(ad)'), ...r };
 	}
 
 	// Lógica de Sort/Filter no Front (Usados no DataSource)
 	frontApplySort(rows, sortModel) {
 		if (!Array.isArray(sortModel) || !sortModel.length) return rows;
-		const orderStatus = ['ACTIVE', 'PAUSED', 'DISABLED', 'CLOSED'];
+		// 1. Hook customizado
+		if (typeof this.config.callbacks.customSort === 'function') {
+			// A função customizada deve retornar as rows ordenadas ou null para seguir o fluxo
+			const customResult = this.config.callbacks.customSort(rows, sortModel, {
+				frontToNumberBR,
+				frontToNumberFirst, // Injeta utils
+			});
+			if (customResult) return customResult;
+		}
+		const orderStatus = this.config.behavior.statusOrder;
+
+		// [NOVO] Pega chave de revenue configurada
+		const revenueKey = this.config.dataKeys.revenue;
+
 		return rows.slice().sort((a, b) => {
 			for (const s of sortModel) {
 				const { colId, sort } = s;
@@ -2138,7 +2392,8 @@ export class Table {
 				let av = a[colId],
 					bv = b[colId];
 
-				if (['account_status', 'campaign_status', 'status'].includes(colId)) {
+				// Usa a lista de colunas de status definida via ||
+				if (this.config.behavior.statusColIds.includes(colId)) {
 					const ai = orderStatus.indexOf(String(av ?? '').toUpperCase());
 					const bi = orderStatus.indexOf(String(bv ?? '').toUpperCase());
 					const aIdx = ai === -1 ? Number.POSITIVE_INFINITY : ai;
@@ -2146,7 +2401,9 @@ export class Table {
 					if (aIdx !== bIdx) return (aIdx - bIdx) * dir;
 					continue;
 				}
-				if (colId === 'revenue') {
+
+				// [NOVO] Verifica se é a coluna de receita configurada
+				if (colId === revenueKey) {
 					const an = frontToNumberFirst(av);
 					const bn = frontToNumberFirst(bv);
 					if (an == null && bn == null) continue;
@@ -2173,24 +2430,140 @@ export class Table {
 
 	frontApplyFilters(rows, filterModel) {
 		if (!filterModel || typeof filterModel !== 'object') return rows;
+
 		// Global filter já aplicado na origem ou aqui se necessário
 		const globalFilter = String(filterModel._global?.filter || '')
 			.trim()
 			.toLowerCase();
 
+		// 1. Prepare Evaluators for Calculated Columns (Optimization)
+		const calcEvaluators = {};
+		if (this.calc) {
+			const calcList = this.calc.list(); // List of configs
+			// Only compile if the field is actually being filtered
+			Object.keys(filterModel).forEach((field) => {
+				const cfg = calcList.find((c) => c.id === field);
+				if (cfg) {
+					calcEvaluators[field] = this.calc._compileExpr(cfg.expression);
+				}
+			});
+		}
+
 		const checks = Object.entries(filterModel)
 			.filter(([field]) => field !== '_global')
 			.map(([field, f]) => {
 				const ft = f.filterType || f.type || 'text';
-				// ... lógica de filtro (simplificada para brevidade, traga a sua original se tiver lógica custom complexa)
-				// Para manter compatibilidade com o original:
-				if (ft === 'text') {
+
+				// Lógica específica para Campanha (Nome + UTM)
+				const autoGroupCol = this.config.behavior.autoGroupColumnId;
+				const isCampaignColumn =
+					field === 'campaign' ||
+					field === autoGroupCol ||
+					field === 'ag-Grid-AutoColumn' ||
+					String(field).startsWith('ag-Grid-AutoColumn');
+
+				if (isCampaignColumn) {
+					const comp = String(f.type || 'contains');
 					const needle = String(f.filter ?? '').toLowerCase();
-					return (r) =>
-						String(r[field] ?? '')
-							.toLowerCase()
-							.includes(needle);
+					if (!needle) return () => true;
+
+					// [NOVO] Usa chaves de dados
+					const k = this.config.dataKeys;
+
+					return (r) => {
+						// Busca o label normalizado ou o nome cru usando chaves config
+						const name = String(r.__label || r[k.campaign_name] || '').toLowerCase();
+						const utm = String(r[k.utm_campaign] || '').toLowerCase();
+						const combined = (name + ' ' + utm).trim();
+
+						switch (comp) {
+							case 'equals':
+								return combined === needle;
+							case 'notEqual':
+								return combined !== needle;
+							case 'startsWith':
+								return combined.startsWith(needle);
+							case 'endsWith':
+								return combined.endsWith(needle);
+							case 'notContains':
+								return !combined.includes(needle);
+							case 'contains':
+							default:
+								return combined.includes(needle);
+						}
+					};
 				}
+
+				if (ft === 'includes' && Array.isArray(f.values)) {
+					const set = new Set(f.values.map((v) => String(v).toLowerCase()));
+					return (r) => set.has(String(r[field] ?? '').toLowerCase());
+				}
+				if (ft === 'excludes' && Array.isArray(f.values)) {
+					const set = new Set(f.values.map((v) => String(v).toLowerCase()));
+					return (r) => !set.has(String(r[field] ?? '').toLowerCase());
+				}
+
+				if (ft === 'text') {
+					const comp = String(f.type || 'contains');
+					const needle = String(f.filter ?? '').toLowerCase();
+					if (!needle) return () => true;
+
+					return (r) => {
+						const val = String(r[field] ?? '').toLowerCase();
+						switch (comp) {
+							case 'equals':
+								return val === needle;
+							case 'notEqual':
+								return val !== needle;
+							case 'startsWith':
+								return val.startsWith(needle);
+							case 'endsWith':
+								return val.endsWith(needle);
+							case 'notContains':
+								return !val.includes(needle);
+							case 'contains':
+							default:
+								return val.includes(needle);
+						}
+					};
+				}
+
+				// Lógica Numérica (com suporte a colunas calculadas)
+				if (ft === 'number') {
+					const comp = String(f.type || 'equals');
+					const val = Number(f.filter);
+					return (r) => {
+						// [FIX] Prepara getter de valor (Raw ou Calculated)
+						let rawVal = r[field];
+
+						// Se a chave não existe no objeto row, tenta calcular
+						if (rawVal === undefined && calcEvaluators[field]) {
+							try {
+								rawVal = calcEvaluators[field](r);
+							} catch {}
+						}
+
+						const n = frontToNumberBR(rawVal);
+						if (n == null) return false;
+						switch (comp) {
+							case 'equals':
+								return n === val;
+							case 'notEqual':
+								return n !== val;
+							case 'greaterThan':
+								return n > val;
+							case 'lessThan':
+								return n < val;
+							case 'greaterThanOrEqual':
+								return n >= val;
+							case 'lessThanOrEqual':
+								return n <= val;
+							default:
+								return true;
+						}
+					};
+				}
+
 				return () => true;
 			});
 
@@ -2207,45 +2580,63 @@ export class Table {
 	}
 
 	computeClientTotals(rows) {
+		const cur = this.config.behavior.currency;
+
+		if (typeof this.config.callbacks.computeTotals === 'function') {
+			return this.config.callbacks.computeTotals(rows, {
+				sumNum,
+				safeDiv,
+				intFmt,
+				numBR: (val) => numBR(val, cur),
+			});
+		}
+
 		const sum = sumNum;
-		const num = numBR;
 		const div = safeDiv;
-		const spent_sum = sum(rows, (r) => num(r.spent));
-		const fb_revenue_sum = sum(rows, (r) => num(r.fb_revenue));
-		const push_revenue_sum = sum(rows, (r) => num(r.push_revenue));
+		const num = (val) => numBR(val, cur);
+
+		// [NOVO] Usa chaves de dados parametrizadas
+		const k = this.config.dataKeys;
+
+		const spent_sum = sum(rows, (r) => num(r[k.spent]));
+		const fb_revenue_sum = sum(rows, (r) => num(r[k.fb_revenue]));
+		const push_revenue_sum = sum(rows, (r) => num(r[k.push_revenue]));
+
 		const revenue_sum =
 			(Number.isFinite(fb_revenue_sum) ? fb_revenue_sum : 0) +
 				(Number.isFinite(push_revenue_sum) ? push_revenue_sum : 0) ||
-			sum(rows, (r) => num(r.revenue));
-		const impressions_sum = sum(rows, (r) => num(r.impressions));
-		const clicks_sum = sum(rows, (r) => num(r.clicks));
-		const visitors_sum = sum(rows, (r) => num(r.visitors));
-		const conversions_sum = sum(rows, (r) => num(r.conversions));
-		const real_conversions_sum = sum(rows, (r) => num(r.real_conversions));
-		const profit_sum = sum(rows, (r) => num(r.profit));
-		const budget_sum = sum(rows, (r) => num(r.budget));
+			sum(rows, (r) => num(r[k.revenue]));
 
+		const impressions_sum = sum(rows, (r) => num(r[k.impressions]));
+		const clicks_sum = sum(rows, (r) => num(r[k.clicks]));
+		const visitors_sum = sum(rows, (r) => num(r[k.visitors]));
+		const conversions_sum = sum(rows, (r) => num(r[k.conversions]));
+		const real_conversions_sum = sum(rows, (r) => num(r[k.real_conversions]));
+		const profit_sum = sum(rows, (r) => num(r[k.profit]));
+		const budget_sum = sum(rows, (r) => num(r[k.budget]));
+
+		// Retorna objeto com chaves parametrizadas também
 		return {
-			impressions_sum,
-			clicks_sum,
-			visitors_sum,
-			conversions_sum,
-			real_conversions_sum,
-			spent_sum,
-			fb_revenue_sum,
-			push_revenue_sum,
-			revenue_sum,
-			profit_sum,
-			budget_sum,
-			cpc_total: div(spent_sum, clicks_sum),
-			cpa_fb_total: div(spent_sum, conversions_sum),
-			real_cpa_total: div(spent_sum, real_conversions_sum),
-			ctr_total: div(clicks_sum, impressions_sum),
-			epc_total: div(revenue_sum, clicks_sum),
-			mx_total: div(revenue_sum, spent_sum),
+			[k.impressions]: impressions_sum,
+			[k.clicks]: clicks_sum,
+			[k.visitors]: visitors_sum,
+			[k.conversions]: conversions_sum,
+			[k.real_conversions]: real_conversions_sum,
+			[k.spent]: spent_sum,
+			[k.fb_revenue]: fb_revenue_sum,
+			[k.push_revenue]: push_revenue_sum,
+			[k.revenue]: revenue_sum,
+			[k.profit]: profit_sum,
+			[k.budget]: budget_sum,
+
+			[k.cpc_total]: div(spent_sum, clicks_sum),
+			[k.cpa_fb_total]: div(spent_sum, conversions_sum),
+			[k.real_cpa_total]: div(spent_sum, real_conversions_sum),
+			[k.ctr_total]: div(clicks_sum, impressions_sum),
+			[k.epc_total]: div(revenue_sum, clicks_sum),
+			[k.mx_total]: div(revenue_sum, spent_sum),
 		};
 	}
-
 	destroy() {
 		// Limpeza do listener global de teclado
 		if (this._quickFilterKeyHandler) {
@@ -2254,7 +2645,7 @@ export class Table {
 		}
 
 		if (this.api) {
-			this.saveState();
+			this.saveState(); // [AGORA FUNCIONA]
 			this.api.destroy();
 			this.api = null;
 		}
