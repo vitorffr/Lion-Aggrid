@@ -233,7 +233,7 @@ export class StackBelowRenderer {
 		if (this.partsBox) {
 			for (const child of this.partsBox.childNodes) push(t(child));
 		}
-		return lines.join('\n');
+		return lines.join(' | ');
 	}
 }
 export function parseCurrencyFlexible(value, currency = 'BRL') {

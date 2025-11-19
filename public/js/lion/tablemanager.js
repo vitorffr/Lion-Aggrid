@@ -242,6 +242,20 @@ export class Table {
 				copyWithParts: 'Copy with parts',
 				modalDetailsTitle: 'Details',
 				modalCampaignTitle: 'Campaign',
+				// [NOVO] Parametros adicionados
+				emptyValue: '—',
+				noName: '(no name)',
+				adsetDefault: '(adset)',
+				adDefault: '(ad)',
+				toastLayoutReset: 'Layout Reset',
+				toastPresetSaved: 'Preset "{name}" saved',
+				toastPresetApplied: 'Preset "{name}" applied',
+				toastPresetRemoved: 'Preset "{name}" removed',
+				toastPresetDownloaded: 'Preset "{name}" downloaded',
+				toastColumnSaved: 'Column Saved',
+				toastActivated: 'Activated',
+				toastCopied: 'Copied',
+				toastCopiedParts: 'Copied (with parts)',
 			},
 
 			// Modal de Colunas Calculadas
@@ -551,7 +565,8 @@ export class Table {
 			}
 
 			_fmtBy(fmt, n) {
-				if (!Number.isFinite(n)) return '—';
+				// [PARAMETRIZADO]
+				if (!Number.isFinite(n)) return parentTable.config.text.emptyValue || '—';
 
 				// INTEIRO: Arredonda e remove decimais
 				if (fmt === 'int') return intFmt.format(Math.round(n));
@@ -852,7 +867,8 @@ export class Table {
 					tableInstance.togglePinnedColsFromCheckbox(true);
 					applySizeMode('fit');
 					syncTogglesUI();
-					showToast('Layout Reset', 'info');
+					// [PARAMETRIZADO]
+					showToast(this.config.text.toastLayoutReset || 'Layout Reset', 'info');
 				}, 50);
 			} catch (e) {
 				console.warn('resetLayout fail', e);
@@ -877,7 +893,12 @@ export class Table {
 			writePresets(bag);
 			refreshPresetUserSelect();
 			localStorage.setItem(LS_KEY_ACTIVE_PRESET, name);
-			showToast(`Preset "${name}" saved`, 'success');
+			// [PARAMETRIZADO]
+			const msg = (this.config.text.toastPresetSaved || 'Preset "{name}" saved').replace(
+				'{name}',
+				name
+			);
+			showToast(msg, 'success');
 		};
 
 		const applyPresetUser = (name) => {
@@ -902,7 +923,12 @@ export class Table {
 			} catch (e) {}
 			api.refreshHeader?.();
 			api.redrawRows?.();
-			showToast(`Preset "${name}" applied`, 'success');
+			// [PARAMETRIZADO]
+			const msg = (this.config.text.toastPresetApplied || 'Preset "{name}" applied').replace(
+				'{name}',
+				name
+			);
+			showToast(msg, 'success');
 		};
 
 		const deletePreset = () => {
@@ -919,7 +945,12 @@ export class Table {
 			if (active === name) localStorage.removeItem(LS_KEY_ACTIVE_PRESET);
 
 			refreshPresetUserSelect();
-			showToast(`Preset "${name}" removed`, 'info');
+			// [PARAMETRIZADO]
+			const msg = (this.config.text.toastPresetRemoved || 'Preset "{name}" removed').replace(
+				'{name}',
+				name
+			);
+			showToast(msg, 'info');
 		};
 
 		const downloadPreset = () => {
@@ -942,7 +973,12 @@ export class Table {
 			a.click();
 			a.remove();
 			URL.revokeObjectURL(url);
-			showToast(`Preset "${name}" downloaded`, 'success');
+			// [PARAMETRIZADO]
+			const msg = (this.config.text.toastPresetDownloaded || 'Preset "{name}" downloaded').replace(
+				'{name}',
+				name
+			);
+			showToast(msg, 'success');
 		};
 
 		const uploadPreset = () => {
@@ -1544,7 +1580,8 @@ export class Table {
 				this.api?.refreshHeader?.();
 				this.api?.redrawRows?.();
 				renderList();
-				showToast('Column Saved', 'success');
+				// [PARAMETRIZADO]
+				showToast(this.config.text.toastColumnSaved || 'Column Saved', 'success');
 			}
 		});
 
@@ -1556,7 +1593,8 @@ export class Table {
 			e.preventDefault();
 			this.calc.activateAll();
 			renderList();
-			showToast('Activated', 'success');
+			// [PARAMETRIZADO]
+			showToast(this.config.text.toastActivated || 'Activated', 'success');
 		});
 		if ($reload) {
 			$reload.addEventListener('click', (e) => {
@@ -1926,7 +1964,11 @@ export class Table {
 						action: () => {
 							const txt = buildCopyWithPartsText(params);
 							copyToClipboard(txt);
-							showToast('Copied (with parts)', 'success');
+							// [PARAMETRIZADO]
+							showToast(
+								this.config.text.toastCopiedParts || 'Copied (with parts)',
+								'success'
+							);
 						},
 						icon: '<span class="ag-icon ag-icon-copy"></span>',
 					});
@@ -1962,7 +2004,7 @@ export class Table {
 				);
 
 				if (isAutoGroupCol && !clickedExpander && params?.data?.__nodeType === 'campaign') {
-					const label = params.data.__label || '(no name)';
+					const label = params.data.__label || this.config.text.noName || '(no name)';
 					this.showKTModal({ title: this.config.text.modalCampaignTitle, content: label });
 					return;
 				}
@@ -2216,12 +2258,56 @@ export class Table {
 	ensureLoadingStyles() {
 		if (document.getElementById('lion-loading-styles')) return;
 		const css = `
-			.ag-cell.ag-cell-loading * { visibility: hidden !important; }
-			.ag-cell.ag-cell-loading::after { content:""; position:absolute; left:50%; top:50%; width:14px; height:14px; margin-left:-7px; margin-top:-7px; border-radius:50%; border:2px solid #9ca3af; border-top-color:transparent; animation: lion-spin .8s linear infinite; z-index:2; pointer-events:none; }
-			@keyframes lion-spin { to { transform: rotate(360deg); } }
-			.ag-theme-quartz .ag-cell.lion-center-cell { text-align: center; display: flex; align-items: center; justify-content: center; padding: 0 4px; }
-			.ag-theme-quartz .ag-cell.lion-center-cell .ag-cell-value { width: 100%; white-space: normal; word-break: break-word; line-height: 1.2; }
-		`;
+.ag-cell.ag-cell-loading * { visibility: hidden !important; }
+.ag-cell.ag-cell-loading::after {
+  content:""; position:absolute; left:50%; top:50%; width:14px; height:14px;
+  margin-left:-7px; margin-top:-7px; border-radius:50%; border:2px solid #9ca3af;
+  border-top-color:transparent; animation: lion-spin .8s linear infinite; z-index:2; pointer-events:none;
+}
+.lion-status-menu { position:absolute; min-width:160px; padding:6px 0; background:#111; color:#eee; border:1px solid rgba(255,255,255,.08); border-radius:8px; box-shadow:0 10px 30px rgba(0,0,0,.35); z-index:99999; }
+.lion-status-menu__item { padding:8px 12px; font-size:12px; cursor:pointer; display:flex; align-items:center; gap:8px; }
+.lion-status-menu__item:hover { background: rgba(255,255,255,.06); }
+.lion-status-menu__item.is-active::before { content:"●"; font-size:10px; line-height:1; }
+@keyframes lion-spin { to { transform: rotate(360deg); } }
+.lion-editable-pen{ display:inline-flex; align-items:center; margin-left:6px; opacity:.45; pointer-events:none; font-size:12px; line-height:1; }
+.ag-cell:hover .lion-editable-pen{ opacity:.85 }
+.lion-editable-ok{ display:inline-flex; align-items:center; margin-left:6px; opacity:.9; pointer-events:none; font-size:12px; line-height:1; }
+.ag-cell:hover .lion-editable-ok{ opacity:1 }
+.lion-editable-err{ display:inline-flex; align-items:center; margin-left:6px; opacity:.95; pointer-events:none; font-size:12px; line-height:1; color:#ef4444; }
+.ag-cell:hover .lion-editable-err{ opacity:1 }
+.ag-cell.lion-cell-error{ background: rgba(239, 68, 68, 0.12); box-shadow: inset 0 0 0 1px rgba(239,68,68,.35); transition: background .2s ease, box-shadow .2s ease; }
+.ag-cell.lion-cell-error .lion-editable-val{ color: #ef4444; font-weight: 600; }
+.ag-cell.lion-cell-error.ag-cell-focus, .ag-cell.lion-cell-error:hover{ background: rgba(239, 68, 68, 0.18); box-shadow: inset 0 0 0 1px rgba(239,68,68,.5); }
+
+/* ===== Centralização real para células que podem quebrar linha ===== */
+/* 1) Remove o viés de -1px do tema nas colunas marcadas como 'lion-center-cell' */
+.ag-theme-quartz :where(.ag-ltr) .ag-center-cols-container
+  .ag-cell.lion-center-cell:not(.ag-cell-inline-editing):not([col-id="ag-Grid-AutoColumn"]):not([col-id="campaign"]) {
+  padding-left: var(--ag-cell-horizontal-padding) !important;
+  padding-right: var(--ag-cell-horizontal-padding) !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;      /* texto multi-linha centraliza */
+}
+
+/* 2) Faz os wrappers ocuparem a largura toda */
+.ag-theme-quartz .ag-center-cols-container
+  .ag-cell.lion-center-cell:not(.ag-cell-inline-editing) .ag-cell-wrapper {
+  width: 100%;
+}
+
+/* 3) Garante que o conteúdo (quebrando linha) centralize */
+.ag-theme-quartz .ag-center-cols-container
+  .ag-cell.lion-center-cell:not(.ag-cell-inline-editing) .ag-cell-value {
+  display: block;          /* evita inline-size encolhendo */
+  width: 100%;             /* ocupa a célula toda */
+  text-align: center;      /* linhas quebradas centralizadas */
+  white-space: normal;     /* habilita wrap */
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+`;
 		const el = document.createElement('style');
 		el.id = 'lion-loading-styles';
 		el.textContent = css;
@@ -2363,7 +2449,8 @@ export class Table {
 		// [NOVO] Usa chaves dinâmicas
 		const k = this.config.dataKeys;
 
-		const label = stripHtml(r[k.campaign_name] || '(no name)');
+		// [PARAMETRIZADO]
+		const label = stripHtml(r[k.campaign_name] || this.config.text.noName || '(no name)');
 		const utm = String(r[k.utm_campaign] || r[k.id] || '');
 		return {
 			__nodeType: 'campaign',
@@ -2388,7 +2475,8 @@ export class Table {
 		return {
 			__nodeType: 'adset',
 			__groupKey: String(r[k.id] || ''),
-			__label: stripHtml(r[k.adset_name] || '(adset)'),
+			// [PARAMETRIZADO]
+			__label: stripHtml(r[k.adset_name] || this.config.text.adsetDefault || '(adset)'),
 			...r,
 		};
 	}
@@ -2399,7 +2487,12 @@ export class Table {
 		}
 
 		const k = this.config.dataKeys;
-		return { __nodeType: 'ad', __label: stripHtml(r[k.ad_name] || '(ad)'), ...r };
+		// [PARAMETRIZADO]
+		return {
+			__nodeType: 'ad',
+			__label: stripHtml(r[k.ad_name] || this.config.text.adDefault || '(ad)'),
+			...r,
+		};
 	}
 
 	// Lógica de Sort/Filter no Front (Usados no DataSource)
