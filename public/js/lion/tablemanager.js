@@ -89,8 +89,6 @@ export class Table {
 				btnDeletePreset: opts.selectors?.btnDeletePreset || '#btnDeletePreset',
 				btnDownloadPreset: opts.selectors?.btnDownloadPreset || '#btnDownloadPreset',
 				btnUploadPreset: opts.selectors?.btnUploadPreset || '#btnUploadPreset',
-
-				// Modal Calc Cols
 				modalCalcCols: opts.selectors?.modalCalcCols || '#calcColsModal',
 				btnAddCalcCol: opts.selectors?.btnAddCalcCol || '#btnCalcCols',
 				btnManageCalcCols: opts.selectors?.btnManageCalcCols || '#btnManageCalcCols',
@@ -112,14 +110,14 @@ export class Table {
 				ccAfter: opts.selectors?.ccAfter || '#cc-after',
 				ccMini: opts.selectors?.ccMini || '#cc-mini',
 
-				// [NOVO] Modal de Drilldown/Detalhes (Parametrizado)
+				// Modal de Drilldown/Detalhes (Parametrizado)
 				modalDrilldown: opts.selectors?.modalDrilldown || '#lionKtModal',
 				modalDrilldownTitle: opts.selectors?.modalDrilldownTitle || '.kt-modal-title',
 				modalDrilldownBody: opts.selectors?.modalDrilldownBody || '.kt-modal-body > pre',
 				modalDrilldownClose: opts.selectors?.modalDrilldownClose || '.kt-modal-close',
 			},
 
-			// [NOVO] Templates HTML (para injeção dinâmica)
+			// Templates HTML
 			templates: {
 				// O ID do modal será injetado dinamicamente se usar o template padrão.
 				// Use {id} como placeholder.
@@ -552,7 +550,6 @@ export class Table {
 					fn: this._compileExpr(p.expr),
 				}));
 
-				// [NOVO] Usa o defaultInsertAfter da config
 				const defaultAfter = parentTable.config.behavior.defaultInsertAfter;
 
 				return {
@@ -560,9 +557,12 @@ export class Table {
 					colId: n.id,
 					minWidth: 150,
 					flex: 1,
-					sortable: true,
-					filter: 'agNumberColumnFilter',
-					floatingFilter: true,
+
+					// [REMOVIDO] Sort e Filter desativados para colunas calculadas
+					sortable: false,
+					filter: false,
+					floatingFilter: false,
+
 					valueGetter: (p) => (totalFn ? totalFn(p.data || {}) : null),
 					valueFormatter: (p) => {
 						const v = p.value;
@@ -1929,7 +1929,7 @@ export class Table {
 
 				if (isAutoGroupCol && !clickedExpander && params?.data?.__nodeType === 'campaign') {
 					const label = params.data.__label || '(no name)';
-					this.showKTModal({ title: 'Campaign', content: label });
+					this.showKTModal({ title: this.config.text.modalCampaignTitle, content: label });
 					return;
 				}
 
@@ -1941,7 +1941,7 @@ export class Table {
 				let display = String(params.valueFormatted || params.value || '');
 				if (stripHtml) display = stripHtml(display);
 
-				const title = params.colDef?.headerName || 'Details';
+				const title = params.colDef?.headerName || this.config.text.modalDetailsTitle;
 				this.showKTModal({ title, content: display || '(empty)' });
 			},
 
