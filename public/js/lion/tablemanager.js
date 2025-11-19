@@ -119,14 +119,14 @@ export class Table {
 				modalDrilldownClose: opts.selectors?.modalDrilldownClose || '.kt-modal-close',
 			},
 
-			// Endpoints de API (Movido para config)
+			// Endpoints de API
 			endpoints: opts.endpoints || {
 				SSRM: '/api/ssrm/?clean=1&mode=full',
 				ADSETS: '/api/adsets/',
 				ADS: '/api/ads/',
 			},
 
-			// Aliases de Colunas (Movido para config - antigo this.map)
+			// Aliases de Colunas
 			aliases: opts.aliases ||
 				opts.map || {
 					revenue: ['revenue', 'receita', 'receitas', 'rev', 'fat', 'faturamento'],
@@ -137,14 +137,14 @@ export class Table {
 					clicks: ['clicks', 'cliques'],
 				},
 
-			// Configurações de Drill/Rede (Movido para config - antigo this.drill)
+			// Configurações de Drill/Rede
 			drill: opts.drill || {
 				period: 'TODAY',
 				minSpinnerMs: 900,
 				fakeNetworkMs: 0,
 			},
 
-			// Configurações Visuais e Estilos Injetados (NOVO - Remove hardcoded CSS)
+			// Configurações Visuais e Estilos Injetados
 			styles: opts.styles || {
 				loadingColor: '#9ca3af',
 				errorColor: '#ef4444',
@@ -157,7 +157,7 @@ export class Table {
 				modalZIndex: '1055',
 			},
 
-			// Configurações do Setup do Grid AG (NOVO - Remove hardcoded properties do makeGrid)
+			// Configurações do Setup do Grid AG
 			gridSetup: opts.gridSetup || {
 				themeClass: 'ag-theme-quartz',
 				selectionColWidth: 36,
@@ -211,6 +211,8 @@ export class Table {
 				utm_campaign: 'utm_campaign',
 				adset_name: 'name',
 				ad_name: 'name',
+				// [NOVO] Coluna onde aparecerá o texto "TOTAL" na linha pinada
+				totalLabelCol: 'bc_name',
 				revenue: 'revenue',
 				spent: 'spent',
 				profit: 'profit',
@@ -279,11 +281,10 @@ export class Table {
 				rowHeightMin: 50,
 				rowVertPad: 12, // Padding vertical para rows com wrap
 				autoGroupMinWidth: 280,
-				calcColMinWidth: 150, // [NOVO] Largura min colunas calculadas
+				calcColMinWidth: 150,
 				cacheBlockSize: 200,
-				// [NOVO] Magic numbers usados para medir texto
-				measurePadding: 12, // Usado em getFieldContentWidth
-				autoGroupOffset: 44, // Usado em getAutoGroupContentWidth
+				measurePadding: 12,
+				autoGroupOffset: 44,
 			},
 
 			// Textos UI
@@ -364,7 +365,8 @@ export class Table {
 
 		const parentTable = this;
 
-		// --- Classes Internas ---
+		// --- Classes Internas (LionCompositeColumns, LionCalcColumns) ---
+		// ... (Mantém as classes internas iguais, sem alterações de hardcode aqui) ...
 
 		class LionCompositeColumns {
 			constructor(map) {
@@ -611,8 +613,6 @@ export class Table {
 					fn: this._compileExpr(p.expr),
 				}));
 				const defaultAfter = parentTable.config.behavior.defaultInsertAfter;
-
-				// [PARAMETRIZADO] minWidth via config layout
 				const minW = parentTable.config.layout.calcColMinWidth || 150;
 
 				return {
@@ -646,7 +646,7 @@ export class Table {
 					cellRenderer: StackBelowRenderer,
 					cellRendererParams: {
 						format: n.format,
-						partsMaxHeight: 40, // Pode ser parametrizado se necessário
+						partsMaxHeight: 40,
 						onlyLevel0: !!n.onlyLevel0,
 						showTop: !n.hideTop,
 						showLabels: !!n.mini,
@@ -745,7 +745,6 @@ export class Table {
 			}
 		}
 
-		// [CORREÇÃO] Passa aliases configurados (config.aliases) para CompositeColumns
 		this.composite = new LionCompositeColumns(this.config.aliases);
 		this.calc = new LionCalcColumns(this.composite);
 	}
@@ -769,7 +768,7 @@ export class Table {
 
 	setupToolbar() {
 		const tableInstance = this;
-
+		// ... (Manter setupToolbar igual, mas garantindo que usa configs) ...
 		const ensureApi = () => {
 			if (!this.api) throw new Error('Grid API indisponível');
 			return this.api;
@@ -827,8 +826,6 @@ export class Table {
 				}
 			} catch {}
 		};
-
-		// --- Ações de Presets ---
 
 		const readPresets = () => {
 			try {
@@ -1224,7 +1221,6 @@ export class Table {
 		const $reload = this._el('ccReload');
 		let lastSelection = { col1: null, col2: null };
 
-		// [NOVO] Usa config.styles.backdrop para evitar CSS inline chumbado
 		const backdropStyles = this.config.styles.backdrop;
 		const modalZ = this.config.styles.modalZIndex;
 
@@ -1311,6 +1307,7 @@ export class Table {
 			);
 		};
 
+		// ... (Resto do CalcColsPopulate igual) ...
 		const handleOpenModal = () => {
 			console.log('[EVENT] handleOpenModal executado');
 			clearForm();
@@ -1624,7 +1621,6 @@ export class Table {
 			return null;
 		}
 
-		// [NOVO] Usa classe do grid parametrizada (ex: ag-theme-quartz)
 		const themeClass = this.config.gridSetup.themeClass || 'ag-theme-quartz';
 		this.gridDiv.classList.add(themeClass);
 
@@ -1729,7 +1725,6 @@ export class Table {
 				const col = api.getColumn(AUTO_GROUP_ID);
 				if (!col) return 300;
 				const colW = col.getActualWidth();
-				// [PARAMETRIZADO] Usando layout.autoGroupOffset (antes era 44)
 				const offset = tableInstance.config.layout.autoGroupOffset || 44;
 				return Math.max(40, colW - offset);
 			} catch {
@@ -1742,7 +1737,6 @@ export class Table {
 				const col = api.getColumn(field);
 				if (!col) return null;
 				const w = col.getActualWidth?.();
-				// [PARAMETRIZADO] Usando layout.measurePadding (antes era 12)
 				const pad = tableInstance.config.layout.measurePadding || 12;
 				return w && Number.isFinite(w) ? Math.max(0, w - pad) : null;
 			} catch {
@@ -1796,7 +1790,6 @@ export class Table {
 				checkboxes: { enabled: true, header: true },
 				selectionColumn: {
 					id: this.config.behavior.selectionColumnId,
-					// [PARAMETRIZADO] Width de selecao
 					width: this.config.gridSetup.selectionColWidth || 36,
 					pinned: 'left',
 					suppressHeaderMenuButton: true,
@@ -1806,19 +1799,26 @@ export class Table {
 
 			rowHeight: BASE_ROW_MIN,
 
+			// [CORREÇÃO] getRowHeight Genérico (sem hardcode de bc_name ou campaign)
 			getRowHeight: (p) => {
 				const widthBag = {};
-				widthBag.campaign = getAutoGroupContentWidth(p.api);
 
-				if (WRAP_FIELDS_LOCAL.includes('bc_name')) {
-					const bmW = getFieldContentWidth(p.api, 'bc_name');
-					if (bmW != null) widthBag.bc_name = bmW;
+				// Itera sobre TODOS os campos que requerem wrap (configurados)
+				for (const field of WRAP_FIELDS_LOCAL) {
+					if (field === AUTO_GROUP_ID || field === 'campaign') {
+						// Lógica especial para autoGroup
+						widthBag[field] = getAutoGroupContentWidth(p.api);
+					} else {
+						// Lógica padrão para colunas normais
+						const w = getFieldContentWidth(p.api, field);
+						if (w != null) widthBag[field] = w;
+					}
 				}
 
-				const key =
-					(p.node.id || Math.random()) +
-					'|' +
-					(widthBag.campaign + ':' + (widthBag.bc_name || 0));
+				// Gera chave de cache baseada em todas as larguras capturadas
+				const dimsKey = Object.values(widthBag).join(':');
+				const key = (p.node.id || Math.random()) + '|' + dimsKey;
+
 				if (_rowHCache.has(key)) return _rowHCache.get(key);
 
 				let maxTextH = 0;
@@ -1856,7 +1856,6 @@ export class Table {
 				gridOptions.api?.resetRowHeights();
 			},
 
-			// [PARAMETRIZADO] Animate e SideBar
 			animateRows: this.config.gridSetup.animateRows ?? true,
 			sideBar: this.config.gridSetup.sideBar,
 
@@ -1885,8 +1884,9 @@ export class Table {
 				const items = ['cut', 'copy', 'copyWithHeaders', 'export', 'separator'];
 
 				if (isCampaignColumn) {
-					const label = d.__label || d.campaign_name || '';
-					const utm = d.utm_campaign || '';
+					// [CORREÇÃO] Usa chave configurada
+					const label = d.__label || d[this.config.dataKeys.campaign_name] || '';
+					const utm = d[this.config.dataKeys.utm_campaign] || '';
 					if (label) {
 						items.push({
 							name: this.config.text.copyCampaign,
@@ -2032,9 +2032,12 @@ export class Table {
 
 								const k = this.config.dataKeys;
 
+								// [CORREÇÃO] Usa chave configurada para o label "TOTAL"
+								// Se totalLabelCol for 'bc_name', então bc_name: 'TOTAL'
+								const totalLabelKey = k.totalLabelCol || 'bc_name';
 								const pinnedTotal = {
 									id: '__pinned_total__',
-									bc_name: 'TOTAL',
+									[totalLabelKey]: 'TOTAL',
 									__label: `${this.config.behavior.totalLabelPrefix}${intFmt.format(
 										rowsNorm.length
 									)}`,
@@ -2201,11 +2204,14 @@ export class Table {
 	ensureLoadingStyles() {
 		if (document.getElementById('lion-loading-styles')) return;
 
-		// [NOVO] Cores e estilos vindo do config.styles
 		const styles = this.config.styles || {};
 		const loadingColor = styles.loadingColor || '#9ca3af';
 		const errorColor = styles.errorColor || '#ef4444';
 		const errorBg = styles.errorBg || 'rgba(239, 68, 68, 0.12)';
+
+		// [CORREÇÃO] Seletor chumbado 'campaign' removido
+		// Usando this.config.behavior.autoGroupColumnId
+		const autoGroupCol = this.config.behavior.autoGroupColumnId || 'campaign';
 
 		const css = `
 .ag-cell.ag-cell-loading * { visibility: hidden !important; }
@@ -2230,7 +2236,7 @@ export class Table {
 .ag-cell.lion-cell-error.ag-cell-focus, .ag-cell.lion-cell-error:hover{ background: rgba(239, 68, 68, 0.18); box-shadow: inset 0 0 0 1px rgba(239,68,68,.5); }
 
 .ag-theme-quartz :where(.ag-ltr) .ag-center-cols-container
-  .ag-cell.lion-center-cell:not(.ag-cell-inline-editing):not([col-id="ag-Grid-AutoColumn"]):not([col-id="campaign"]) {
+  .ag-cell.lion-center-cell:not(.ag-cell-inline-editing):not([col-id="ag-Grid-AutoColumn"]):not([col-id="${autoGroupCol}"]) {
   padding-left: var(--ag-cell-horizontal-padding) !important;
   padding-right: var(--ag-cell-horizontal-padding) !important;
   display: flex;

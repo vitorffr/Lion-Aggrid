@@ -320,32 +320,57 @@ function parseCurrencyInput(params) {
 	return parseCurrencyFlexible(params.newValue, getAppCurrency());
 }
 
-// 6.3 Revenue renderer (quebra em 2 linhas se vier “Total (part1 | part2)”)
 function parseRevenue(raw) {
 	const txt = stripHtml(raw ?? '').trim();
 	const m = txt.match(/^(.*?)\s*\(\s*(.*?)\s*\|\s*(.*?)\s*\)\s*$/);
 	if (!m) return { total: txt, parts: [] };
 	return { total: m[1].trim(), parts: [m[2].trim(), m[3].trim()] };
 }
+
 function revenueCellRenderer(p) {
 	const raw = p.value ?? p.data?.revenue ?? '';
+
+	// 1. Detecta configuração global de moeda
+	const currency = getAppCurrency(); // 'BRL' ou 'USD'
+	const locale = currency === 'USD' ? 'en-US' : 'pt-BR';
+
+	// Helper: converte e reformata dinamicamente
+	const reformat = (val) => {
+		if (!val) return '';
+		// Tenta parsear como número ou string PT-BR (input padrão do backend)
+		// O parseCurrencyFlexible com 'BRL' lida bem com "1.000,00"
+		const n = typeof val === 'number' ? val : parseCurrencyFlexible(val, 'BRL');
+
+		if (!Number.isFinite(n)) return val; // Retorna original se falhar
+
+		return new Intl.NumberFormat(locale, {
+			style: 'currency',
+			currency: currency,
+		}).format(n);
+	};
+
 	if (isPinnedOrTotal(p) || !raw) {
 		const span = document.createElement('span');
-		span.textContent = stripHtml(raw) || '';
+		// Aplica reformatação inclusive nos totais fixados
+		const txt = stripHtml(raw);
+		span.textContent = reformat(txt) || '';
 		return span;
 	}
+
 	const { total } = parseRevenue(raw);
 	const wrap = document.createElement('span');
 	wrap.style.display = 'inline-flex';
 	wrap.style.flexDirection = 'column';
 	wrap.style.lineHeight = '1.15';
 	wrap.style.gap = '2px';
+
 	const totalEl = document.createElement('span');
-	totalEl.textContent = total || '';
+	// Formata o valor principal extraído
+	totalEl.textContent = reformat(total) || '';
+
 	wrap.appendChild(totalEl);
 	return wrap;
 }
-
 // 6.4 Chips fracionários (ex.: “1/3” com cor)
 function pickChipColorFromFraction(value) {
 	const txt = stripHtml(value ?? '').trim();
@@ -1573,7 +1598,6 @@ const columnDefs = [
 				minWidth: 115,
 				flex: 1.0,
 				calcEligible: true,
-
 				pinned: 'right',
 				wrapText: true,
 				cellRenderer: revenueCellRenderer,
