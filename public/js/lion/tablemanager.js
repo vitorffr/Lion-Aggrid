@@ -112,17 +112,65 @@ export class Table {
 				ccAfter: opts.selectors?.ccAfter || '#cc-after',
 				ccMini: opts.selectors?.ccMini || '#cc-mini',
 
-				// Modal de Drilldown/Detalhes (Parametrizado)
+				// Modal de Drilldown/Detalhes
 				modalDrilldown: opts.selectors?.modalDrilldown || '#lionKtModal',
 				modalDrilldownTitle: opts.selectors?.modalDrilldownTitle || '.kt-modal-title',
 				modalDrilldownBody: opts.selectors?.modalDrilldownBody || '.kt-modal-body > pre',
 				modalDrilldownClose: opts.selectors?.modalDrilldownClose || '.kt-modal-close',
 			},
 
+			// Endpoints de API (Movido para config)
+			endpoints: opts.endpoints || {
+				SSRM: '/api/ssrm/?clean=1&mode=full',
+				ADSETS: '/api/adsets/',
+				ADS: '/api/ads/',
+			},
+
+			// Aliases de Colunas (Movido para config - antigo this.map)
+			aliases: opts.aliases ||
+				opts.map || {
+					revenue: ['revenue', 'receita', 'receitas', 'rev', 'fat', 'faturamento'],
+					spent: ['spent', 'gasto', 'gastos', 'spend', 'despesa', 'custo'],
+					profit: ['profit', 'lucro', 'resultado', 'ganho'],
+					mx: ['mx', 'roi', 'roas', 'retorno'],
+					ctr: ['ctr', 'taxadeclique'],
+					clicks: ['clicks', 'cliques'],
+				},
+
+			// Configurações de Drill/Rede (Movido para config - antigo this.drill)
+			drill: opts.drill || {
+				period: 'TODAY',
+				minSpinnerMs: 900,
+				fakeNetworkMs: 0,
+			},
+
+			// Configurações Visuais e Estilos Injetados (NOVO - Remove hardcoded CSS)
+			styles: opts.styles || {
+				loadingColor: '#9ca3af',
+				errorColor: '#ef4444',
+				errorBg: 'rgba(239, 68, 68, 0.12)',
+				backdrop: {
+					background: '#000 !important',
+					opacity: '0.5 !important',
+					zIndex: '1050',
+				},
+				modalZIndex: '1055',
+			},
+
+			// Configurações do Setup do Grid AG (NOVO - Remove hardcoded properties do makeGrid)
+			gridSetup: opts.gridSetup || {
+				themeClass: 'ag-theme-quartz',
+				selectionColWidth: 36,
+				sideBar: {
+					toolPanels: ['columns', 'filters'],
+					defaultToolPanel: null,
+					position: 'right',
+				},
+				animateRows: true,
+			},
+
 			// Templates HTML
 			templates: {
-				// O ID do modal será injetado dinamicamente se usar o template padrão.
-				// Use {id} como placeholder.
 				modalDrilldown:
 					opts.templates?.modalDrilldown ||
 					`
@@ -153,7 +201,6 @@ export class Table {
 				customSort: opts.callbacks?.customSort || null,
 				getCalculableColumns: opts.callbacks?.getCalculableColumns || null,
 				getCellText: opts.callbacks?.getCellText || null,
-				// [NOVO] Callback para normalizar linhas (override total se o user passar)
 				normalizeRow: opts.callbacks?.normalizeRow || null,
 			},
 
@@ -224,15 +271,19 @@ export class Table {
 				],
 			},
 
-			// Layout
+			// Layout (Tamanhos e Ajustes)
 			layout: opts.layout || {
 				headerHeight: 62,
 				groupHeaderHeight: 35,
 				floatingFiltersHeight: 35,
 				rowHeightMin: 50,
-				rowVertPad: 12,
+				rowVertPad: 12, // Padding vertical para rows com wrap
 				autoGroupMinWidth: 280,
+				calcColMinWidth: 150, // [NOVO] Largura min colunas calculadas
 				cacheBlockSize: 200,
+				// [NOVO] Magic numbers usados para medir texto
+				measurePadding: 12, // Usado em getFieldContentWidth
+				autoGroupOffset: 44, // Usado em getAutoGroupContentWidth
 			},
 
 			// Textos UI
@@ -242,7 +293,6 @@ export class Table {
 				copyWithParts: 'Copy with parts',
 				modalDetailsTitle: 'Details',
 				modalCampaignTitle: 'Campaign',
-				// [NOVO] Parametros adicionados
 				emptyValue: '—',
 				noName: '(no name)',
 				adsetDefault: '(adset)',
@@ -311,27 +361,6 @@ export class Table {
 		this.gridApi = null;
 		this.gridColumnApi = null;
 		this.api = null;
-
-		this.map = opts.map || {
-			revenue: ['revenue', 'receita', 'receitas', 'rev', 'fat', 'faturamento'],
-			spent: ['spent', 'gasto', 'gastos', 'spend', 'despesa', 'custo'],
-			profit: ['profit', 'lucro', 'resultado', 'ganho'],
-			mx: ['mx', 'roi', 'roas', 'retorno'],
-			ctr: ['ctr', 'taxadeclique'],
-			clicks: ['clicks', 'cliques'],
-		};
-
-		this.endpoints = opts.endpoints || {
-			SSRM: '/api/ssrm/?clean=1&mode=full',
-			ADSETS: '/api/adsets/',
-			ADS: '/api/ads/',
-		};
-
-		this.drill = opts.drill || {
-			period: 'TODAY',
-			minSpinnerMs: 900,
-			fakeNetworkMs: 0,
-		};
 
 		const parentTable = this;
 
@@ -527,9 +556,6 @@ export class Table {
 			_norm(cfg) {
 				const mini = !!cfg.mini;
 				const format = (cfg.format || 'currency').toLowerCase();
-
-				// [CORREÇÃO] Define partsFormat automaticamente
-				// Se o principal for Porcentagem (ex: Margin), as partes (Profit, Revenue) geralmente são Moeda.
 				const partsFormat = (
 					cfg.partsFormat || (format === 'percent' ? 'currency' : format)
 				).toLowerCase();
@@ -539,7 +565,7 @@ export class Table {
 					id: String(cfg.id || '').trim(),
 					expression: String(cfg.expression || '').trim(),
 					format: format,
-					partsFormat: partsFormat, // <--- Agora existe
+					partsFormat: partsFormat,
 					parts: Array.isArray(cfg.parts) ? cfg.parts : [],
 					mini: mini,
 					hideTop: mini,
@@ -565,25 +591,15 @@ export class Table {
 			}
 
 			_fmtBy(fmt, n) {
-				// [PARAMETRIZADO]
 				if (!Number.isFinite(n)) return parentTable.config.text.emptyValue || '—';
-
-				// INTEIRO: Arredonda e remove decimais
 				if (fmt === 'int') return intFmt.format(Math.round(n));
-
-				// [CORREÇÃO] RAW: Garante que mostre as casas decimais (ponto flutuante)
-				// Usamos toLocaleString para manter a vírgula (padrão BR do seu sistema)
 				if (fmt === 'raw') {
 					return n.toLocaleString('pt-BR', {
 						minimumFractionDigits: 2,
-						maximumFractionDigits: 6, // Mostra até 6 casas se existirem
+						maximumFractionDigits: 6,
 					});
 				}
-
-				// PERCENTUAL
 				if (fmt === 'percent') return cc_percentFormat(n);
-
-				// FALLBACK: MOEDA
 				return cc_currencyFormat(n);
 			}
 
@@ -596,10 +612,13 @@ export class Table {
 				}));
 				const defaultAfter = parentTable.config.behavior.defaultInsertAfter;
 
+				// [PARAMETRIZADO] minWidth via config layout
+				const minW = parentTable.config.layout.calcColMinWidth || 150;
+
 				return {
 					headerName: n.headerName || n.id,
 					colId: n.id,
-					minWidth: 150,
+					minWidth: minW,
 					flex: 1,
 					sortable: false,
 					filter: false,
@@ -626,29 +645,27 @@ export class Table {
 					},
 					cellRenderer: StackBelowRenderer,
 					cellRendererParams: {
-						format: n.format, // [IMPORTANTE] Passa o formato principal
-						partsMaxHeight: 40,
+						format: n.format,
+						partsMaxHeight: 40, // Pode ser parametrizado se necessário
 						onlyLevel0: !!n.onlyLevel0,
 						showTop: !n.hideTop,
 						showLabels: !!n.mini,
 						getParts: (p) => {
 							const row = p.data || {};
 							const list = [];
-							// Se "Total" for incluído como parte (mini mode), ele deve ser % (n.format)
 							if (n.includeTotalAsPart) {
 								list.push({
 									label: n.totalLabel || 'Total',
 									value: totalFn ? totalFn(row) : null,
 									isTotal: true,
-									format: n.format, // <--- Formato específico para o Total
+									format: n.format,
 								});
 							}
-							// As partes constituintes (A, B) usam o partsFormat (ex: currency)
 							partFns.forEach(({ label, fn }) => {
 								list.push({
 									label,
 									value: fn ? fn(row) : null,
-									format: n.partsFormat, // <--- Formato específico para as partes
+									format: n.partsFormat,
 								});
 							});
 							return list;
@@ -728,7 +745,8 @@ export class Table {
 			}
 		}
 
-		this.composite = new LionCompositeColumns(this.map);
+		// [CORREÇÃO] Passa aliases configurados (config.aliases) para CompositeColumns
+		this.composite = new LionCompositeColumns(this.config.aliases);
 		this.calc = new LionCalcColumns(this.composite);
 	}
 
@@ -757,12 +775,10 @@ export class Table {
 			return this.api;
 		};
 
-		// Chaves dinâmicas
 		const SS_KEY_STATE = this.config.storageKeys.gridState;
 		const LS_KEY_PRESETS = this.config.storageKeys.presets;
 		const LS_KEY_ACTIVE_PRESET = this.config.storageKeys.activePreset;
 
-		// [NOVO] Implementação do saveState para usar no destroy()
 		const saveState = () => {
 			const api = ensureApi();
 			if (!api) return;
@@ -774,7 +790,6 @@ export class Table {
 			}
 		};
 
-		// --- Helper UI Sync ---
 		const syncTogglesUI = () => {
 			const api = tableInstance.api;
 			if (!api) return;
@@ -848,7 +863,6 @@ export class Table {
 				const sel = this._el('presetSelect');
 				if (sel) sel.value = '';
 
-				// Reset visual
 				tableInstance.calc?.deactivateAllVisuals?.();
 				const pinToggle = this._el('pinToggle');
 				if (pinToggle) pinToggle.checked = true;
@@ -857,7 +871,6 @@ export class Table {
 				if (sizeToggle) sizeToggle.checked = false;
 				tableInstance._setSizeMode('fit');
 
-				// Reset Grid
 				api.setState({}, []);
 				api.resetColumnState?.();
 				api.setFilterModel?.(null);
@@ -867,7 +880,6 @@ export class Table {
 					tableInstance.togglePinnedColsFromCheckbox(true);
 					applySizeMode('fit');
 					syncTogglesUI();
-					// [PARAMETRIZADO]
 					showToast(this.config.text.toastLayoutReset || 'Layout Reset', 'info');
 				}, 50);
 			} catch (e) {
@@ -893,7 +905,6 @@ export class Table {
 			writePresets(bag);
 			refreshPresetUserSelect();
 			localStorage.setItem(LS_KEY_ACTIVE_PRESET, name);
-			// [PARAMETRIZADO]
 			const msg = (this.config.text.toastPresetSaved || 'Preset "{name}" saved').replace(
 				'{name}',
 				name
@@ -923,7 +934,6 @@ export class Table {
 			} catch (e) {}
 			api.refreshHeader?.();
 			api.redrawRows?.();
-			// [PARAMETRIZADO]
 			const msg = (this.config.text.toastPresetApplied || 'Preset "{name}" applied').replace(
 				'{name}',
 				name
@@ -945,7 +955,6 @@ export class Table {
 			if (active === name) localStorage.removeItem(LS_KEY_ACTIVE_PRESET);
 
 			refreshPresetUserSelect();
-			// [PARAMETRIZADO]
 			const msg = (this.config.text.toastPresetRemoved || 'Preset "{name}" removed').replace(
 				'{name}',
 				name
@@ -973,7 +982,6 @@ export class Table {
 			a.click();
 			a.remove();
 			URL.revokeObjectURL(url);
-			// [PARAMETRIZADO]
 			const msg = (this.config.text.toastPresetDownloaded || 'Preset "{name}" downloaded').replace(
 				'{name}',
 				name
@@ -1018,7 +1026,6 @@ export class Table {
 			reader.readAsText(file, 'utf-8');
 		});
 
-		// --- Listeners ---
 		this._el('btnResetLayout')?.addEventListener('click', resetLayout);
 		this._el('presetSelect')?.addEventListener('change', (e) => {
 			const v = e.target.value;
@@ -1029,12 +1036,10 @@ export class Table {
 			applyPresetUser(v);
 		});
 
-		// Listeners dos botões de modal
 		const openCalcModal = (e) => {
 			e.preventDefault();
 			const modal = this._el('modalCalcCols');
 			if (modal) {
-				// Aciona evento customizado que o CalcColsPopulate escuta
 				modal.dispatchEvent(new CustomEvent('lion:open:calc', { bubbles: true }));
 			}
 		};
@@ -1047,7 +1052,6 @@ export class Table {
 		this._el('btnDownloadPreset')?.addEventListener('click', downloadPreset);
 		this._el('btnDeletePreset')?.addEventListener('click', deletePreset);
 
-		// Size Mode
 		const sizeToggle = this._el('sizeModeToggle');
 		if (sizeToggle) {
 			sizeToggle.addEventListener('change', () => {
@@ -1059,7 +1063,6 @@ export class Table {
 			window.addEventListener('resize', () => applySizeMode(tableInstance._getSizeMode()));
 		}
 
-		// Quick Filter
 		const qFilter = this._el('quickFilter');
 		if (qFilter) {
 			try {
@@ -1077,7 +1080,6 @@ export class Table {
 
 		refreshPresetUserSelect();
 
-		// Grid Ready Listener
 		globalThis.addEventListener('lionGridReady', () => {
 			const activePreset = localStorage.getItem(LS_KEY_ACTIVE_PRESET);
 			if (activePreset) {
@@ -1112,7 +1114,6 @@ export class Table {
 			}
 		});
 
-		// [IMPORTANTE] Agora expõe o saveState
 		Object.assign(this, {
 			getState,
 			setState,
@@ -1126,7 +1127,6 @@ export class Table {
 		const input = this._el('quickFilter');
 		if (!input) return;
 
-		// 1. Atalho de Teclado (Ctrl+K / Cmd+K)
 		this._quickFilterKeyHandler = (e) => {
 			const tag = e.target?.tagName?.toLowerCase?.() || '';
 			const editable = tag === 'input' || tag === 'textarea' || e.target?.isContentEditable;
@@ -1141,10 +1141,8 @@ export class Table {
 		};
 		window.addEventListener('keydown', this._quickFilterKeyHandler, { capture: true });
 
-		// 2. Lógica de Input (Já existente no setupToolbar, mas reforçamos o foco inicial se tiver valor)
 		if (input.value) {
 			GLOBAL_QUICK_FILTER = String(input.value || '').trim();
-			// Se a API já estiver pronta, aplica. Se não, o onGridReady pega depois.
 			if (this.api) refreshSSRM(this.api);
 		}
 	}
@@ -1190,14 +1188,12 @@ export class Table {
 		const leftPins = [
 			{ colId: selectionColId, pinned: checked ? 'left' : null },
 			{ colId: autoGroupColId, pinned: checked ? 'left' : null },
-			// [ALTERADO] Usa array parametrizado 'pinnedLeft' (perfil, id, etc.)
 			...this.config.behavior.pinnedLeft.map((colId) => ({
 				colId,
 				pinned: checked ? 'left' : null,
 			})),
 		];
 
-		// Adiciona legados
 		(this.config.behavior.legacyAutoGroupIds || []).forEach((id) => {
 			leftPins.push({ colId: id, pinned: checked ? 'left' : null });
 		});
@@ -1219,39 +1215,32 @@ export class Table {
 			} catch (e) {}
 		}
 		if (!silent && el) {
-			el.checked = checked;
 			showToast(checked ? 'Columns Pinned' : 'Columns Unpinned', checked ? 'success' : 'info');
 		}
 	}
 	CalcColsPopulate() {
-		// ============================================================
-		// 1. PREPARAÇÃO E ESTADO
-		// ============================================================
 		const $col1 = this._el('ccCol1');
 		const $col2 = this._el('ccCol2');
 		const $reload = this._el('ccReload');
 		let lastSelection = { col1: null, col2: null };
 
-		// ============================================================
-		// 2. FUNÇÕES DO MODAL (VISUAL NATIVO)
-		// ============================================================
+		// [NOVO] Usa config.styles.backdrop para evitar CSS inline chumbado
+		const backdropStyles = this.config.styles.backdrop;
+		const modalZ = this.config.styles.modalZIndex;
 
-		// Cria o fundo preto IDÊNTICO ao nativo (Bootstrap/Metronic)
 		const ensureBackdrop = () => {
 			if (!document.querySelector('.modal-backdrop')) {
 				const bd = document.createElement('div');
-				bd.className = 'modal-backdrop fade show'; // Classes padrão
-
-				// CSS inline para garantir o visual exato
+				bd.className = 'modal-backdrop fade show';
 				bd.style.cssText = `
 					position: fixed;
 					top: 0;
 					left: 0;
 					width: 100vw;
 					height: 100vh;
-					z-index: 1050;
-					background-color: #000 !important; /* Preto Sólido */
-					opacity: 0.5 !important;           /* Intensidade Padrão (Ajuste para 0.6 ou 0.7 se quiser mais escuro) */
+					z-index: ${backdropStyles.zIndex || '1050'};
+					background-color: ${backdropStyles.background || '#000 !important'};
+					opacity: ${backdropStyles.opacity || '0.5 !important'};
 					transition: opacity 0.15s linear;
 				`;
 				document.body.appendChild(bd);
@@ -1263,12 +1252,10 @@ export class Table {
 			const el = selector ? document.querySelector(selector) : this._el('modalCalcCols');
 			if (!el) return console.error('Modal não encontrado');
 
-			// Limpeza
 			el.classList.remove('hidden');
 			el.style.removeProperty('display');
 			el.setAttribute('aria-hidden', 'false');
 
-			// Tenta via biblioteca
 			let libSuccess = false;
 			try {
 				if (window.KT?.Modal?.getOrCreateInstance) {
@@ -1282,15 +1269,11 @@ export class Table {
 				console.warn('Lib falhou:', e);
 			}
 
-			// GARANTIA VISUAL (Backdrop + Z-Index)
 			setTimeout(
 				() => {
-					// 1. Cria o fundo preto padrão
 					ensureBackdrop();
-
-					// 2. Força o modal para frente
 					el.style.display = 'block';
-					el.style.zIndex = '1055'; // Acima do backdrop (1050)
+					el.style.zIndex = modalZ || '1055';
 					el.style.opacity = '1';
 					el.classList.add('show', 'kt-modal--open');
 				},
@@ -1313,15 +1296,12 @@ export class Table {
 				}
 			} catch (e) {}
 
-			// Limpeza Forçada
 			setTimeout(
 				() => {
 					el.classList.add('hidden');
 					el.style.display = 'none';
 					el.classList.remove('show', 'kt-modal--open');
 					el.setAttribute('aria-hidden', 'true');
-
-					// Remove backdrop
 					document.querySelectorAll('.modal-backdrop').forEach((b) => b.remove());
 					document.body.classList.remove('modal-open');
 					document.body.style.overflow = '';
@@ -1340,15 +1320,9 @@ export class Table {
 			modalShow();
 		};
 
-		// ============================================================
-		// 3. LÓGICA DO FORMULÁRIO
-		// ============================================================
-
-		// [NOVO] Usa operadores configuráveis via this.config.calcModal.operators
 		const getOperators = () => this.config.calcConfig.operators;
 
 		const _getSelectableColumns = () => {
-			// 1. Hook Customizado
 			if (typeof this.config.callbacks.getCalculableColumns === 'function') {
 				return this.config.callbacks.getCalculableColumns(this.api);
 			}
@@ -1384,7 +1358,6 @@ export class Table {
 				if (def.checkboxSelection || def.rowGroup || def.pivot) return false;
 				const h = String(def.headerName || field).toLowerCase();
 
-				// [NOVO] Usa padrões ignorados da config
 				const ignored = this.config.calcConfig.ignoredHeaderPatterns;
 				return !ignored.some((pattern) => h.includes(pattern.toLowerCase()));
 			});
@@ -1566,7 +1539,6 @@ export class Table {
 			return { id: finalId, headerName, expression, format, onlyLevel0, mini, after, parts };
 		};
 
-		// Listeners
 		this._el('ccFormat')?.addEventListener('change', updateExpressionFromSelects);
 		if ($col1) $col1.addEventListener('change', updateExpressionFromSelects);
 		if ($col2) $col2.addEventListener('change', updateExpressionFromSelects);
@@ -1580,7 +1552,6 @@ export class Table {
 				this.api?.refreshHeader?.();
 				this.api?.redrawRows?.();
 				renderList();
-				// [PARAMETRIZADO]
 				showToast(this.config.text.toastColumnSaved || 'Column Saved', 'success');
 			}
 		});
@@ -1593,7 +1564,6 @@ export class Table {
 			e.preventDefault();
 			this.calc.activateAll();
 			renderList();
-			// [PARAMETRIZADO]
 			showToast(this.config.text.toastActivated || 'Activated', 'success');
 		});
 		if ($reload) {
@@ -1608,10 +1578,6 @@ export class Table {
 				}, 300);
 			});
 		}
-
-		// ============================================================
-		// 4. EVENT DELEGATION (Capture Phase)
-		// ============================================================
 
 		document.addEventListener(
 			'click',
@@ -1648,7 +1614,7 @@ export class Table {
 			},
 			true
 		);
-	} // Fim do CalcColsPopulate
+	}
 	makeGrid() {
 		const AG = getAgGrid();
 		const containerSelector = this.config.selectors.container;
@@ -1657,7 +1623,10 @@ export class Table {
 			console.error(`Container ${containerSelector} not found`);
 			return null;
 		}
-		this.gridDiv.classList.add('ag-theme-quartz');
+
+		// [NOVO] Usa classe do grid parametrizada (ex: ag-theme-quartz)
+		const themeClass = this.config.gridSetup.themeClass || 'ag-theme-quartz';
+		this.gridDiv.classList.add(themeClass);
 
 		const WRAP_FIELDS_LOCAL = this.config.behavior.wrapFields;
 		const AUTO_GROUP_ID = this.config.behavior.autoGroupColumnId;
@@ -1670,7 +1639,7 @@ export class Table {
 			floatingFilter: true,
 			sortable: false,
 			wrapText: true,
-			minWidth: this.config.layout.autoGroupMinWidth, // [NOVO] Parametrizado
+			minWidth: this.config.layout.autoGroupMinWidth,
 			pinned: 'left',
 			cellClass: (p) =>
 				['camp-root', 'camp-child', 'camp-grand'][Math.min(p?.node?.level ?? 0, 2)],
@@ -1724,11 +1693,9 @@ export class Table {
 			},
 		};
 
-		// --- Helpers de Medição de Layout ---
 		const _rowHeightMeasure = (() => {
 			let box = null;
 			return {
-				// [NOVO] Aceita fontFamily como argumento
 				measure(text, widthPx, fontFamily = 'IBM Plex Sans, system-ui') {
 					if (!box) {
 						box = document.createElement('div');
@@ -1742,7 +1709,7 @@ export class Table {
 							wordBreak: 'break-word',
 							overflowWrap: 'anywhere',
 							lineHeight: '1.25',
-							fontSize: '14px', // Pode ser parametrizado se quiser ser ultra-perfeccionista
+							fontSize: '14px', // Pode parametrizar em config.theme.fontSize
 							padding: '0',
 							margin: '0',
 							width: '0',
@@ -1750,7 +1717,7 @@ export class Table {
 						document.body.appendChild(box);
 					}
 					box.style.width = Math.max(0, widthPx) + 'px';
-					box.style.fontFamily = fontFamily; // Aplica a fonte
+					box.style.fontFamily = fontFamily;
 					box.textContent = text || '';
 					return box.scrollHeight || 0;
 				},
@@ -1762,7 +1729,9 @@ export class Table {
 				const col = api.getColumn(AUTO_GROUP_ID);
 				if (!col) return 300;
 				const colW = col.getActualWidth();
-				return Math.max(40, colW - 44);
+				// [PARAMETRIZADO] Usando layout.autoGroupOffset (antes era 44)
+				const offset = tableInstance.config.layout.autoGroupOffset || 44;
+				return Math.max(40, colW - offset);
 			} catch {
 				return 300;
 			}
@@ -1773,43 +1742,36 @@ export class Table {
 				const col = api.getColumn(field);
 				if (!col) return null;
 				const w = col.getActualWidth?.();
-				return w && Number.isFinite(w) ? Math.max(0, w - 12) : null;
+				// [PARAMETRIZADO] Usando layout.measurePadding (antes era 12)
+				const pad = tableInstance.config.layout.measurePadding || 12;
+				return w && Number.isFinite(w) ? Math.max(0, w - pad) : null;
 			} catch {
 				return null;
 			}
 		}
 
 		const _rowHCache = new Map();
-
-		// [NOVO] Usa layout config
 		const BASE_ROW_MIN = this.config.layout.rowHeightMin;
 		const VERT_PAD = this.config.layout.rowVertPad;
-
-		// [NOVO] Pega fonte do tema para medição correta
 		const themeFont = this.config.theme?.fontFamily?.googleFont || 'IBM Plex Sans, system-ui';
 
 		const gridOptions = {
-			// [NOVO] Usa layout config
 			floatingFiltersHeight: this.config.layout.floatingFiltersHeight,
 			groupHeaderHeight: this.config.layout.groupHeaderHeight,
 			headerHeight: this.config.layout.headerHeight,
 
-			// FIX: Usa showToast importado para garantir compatibilidade com utils.js
 			context: { showToast: (msg, type) => showToast(msg, type) },
 			rowModelType: 'serverSide',
-			cacheBlockSize: 200,
+			cacheBlockSize: this.config.layout.cacheBlockSize || 200,
 			treeData: true,
 
 			isServerSideGroup: (data) => data?.__nodeType === 'campaign' || data?.__nodeType === 'adset',
 			getServerSideGroupKey: (data) => data?.__groupKey ?? '',
 
-			// [CORREÇÃO CRÍTICA] Mudança de 'function(params)' para '(params) =>'
-			// Isso garante que 'this' se refira à classe Table
 			getRowId: (params) => {
 				const data = params.data;
 				if (!data) return `${Math.random()}`;
 
-				// Usando chaves parametrizadas para robustez total
 				if (data.__nodeType === 'campaign') {
 					return `c:${data.__groupKey}`;
 				}
@@ -1817,12 +1779,10 @@ export class Table {
 					return `s:${data.__groupKey}`;
 				}
 				if (data.__nodeType === 'ad') {
-					// Tenta usar o ID configurado, senão cai no fallback
 					const idKey = this.config.dataKeys.id;
 					return `a:${data[idKey] || data.story_id || data.__label}`;
 				}
 
-				// Fallback genérico usando a chave de ID configurada
 				const idKey = this.config.dataKeys.id;
 				return data[idKey] ? String(data[idKey]) : `${Math.random()}`;
 			},
@@ -1836,7 +1796,8 @@ export class Table {
 				checkboxes: { enabled: true, header: true },
 				selectionColumn: {
 					id: this.config.behavior.selectionColumnId,
-					width: 36,
+					// [PARAMETRIZADO] Width de selecao
+					width: this.config.gridSetup.selectionColWidth || 36,
 					pinned: 'left',
 					suppressHeaderMenuButton: true,
 					suppressHeaderFilterButton: true,
@@ -1865,7 +1826,6 @@ export class Table {
 					const w = widthBag[field];
 					if (!w) continue;
 					const text = tableInstance.getCellTextForField(p, field);
-					// [FIX] Passa a fonte configurada
 					const textH = _rowHeightMeasure.measure(text, w, themeFont);
 					if (textH > maxTextH) maxTextH = textH;
 				}
@@ -1896,16 +1856,16 @@ export class Table {
 				gridOptions.api?.resetRowHeights();
 			},
 
-			animateRows: true,
-			sideBar: { toolPanels: ['columns', 'filters'], defaultToolPanel: null, position: 'right' },
+			// [PARAMETRIZADO] Animate e SideBar
+			animateRows: this.config.gridSetup.animateRows ?? true,
+			sideBar: this.config.gridSetup.sideBar,
+
 			theme: this.createAgTheme(),
 
-			// === FIX: Menu de Contexto (Copy UTM / Campaign) ===
 			getContextMenuItems: (params) => {
 				const d = params.node?.data || {};
 				const colId = params.column?.getColDef?.().colId ?? params.column?.colId;
 
-				// Verifica se é a coluna de grupo (usando config ou fallback)
 				const isCampaignColumn = colId === AUTO_GROUP_ID || colId === 'ag-Grid-AutoColumn';
 
 				function buildCopyWithPartsText(p) {
@@ -1929,7 +1889,6 @@ export class Table {
 					const utm = d.utm_campaign || '';
 					if (label) {
 						items.push({
-							// [NOVO] Usa texto configurável
 							name: this.config.text.copyCampaign,
 							action: () => {
 								copyToClipboard(label);
@@ -1940,7 +1899,6 @@ export class Table {
 					}
 					if (utm) {
 						items.push({
-							// [NOVO] Usa texto configurável
 							name: this.config.text.copyUTM,
 							action: () => {
 								copyToClipboard(utm);
@@ -1951,7 +1909,6 @@ export class Table {
 					}
 				}
 
-				// Copy with parts
 				const colDef = params.column?.getColDef?.() || params.colDef || {};
 				if (
 					colDef?.cellRenderer === StackBelowRenderer ||
@@ -1959,12 +1916,10 @@ export class Table {
 				) {
 					items.push('separator');
 					items.push({
-						// [NOVO] Usa texto configurável
 						name: this.config.text.copyWithParts,
 						action: () => {
 							const txt = buildCopyWithPartsText(params);
 							copyToClipboard(txt);
-							// [PARAMETRIZADO]
 							showToast(
 								this.config.text.toastCopiedParts || 'Copied (with parts)',
 								'success'
@@ -2039,17 +1994,16 @@ export class Table {
 							} = req.request;
 							const filterModelWithGlobal = buildFilterModelWithGlobal(filterModel);
 
-							// --- LEVEL 0: CAMPAIGNS ---
 							if (groupKeys.length === 0) {
 								if (!this.ROOT_CACHE) {
-									let res = await fetch(this.endpoints.SSRM, {
+									let res = await fetch(this.config.endpoints.SSRM, {
 										method: 'POST',
 										headers: { 'Content-Type': 'application/json' },
 										credentials: 'same-origin',
 										body: JSON.stringify({ mode: 'full' }),
 									});
 									if (!res.ok)
-										res = await fetch(this.endpoints.SSRM, {
+										res = await fetch(this.config.endpoints.SSRM, {
 											credentials: 'same-origin',
 										});
 									const data = await res.json().catch(() => ({ rows: [] }));
@@ -2061,8 +2015,6 @@ export class Table {
 								const all = this.ROOT_CACHE.rowsRaw;
 								const filtered = this.frontApplyFilters(all, filterModelWithGlobal);
 								const ordered = this.frontApplySort(filtered, sortModel || []);
-
-								// [CORREÇÃO DO BUG DE CONTEXTO] Usando arrow function
 								const rowsNorm = ordered.map((r) => this.normalizeCampaignRow(r));
 
 								const slice = rowsNorm.slice(
@@ -2078,7 +2030,6 @@ export class Table {
 									currency,
 								});
 
-								// [NOVO] Uso de chaves de dados parametrizadas
 								const k = this.config.dataKeys;
 
 								const pinnedTotal = {
@@ -2131,23 +2082,22 @@ export class Table {
 
 								const qs = new URLSearchParams({
 									campaign_id: campaignId,
-									period: this.drill.period,
+									period: this.config.drill.period,
 									startRow: String(startRow),
 									endRow: String(endRow),
 									sortModel: JSON.stringify(sortModel || []),
 									filterModel: JSON.stringify(filterModelWithGlobal || {}),
 								});
 
-								if (this.drill.fakeNetworkMs > 0) await sleep(this.drill.fakeNetworkMs);
+								if (this.config.drill.fakeNetworkMs > 0)
+									await sleep(this.config.drill.fakeNetworkMs);
 
 								const data = await fetchJSON(
-									`${this.endpoints.ADSETS}?${qs.toString()}`
+									`${this.config.endpoints.ADSETS}?${qs.toString()}`
 								);
-
-								// [CORREÇÃO DO BUG DE CONTEXTO] Usando arrow function
 								const rows = (data.rows || []).map((row) => this.normalizeAdsetRow(row));
 
-								await withMinSpinner(req.request, this.drill.minSpinnerMs);
+								await withMinSpinner(req.request, this.config.drill.minSpinnerMs);
 								req.success({ rowData: rows, rowCount: data.lastRow ?? rows.length });
 								this.setParentRowLoading(apiTarget, parentId, false);
 								return;
@@ -2162,21 +2112,22 @@ export class Table {
 
 								const qs = new URLSearchParams({
 									adset_id: adsetId,
-									period: this.drill.period,
+									period: this.config.drill.period,
 									startRow: String(startRow),
 									endRow: String(endRow),
 									sortModel: JSON.stringify(sortModel || []),
 									filterModel: JSON.stringify(filterModelWithGlobal || {}),
 								});
 
-								if (this.drill.fakeNetworkMs > 0) await sleep(this.drill.fakeNetworkMs);
+								if (this.config.drill.fakeNetworkMs > 0)
+									await sleep(this.config.drill.fakeNetworkMs);
 
-								const data = await fetchJSON(`${this.endpoints.ADS}?${qs.toString()}`);
-
-								// [CORREÇÃO DO BUG DE CONTEXTO] Usando arrow function
+								const data = await fetchJSON(
+									`${this.config.endpoints.ADS}?${qs.toString()}`
+								);
 								const rows = (data.rows || []).map((r) => this.normalizeAdRow(r));
 
-								await withMinSpinner(req.request, this.drill.minSpinnerMs);
+								await withMinSpinner(req.request, this.config.drill.minSpinnerMs);
 								req.success({ rowData: rows, rowCount: data.lastRow ?? rows.length });
 								this.setParentRowLoading(apiTarget, parentId, false);
 								return;
@@ -2219,7 +2170,6 @@ export class Table {
 		this._bindPinnedToggle();
 		return { api: this.api, gridDiv: this.gridDiv };
 	}
-	// --- Métodos Utilitários e de Estado ---
 
 	setParentRowLoading(api, parentId, on) {
 		if (!api || !parentId) return;
@@ -2236,32 +2186,32 @@ export class Table {
 	}
 
 	getCellTextForField(p, field) {
-		// 1. Hook Customizado (Se você passar no bootstrap, ele usa)
 		if (typeof this.config.callbacks.getCellText === 'function') {
 			return this.config.callbacks.getCellText(p, field);
 		}
-
-		// 2. Fallback Padrão (Lógica do Lion/Genérica)
 		const d = p?.data || {};
-
-		// Lógica para agrupar texto + ID (ex: Nome da Campanha + UTM)
 		if (p?.node?.group && field === this.config.behavior.autoGroupColumnId) {
 			const label = String(d.__label || '');
-			const meta = String(d.__groupKey || ''); // UTM ou ID
+			const meta = String(d.__groupKey || '');
 			return meta ? `${label}\n${meta}` : label;
 		}
-
-		// Retorno simples para colunas normais
 		return String(d[field] ?? '');
 	}
 
 	ensureLoadingStyles() {
 		if (document.getElementById('lion-loading-styles')) return;
+
+		// [NOVO] Cores e estilos vindo do config.styles
+		const styles = this.config.styles || {};
+		const loadingColor = styles.loadingColor || '#9ca3af';
+		const errorColor = styles.errorColor || '#ef4444';
+		const errorBg = styles.errorBg || 'rgba(239, 68, 68, 0.12)';
+
 		const css = `
 .ag-cell.ag-cell-loading * { visibility: hidden !important; }
 .ag-cell.ag-cell-loading::after {
   content:""; position:absolute; left:50%; top:50%; width:14px; height:14px;
-  margin-left:-7px; margin-top:-7px; border-radius:50%; border:2px solid #9ca3af;
+  margin-left:-7px; margin-top:-7px; border-radius:50%; border:2px solid ${loadingColor};
   border-top-color:transparent; animation: lion-spin .8s linear infinite; z-index:2; pointer-events:none;
 }
 .lion-status-menu { position:absolute; min-width:160px; padding:6px 0; background:#111; color:#eee; border:1px solid rgba(255,255,255,.08); border-radius:8px; box-shadow:0 10px 30px rgba(0,0,0,.35); z-index:99999; }
@@ -2273,14 +2223,12 @@ export class Table {
 .ag-cell:hover .lion-editable-pen{ opacity:.85 }
 .lion-editable-ok{ display:inline-flex; align-items:center; margin-left:6px; opacity:.9; pointer-events:none; font-size:12px; line-height:1; }
 .ag-cell:hover .lion-editable-ok{ opacity:1 }
-.lion-editable-err{ display:inline-flex; align-items:center; margin-left:6px; opacity:.95; pointer-events:none; font-size:12px; line-height:1; color:#ef4444; }
+.lion-editable-err{ display:inline-flex; align-items:center; margin-left:6px; opacity:.95; pointer-events:none; font-size:12px; line-height:1; color:${errorColor}; }
 .ag-cell:hover .lion-editable-err{ opacity:1 }
-.ag-cell.lion-cell-error{ background: rgba(239, 68, 68, 0.12); box-shadow: inset 0 0 0 1px rgba(239,68,68,.35); transition: background .2s ease, box-shadow .2s ease; }
-.ag-cell.lion-cell-error .lion-editable-val{ color: #ef4444; font-weight: 600; }
+.ag-cell.lion-cell-error{ background: ${errorBg}; box-shadow: inset 0 0 0 1px rgba(239,68,68,.35); transition: background .2s ease, box-shadow .2s ease; }
+.ag-cell.lion-cell-error .lion-editable-val{ color: ${errorColor}; font-weight: 600; }
 .ag-cell.lion-cell-error.ag-cell-focus, .ag-cell.lion-cell-error:hover{ background: rgba(239, 68, 68, 0.18); box-shadow: inset 0 0 0 1px rgba(239,68,68,.5); }
 
-/* ===== Centralização real para células que podem quebrar linha ===== */
-/* 1) Remove o viés de -1px do tema nas colunas marcadas como 'lion-center-cell' */
 .ag-theme-quartz :where(.ag-ltr) .ag-center-cols-container
   .ag-cell.lion-center-cell:not(.ag-cell-inline-editing):not([col-id="ag-Grid-AutoColumn"]):not([col-id="campaign"]) {
   padding-left: var(--ag-cell-horizontal-padding) !important;
@@ -2288,22 +2236,18 @@ export class Table {
   display: flex;
   align-items: center;
   justify-content: center;
-  text-align: center;      /* texto multi-linha centraliza */
+  text-align: center;
 }
-
-/* 2) Faz os wrappers ocuparem a largura toda */
 .ag-theme-quartz .ag-center-cols-container
   .ag-cell.lion-center-cell:not(.ag-cell-inline-editing) .ag-cell-wrapper {
   width: 100%;
 }
-
-/* 3) Garante que o conteúdo (quebrando linha) centralize */
 .ag-theme-quartz .ag-center-cols-container
   .ag-cell.lion-center-cell:not(.ag-cell-inline-editing) .ag-cell-value {
-  display: block;          /* evita inline-size encolhendo */
-  width: 100%;             /* ocupa a célula toda */
-  text-align: center;      /* linhas quebradas centralizadas */
-  white-space: normal;     /* habilita wrap */
+  display: block;
+  width: 100%;
+  text-align: center;
+  white-space: normal;
   word-break: break-word;
   overflow-wrap: anywhere;
 }
@@ -2319,7 +2263,6 @@ export class Table {
 			'keydown',
 			(e) => {
 				if (e.key !== 'Escape') return;
-				// Usa o ID configurado para o modal drilldown
 				const drilldownId = this.config.selectors.modalDrilldown.replace(/^#/, '');
 				const ktModal = document.getElementById(drilldownId);
 				if (
@@ -2386,7 +2329,6 @@ export class Table {
 		if (document.getElementById(modalId)) return;
 
 		const tpl = document.createElement('div');
-		// Injeta o template configurado. Substitui {id} pelo ID real.
 		let html = this.config.templates.modalDrilldown;
 		if (html.includes('{id}')) {
 			html = html.replace('{id}', modalId);
@@ -2395,29 +2337,21 @@ export class Table {
 
 		document.body.appendChild(tpl.firstElementChild);
 
-		// Bind do botão de fechar
 		const closeSelector = this.config.selectors.modalDrilldownClose;
-		// Ajusta seletor para buscar dentro do modal criado
 		const closeBtn = document.querySelector(`${modalSelector} ${closeSelector}`);
 		closeBtn?.addEventListener('click', () => this.closeKTModal(modalSelector));
 
-		// Fecha ao clicar fora (overlay)
 		const modalEl = document.getElementById(modalId);
 		modalEl?.addEventListener('click', (e) => {
 			if (e.target.id === modalId) this.closeKTModal(modalSelector);
 		});
 	}
 
-	// ============================================================
-	// MÉTODOS UTILITÁRIOS & TEMA (Colar após makeGrid)
-	// ============================================================
-
 	createAgTheme() {
 		const AG = getAgGrid();
 		const { themeQuartz, iconSetMaterial } = AG;
 		if (!themeQuartz || !iconSetMaterial) return undefined;
 
-		// Permite customização via opts.theme ou usa defaults
 		const t = this.config.theme || {};
 
 		return themeQuartz.withPart(iconSetMaterial).withParams({
@@ -2436,9 +2370,7 @@ export class Table {
 		});
 	}
 
-	// Normalizadores de Linha (Usados no DataSource do makeGrid)
 	normalizeCampaignRow(r) {
-		// [NOVO] Checa callback customizado primeiro
 		if (typeof this.config.callbacks.normalizeRow === 'function') {
 			return this.config.callbacks.normalizeRow(r, 'campaign', {
 				stripHtml,
@@ -2446,24 +2378,18 @@ export class Table {
 			});
 		}
 
-		// [NOVO] Usa chaves dinâmicas
 		const k = this.config.dataKeys;
-
-		// [PARAMETRIZADO]
 		const label = stripHtml(r[k.campaign_name] || this.config.text.noName || '(no name)');
 		const utm = String(r[k.utm_campaign] || r[k.id] || '');
 		return {
 			__nodeType: 'campaign',
 			__groupKey: utm,
 			__label: label,
-			// Mantem 'campaign' hardcoded APENAS como chave interna do AG Grid se o colId for 'campaign'
-			// Se o colId mudar, isso aqui não importa tanto, pois o valueGetter resolve.
 			campaign: (label + ' ' + utm).trim(),
 			...r,
 		};
 	}
 	normalizeAdsetRow(r) {
-		// [NOVO] Checa callback customizado primeiro
 		if (typeof this.config.callbacks.normalizeRow === 'function') {
 			return this.config.callbacks.normalizeRow(r, 'adset', {
 				stripHtml,
@@ -2475,19 +2401,16 @@ export class Table {
 		return {
 			__nodeType: 'adset',
 			__groupKey: String(r[k.id] || ''),
-			// [PARAMETRIZADO]
 			__label: stripHtml(r[k.adset_name] || this.config.text.adsetDefault || '(adset)'),
 			...r,
 		};
 	}
 	normalizeAdRow(r) {
-		// [NOVO] Checa callback customizado primeiro
 		if (typeof this.config.callbacks.normalizeRow === 'function') {
 			return this.config.callbacks.normalizeRow(r, 'ad', { stripHtml, ...this.config.dataKeys });
 		}
 
 		const k = this.config.dataKeys;
-		// [PARAMETRIZADO]
 		return {
 			__nodeType: 'ad',
 			__label: stripHtml(r[k.ad_name] || this.config.text.adDefault || '(ad)'),
@@ -2495,21 +2418,16 @@ export class Table {
 		};
 	}
 
-	// Lógica de Sort/Filter no Front (Usados no DataSource)
 	frontApplySort(rows, sortModel) {
 		if (!Array.isArray(sortModel) || !sortModel.length) return rows;
-		// 1. Hook customizado
 		if (typeof this.config.callbacks.customSort === 'function') {
-			// A função customizada deve retornar as rows ordenadas ou null para seguir o fluxo
 			const customResult = this.config.callbacks.customSort(rows, sortModel, {
 				frontToNumberBR,
-				frontToNumberFirst, // Injeta utils
+				frontToNumberFirst,
 			});
 			if (customResult) return customResult;
 		}
 		const orderStatus = this.config.behavior.statusOrder;
-
-		// [NOVO] Pega chave de revenue configurada
 		const revenueKey = this.config.dataKeys.revenue;
 
 		return rows.slice().sort((a, b) => {
@@ -2519,7 +2437,6 @@ export class Table {
 				let av = a[colId],
 					bv = b[colId];
 
-				// Usa a lista de colunas de status definida via ||
 				if (this.config.behavior.statusColIds.includes(colId)) {
 					const ai = orderStatus.indexOf(String(av ?? '').toUpperCase());
 					const bi = orderStatus.indexOf(String(bv ?? '').toUpperCase());
@@ -2529,7 +2446,6 @@ export class Table {
 					continue;
 				}
 
-				// [NOVO] Verifica se é a coluna de receita configurada
 				if (colId === revenueKey) {
 					const an = frontToNumberFirst(av);
 					const bn = frontToNumberFirst(bv);
@@ -2558,16 +2474,13 @@ export class Table {
 	frontApplyFilters(rows, filterModel) {
 		if (!filterModel || typeof filterModel !== 'object') return rows;
 
-		// Global filter já aplicado na origem ou aqui se necessário
 		const globalFilter = String(filterModel._global?.filter || '')
 			.trim()
 			.toLowerCase();
 
-		// 1. Prepare Evaluators for Calculated Columns (Optimization)
 		const calcEvaluators = {};
 		if (this.calc) {
-			const calcList = this.calc.list(); // List of configs
-			// Only compile if the field is actually being filtered
+			const calcList = this.calc.list();
 			Object.keys(filterModel).forEach((field) => {
 				const cfg = calcList.find((c) => c.id === field);
 				if (cfg) {
@@ -2581,7 +2494,6 @@ export class Table {
 			.map(([field, f]) => {
 				const ft = f.filterType || f.type || 'text';
 
-				// Lógica específica para Campanha (Nome + UTM)
 				const autoGroupCol = this.config.behavior.autoGroupColumnId;
 				const isCampaignColumn =
 					field === 'campaign' ||
@@ -2594,11 +2506,9 @@ export class Table {
 					const needle = String(f.filter ?? '').toLowerCase();
 					if (!needle) return () => true;
 
-					// [NOVO] Usa chaves de dados
 					const k = this.config.dataKeys;
 
 					return (r) => {
-						// Busca o label normalizado ou o nome cru usando chaves config
 						const name = String(r.__label || r[k.campaign_name] || '').toLowerCase();
 						const utm = String(r[k.utm_campaign] || '').toLowerCase();
 						const combined = (name + ' ' + utm).trim();
@@ -2655,20 +2565,14 @@ export class Table {
 					};
 				}
 
-				// Lógica Numérica (com suporte a colunas calculadas)
 				if (ft === 'number') {
 					const comp = String(f.type || 'equals');
-
-					// [FIX] Permite virgula decimal (ex: 6,50 -> 6.50)
 					let rawFilter = String(f.filter ?? '');
 					if (rawFilter.includes(',')) rawFilter = rawFilter.replace(',', '.');
 					const val = Number(rawFilter);
 
 					return (r) => {
-						// [FIX] Prepara getter de valor (Raw ou Calculated)
 						let rawVal = r[field];
-
-						// Se a chave não existe no objeto row, tenta calcular
 						if (rawVal === undefined && calcEvaluators[field]) {
 							try {
 								rawVal = calcEvaluators[field](r);
@@ -2726,8 +2630,6 @@ export class Table {
 		const sum = sumNum;
 		const div = safeDiv;
 		const num = (val) => numBR(val, cur);
-
-		// [NOVO] Usa chaves de dados parametrizadas
 		const k = this.config.dataKeys;
 
 		const spent_sum = sum(rows, (r) => num(r[k.spent]));
@@ -2747,7 +2649,6 @@ export class Table {
 		const profit_sum = sum(rows, (r) => num(r[k.profit]));
 		const budget_sum = sum(rows, (r) => num(r[k.budget]));
 
-		// Retorna objeto com chaves parametrizadas também
 		return {
 			[k.impressions]: impressions_sum,
 			[k.clicks]: clicks_sum,
@@ -2770,14 +2671,13 @@ export class Table {
 		};
 	}
 	destroy() {
-		// Limpeza do listener global de teclado
 		if (this._quickFilterKeyHandler) {
 			window.removeEventListener('keydown', this._quickFilterKeyHandler, { capture: true });
 			this._quickFilterKeyHandler = null;
 		}
 
 		if (this.api) {
-			this.saveState(); // [AGORA FUNCIONA]
+			this.saveState();
 			this.api.destroy();
 			this.api = null;
 		}
