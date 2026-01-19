@@ -1,4 +1,54 @@
+/* regras aplicadas sempre, mesmo quando modal está escondido */
+.kt-modal.kt-modal-test {
+	position: fixed;
+	top: 0;
+	left: 0;
+	width: 100vw;
+	height: 100vh;
+	display: none; /* default escondido */
+	align-items: center;
+	justify-content: center;
+	z-index: 99999;
+	overflow: auto;
+}
+
+/* quando visível */
+.kt-modal.kt-modal-test[aria-hidden='false'] {
+	display: flex !important;
+}
+
+/* conteúdo modal */
+.kt-modal.kt-modal-test .kt-modal-content {
+	max-height: min(88vh, 900px);
+	width: min(96vw, 1500px);
+	overflow: hidden;
+	display: flex;
+	flex-direction: column;
+	/* opcional: evitar animações de top/margin */
+	opacity: 0;
+	transform: scale(0.98);
+	transition: opacity 150ms ease-out, transform 150ms ease-out;
+}
+
+.kt-modal.kt-modal-test[aria-hidden='false'] .kt-modal-content {
+	opacity: 1;
+	transform: scale(1);
+}
+
+.kt-modal.kt-modal-test .kt-modal-body {
+	overflow: auto;
+}
+
 /* pill arrastável dentro da célula */
+.lion-stack-scroll {
+	overflow-y: auto;
+	scrollbar-width: none; /* Firefox */
+	-ms-overflow-style: none; /* IE/Edge legacy */
+}
+.lion-stack-scroll::-webkit-scrollbar {
+	/* WebKit/Blink */
+	display: none;
+}
 
 /* célula que foi alterada recentemente */
 .ag-cell.lion-cell-changed {
@@ -272,9 +322,9 @@
 	font-size: 12px;
 }
 .ag-cell.lion-center-cell {
-	display: flex; /* garante flex no host */
-	align-items: center; /* centro vertical */
-	justify-content: center;
+	display: flex !important; /* garante flex no host */
+	align-items: center !important; /* centro vertical */
+	justify-content: center !important;
 	/* padding: 10px;  */
 }
 /* vars globais (default = sem nudge) */
